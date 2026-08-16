@@ -1,0 +1,53 @@
+{
+  "name": "@framelia/dashboard-server",
+  "version": "0.0.1",
+  "description": "Hono/SSE dashboard runtime and artifact-projection logic for framelia verification runs.",
+  "homepage": "https://github.com/hungify/framelia/tree/main/packages/dashboard-server",
+  "bugs": {
+    "url": "https://github.com/hungify/framelia/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hungify/framelia.git",
+    "directory": "packages/dashboard-server"
+  },
+  "files": [
+    "dist/dashboard",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "build": "pnpm --filter @framelia/dashboard build",
+    "pretest": "pnpm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test"
+  },
+  "dependencies": {
+    "@framelia/contracts": "workspace:*",
+    "@framelia/verify": "workspace:*",
+    "@hono/node-server": "^2.0.12",
+    "hono": "4.12.32",
+    "nanoid": "3.3.16"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "packageManager": "pnpm@11.18.0"
+}

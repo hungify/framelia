@@ -1,0 +1,70 @@
+{
+  "name": "framelia",
+  "version": "0.0.1",
+  "description": "CLI-first Figma-to-web and web-to-web visual verification with stable capture and artifact-based done gates.",
+  "keywords": [
+    "cli",
+    "figma",
+    "playwright",
+    "screenshot",
+    "visual-regression",
+    "visual-testing"
+  ],
+  "homepage": "https://github.com/hungify/framelia/tree/main/packages/cli",
+  "bugs": {
+    "url": "https://github.com/hungify/framelia/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hungify/framelia.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "framelia": "bin/framelia.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run typecheck && pnpm test",
+    "verify": "tsx src/cli.ts verify",
+    "done-gate": "tsx src/cli.ts done-gate"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "@framelia/contracts": "workspace:*",
+    "@framelia/dashboard-server": "workspace:*",
+    "@framelia/verify": "workspace:*",
+    "commander": "^15.0.0",
+    "nanoid": "3.3.16",
+    "open": "^11.0.0",
+    "playwright": "^1.61.1",
+    "tsx": "^4.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "packageManager": "pnpm@11.18.0"
+}

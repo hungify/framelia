@@ -1,0 +1,63 @@
+{
+  "name": "@framelia/playwright",
+  "version": "0.0.1",
+  "description": "Playwright custom matchers for Figma-to-web and web-to-web visual verification.",
+  "homepage": "https://github.com/hungify/framelia/tree/main/packages/playwright",
+  "bugs": {
+    "url": "https://github.com/hungify/framelia/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hungify/framelia.git",
+    "directory": "packages/playwright"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./register": "./src/register.ts",
+    "./reporter": "./src/reporter.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:smoke": "pnpm --filter @framelia/dashboard-server build && playwright test --config=playwright.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@framelia/contracts": "workspace:*",
+    "@framelia/verify": "workspace:*",
+    "nanoid": "3.3.16"
+  },
+  "devDependencies": {
+    "@framelia/dashboard-server": "workspace:*",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "26.0.1",
+    "@types/pngjs": "^6.0.5",
+    "pngjs": "^7.0.0",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@framelia/dashboard-server": "workspace:*",
+    "@playwright/test": "^1.61.1"
+  },
+  "peerDependenciesMeta": {
+    "@framelia/dashboard-server": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "packageManager": "pnpm@11.18.0"
+}

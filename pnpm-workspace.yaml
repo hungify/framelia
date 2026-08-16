@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+allowBuilds:
+  esbuild: true
+  simple-git-hooks: true
+  vue-demi: true
+
+overrides:
+  esbuild: 0.28.1

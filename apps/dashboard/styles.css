@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@theme static {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --color-bg: #111315;
+  --color-panel: #17191c;
+  --color-panel-raised: #1d2024;
+  --color-line: #2b2f34;
+  --color-line-soft: #23272b;
+  --color-text: #e6e8ea;
+  --color-muted: #8d939a;
+  --color-accent: #8ab4f8;
+  --color-green: #70c48f;
+  --color-red: #e88388;
+  --color-amber: #d8b566;
+  --color-blue: #82aef2;
+  --color-selection: #173a63;
+  --color-selection-fg: #e7f1ff;
+  --color-panel-deep: #15171a;
+  --color-panel-hover: #22262b;
+  --color-danger-surface: #211719;
+  --color-text-soft: #b7bbc0;
+  --color-text-subtle: #adb2b8;
+
+  --color-evidence-surface: #f1f2f3;
+  --color-scrim: rgb(17 19 21 / 82%);
+  --color-toolbar-hover: var(--ui-bg-accented);
+  --shadow-evidence-card: 0 0 0 1px #353a40, 0 20px 48px rgb(0 0 0 / 45%);
+  --radius-toolbar-control: var(--ui-radius);
+
+  --spacing-screen-header: calc(100vh - 2.75rem);
+}
+
+:root {
+  color-scheme: dark;
+  --ui-primary: var(--color-accent);
+  --ui-bg: var(--color-bg);
+  --ui-bg-muted: var(--color-panel);
+  --ui-bg-elevated: var(--color-panel-raised);
+  --ui-bg-accented: #25292e;
+  --ui-border: var(--color-line);
+  --ui-border-muted: var(--color-line-soft);
+  --ui-text: var(--color-text);
+  --ui-text-muted: var(--color-muted);
+  --ui-radius: 0.3rem;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body,
+  #app {
+    min-height: 100%;
+    margin: 0;
+  }
+  body {
+    @apply min-w-[320px] bg-bg text-text font-sans;
+  }
+  button,
+  input,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+  code,
+  kbd,
+  output {
+    @apply font-mono;
+  }
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    @apply outline-2 outline-accent outline-offset-2;
+  }
+}

@@ -72,7 +72,8 @@ function resolveCommandChain(program: Command, argv: string[]): Command[] {
 function rejectDuplicateOptions(program: Command, argv: string[]): void {
   const knownOptions = new Map<string, boolean>();
   for (const command of resolveCommandChain(program, argv)) {
-    for (const [flag, takesValue] of collectKnownOptions(command)) knownOptions.set(flag, takesValue);
+    for (const [flag, takesValue] of collectKnownOptions(command))
+      knownOptions.set(flag, takesValue);
   }
 
   const seen = new Set<string>();

@@ -27,6 +27,8 @@ function cancelled(value: unknown): value is symbol {
   return true;
 }
 
+const CONTRACT_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+
 function validateHttpUrl(value: string | undefined): string | undefined {
   if (value == null) return "Required.";
   return httpUrlSchema.safeParse(value).success ? undefined : "Enter an http:// or https:// URL.";
@@ -40,6 +42,13 @@ function positiveInteger(value: string | undefined): string | undefined {
 
 function required(value: string | undefined): string | undefined {
   return value?.trim() ? undefined : "Required.";
+}
+
+/** Validates a flag value with a prompt-style validator, raising a CLI usage error on failure. */
+function requireFlag<T>(flagName: string, value: T, validate: (value: T) => string | undefined): T {
+  const message = validate(value);
+  if (message) throw new Error(`${flagName}: ${message}`);
+  return value;
 }
 
 async function text(options: Parameters<typeof p.text>[0]): Promise<string | undefined> {
@@ -81,64 +90,95 @@ async function tryFetchExpectStyle(baseline: BaselineAnswers): Promise<ExpectSty
   return deriveExpectStyle(resolved.meta);
 }
 
-export async function runCreateContract(options: {
+export interface CreateContractOptions {
   projectRoot: string;
   outputPath?: string;
   force?: boolean;
-}): Promise<void> {
+  /** Non-interactive overrides: any field left undefined still prompts interactively. */
+  targetUrl?: string;
+  contractId?: string;
+  fileKey?: string;
+  nodeId?: string;
+  viewport?: "desktop" | "mobile" | "custom";
+  viewportName?: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  scope?: "page" | "region";
+  pageReason?: string;
+  selector?: string;
+  regionWidth?: number;
+  regionHeight?: number;
+}
+
+export async function runCreateContract(options: CreateContractOptions): Promise<void> {
   p.intro("Create Framelia visual contract");
 
-  const targetUrl = await text({
-    message: "Target application URL",
-    placeholder: "http://127.0.0.1:3000",
-    initialValue: "http://127.0.0.1:3000",
-    validate: validateHttpUrl,
-  });
+  const targetUrl = options.targetUrl
+    ? requireFlag("--target-url", options.targetUrl, validateHttpUrl)
+    : await text({
+        message: "Target application URL",
+        placeholder: "http://127.0.0.1:3000",
+        initialValue: "http://127.0.0.1:3000",
+        validate: validateHttpUrl,
+      });
   if (!targetUrl) return;
 
-  const contractId = await text({
-    message: "Contract ID",
-    placeholder: "home.desktop",
-    initialValue: "home.desktop",
-    validate: (value) =>
-      /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(value ?? "")
-        ? undefined
-        : "Use lowercase letters, numbers, dots, or hyphens.",
-  });
+  const contractId = options.contractId
+    ? requireFlag("--contract-id", options.contractId, (value) =>
+        CONTRACT_ID_PATTERN.test(value ?? "")
+          ? undefined
+          : "Use lowercase letters, numbers, dots, or hyphens.",
+      )
+    : await text({
+        message: "Contract ID",
+        placeholder: "home.desktop",
+        initialValue: "home.desktop",
+        validate: (value) =>
+          CONTRACT_ID_PATTERN.test(value ?? "")
+            ? undefined
+            : "Use lowercase letters, numbers, dots, or hyphens.",
+      });
   if (!contractId) return;
 
-  const fileKey = await text({ message: "Figma file key", validate: required });
+  const fileKey = options.fileKey
+    ? requireFlag("--file-key", options.fileKey, required)
+    : await text({ message: "Figma file key", validate: required });
   if (!fileKey) return;
-  const nodeId = await text({
-    message: "Figma node ID",
-    placeholder: "153:5181",
-    validate: (value) =>
-      FIGMA_NODE_ID.test(value ?? "") ? undefined : "Enter a Figma node ID such as 153:5181.",
-  });
+
+  const nodeId = options.nodeId
+    ? requireFlag("--node-id", options.nodeId, (value) =>
+        FIGMA_NODE_ID.test(value ?? "") ? undefined : "Enter a Figma node ID such as 153:5181.",
+      )
+    : await text({
+        message: "Figma node ID",
+        placeholder: "153:5181",
+        validate: (value) =>
+          FIGMA_NODE_ID.test(value ?? "") ? undefined : "Enter a Figma node ID such as 153:5181.",
+      });
   if (!nodeId) return;
   const baseline: BaselineAnswers = { kind: "figma", fileKey, nodeId };
 
-  const viewportPreset = await select<"desktop" | "mobile" | "custom">({
-    message: "Viewport",
-    options: [
-      { value: "desktop", label: "Desktop", hint: "1440 × 1024" },
-      { value: "mobile", label: "Mobile", hint: "390 × 844" },
-      { value: "custom", label: "Custom" },
-    ],
-  });
+  const viewportPreset =
+    options.viewport ??
+    (await select<"desktop" | "mobile" | "custom">({
+      message: "Viewport",
+      options: [
+        { value: "desktop", label: "Desktop", hint: "1440 × 1024" },
+        { value: "mobile", label: "Mobile", hint: "390 × 844" },
+        { value: "custom", label: "Custom" },
+      ],
+    }));
   if (!viewportPreset) return;
 
   let viewport: ContractAnswers["viewport"];
   if (viewportPreset === "custom") {
-    const name = await text({
-      message: "Viewport name",
-      placeholder: "tablet",
-      validate: required,
-    });
+    const name = options.viewportName
+      ? requireFlag("--viewport-name", options.viewportName, required)
+      : await text({ message: "Viewport name", placeholder: "tablet", validate: required });
     if (!name) return;
-    const width = await positiveIntegerText("Viewport width");
+    const width = options.viewportWidth ?? (await positiveIntegerText("Viewport width"));
     if (width === undefined) return;
-    const height = await positiveIntegerText("Viewport height");
+    const height = options.viewportHeight ?? (await positiveIntegerText("Viewport height"));
     if (height === undefined) return;
     viewport = { name, width, height };
   } else {
@@ -148,35 +188,41 @@ export async function runCreateContract(options: {
         : { name: "mobile", width: 390, height: 844 };
   }
 
-  const scopeKind = await select<"page" | "region">({
-    message: "Capture scope",
-    options: [
-      { value: "page", label: "Full page" },
-      { value: "region", label: "Element or region" },
-    ],
-  });
+  const scopeKind =
+    options.scope ??
+    (await select<"page" | "region">({
+      message: "Capture scope",
+      options: [
+        { value: "page", label: "Full page" },
+        { value: "region", label: "Element or region" },
+      ],
+    }));
   if (!scopeKind) return;
 
   let scope: ContractAnswers["scope"];
   if (scopeKind === "page") {
-    const pageReason = await text({
-      message: "Why does baseline represent complete page?",
-      placeholder: "Baseline node represents complete page.",
-      initialValue: "Baseline node represents complete page.",
-      validate: required,
-    });
+    const pageReason = options.pageReason
+      ? requireFlag("--page-reason", options.pageReason, required)
+      : await text({
+          message: "Why does baseline represent complete page?",
+          placeholder: "Baseline node represents complete page.",
+          initialValue: "Baseline node represents complete page.",
+          validate: required,
+        });
     if (!pageReason) return;
     scope = { kind: "page", pageReason };
   } else {
-    const selector = await text({
-      message: "CSS selector",
-      placeholder: "[data-testid=card]",
-      validate: required,
-    });
+    const selector = options.selector
+      ? requireFlag("--selector", options.selector, required)
+      : await text({
+          message: "CSS selector",
+          placeholder: "[data-testid=card]",
+          validate: required,
+        });
     if (!selector) return;
-    const width = await positiveIntegerText("Expected region width");
+    const width = options.regionWidth ?? (await positiveIntegerText("Expected region width"));
     if (width === undefined) return;
-    const height = await positiveIntegerText("Expected region height");
+    const height = options.regionHeight ?? (await positiveIntegerText("Expected region height"));
     if (height === undefined) return;
     const expectStyle = await tryFetchExpectStyle(baseline);
     scope = {

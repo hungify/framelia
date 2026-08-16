@@ -1,11 +1,14 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createContractRequest, writeContractRequest } from "../src/contract.ts";
 
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -80,5 +83,124 @@ describe("contract scaffold", () => {
     expect(request.contracts[0]?.scope).toMatchObject({
       expectStyle: { fontWeight: 500, fontSizePx: 16 },
     });
+  });
+});
+
+describe("contract create --target-url and friends (non-interactive)", () => {
+  it("skips prompts entirely and writes the contract when every flag is supplied", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-create-"));
+    temporaryDirectories.push(directory);
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(packageRoot, "bin", "framelia.js"),
+        "contract",
+        "create",
+        "--project-root",
+        directory,
+        "--output",
+        ".framelia/visual-verifications/login/visual-contract.json",
+        "--target-url",
+        "http://localhost:8888/login",
+        "--contract-id",
+        "login.desktop",
+        "--file-key",
+        "abc123",
+        "--node-id",
+        "1037:71575",
+        "--viewport",
+        "desktop",
+        "--scope",
+        "page",
+        "--page-reason",
+        "Baseline node represents complete page.",
+      ],
+      { encoding: "utf8", env: { ...process.env, FIGMA_ACCESS_TOKEN: "" } },
+    );
+
+    expect(result.status).toBe(0);
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/login/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written).toMatchObject({
+      target: { url: "http://localhost:8888/login" },
+      contracts: [{ id: "login.desktop", baseline: { fileKey: "abc123", nodeId: "1037:71575" } }],
+    });
+  });
+
+  it("writes to --output even when it diverges from the derived default path", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-create-"));
+    temporaryDirectories.push(directory);
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(packageRoot, "bin", "framelia.js"),
+        "contract",
+        "create",
+        "--project-root",
+        directory,
+        "--output",
+        "custom/path/mycontract.json",
+        "--target-url",
+        "http://localhost:8888/login",
+        "--contract-id",
+        "login.desktop",
+        "--file-key",
+        "abc123",
+        "--node-id",
+        "1037:71575",
+        "--viewport",
+        "desktop",
+        "--scope",
+        "page",
+        "--page-reason",
+        "Baseline node represents complete page.",
+      ],
+      { encoding: "utf8", env: { ...process.env, FIGMA_ACCESS_TOKEN: "" } },
+    );
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(directory, "custom/path/mycontract.json"))).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(directory, ".framelia/visual-verifications/login/visual-contract.json"),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects an invalid --target-url without launching an interactive prompt", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(packageRoot, "bin", "framelia.js"),
+        "contract",
+        "create",
+        "--project-root",
+        os.tmpdir(),
+        "--target-url",
+        "not-a-url",
+        "--contract-id",
+        "login.desktop",
+        "--file-key",
+        "abc123",
+        "--node-id",
+        "1037:71575",
+        "--viewport",
+        "desktop",
+        "--scope",
+        "page",
+        "--page-reason",
+        "Baseline node represents complete page.",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("--target-url");
   });
 });

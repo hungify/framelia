@@ -1,6 +1,6 @@
 {
   "name": "@framelia/dashboard-server",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Hono/SSE dashboard runtime and artifact-projection logic for framelia verification runs.",
   "homepage": "https://github.com/hungify/framelia/tree/main/packages/dashboard-server",
   "bugs": {

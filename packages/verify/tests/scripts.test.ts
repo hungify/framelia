@@ -17,15 +17,22 @@ afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 function runScript(name: string, args: string[]) {
   return spawnSync(process.execPath, [tsxCli, path.join(packageRoot, "scripts", name), ...args], {
     encoding: "utf8",
+    // These scripts import @framelia/contracts by workspace specifier, resolved
+    // through Node's own loader (not Vite's) -- point it at source, same as
+    // vitest.config.ts, so this test doesn't require a prior sibling build.
+    env: {
+      ...process.env,
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --conditions=framelia-dev`.trim(),
+    },
   });
 }
 
 describe("debug script argument validation", () => {
   it("rejects invalid Figma image scale before network access", () => {
-    const result = runScript("fetch-gold.ts", [
+    const result = runScript("fetch-baseline.ts", [
       "file",
       "1:2",
-      path.join(tmp, "gold.png"),
+      path.join(tmp, "baseline.png"),
       "Infinity",
     ]);
     expect(result.status).toBe(2);

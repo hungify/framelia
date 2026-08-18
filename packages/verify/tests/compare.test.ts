@@ -43,10 +43,10 @@ function withRect(
 
 describe("compare pipeline", () => {
   it("passes on identical images", () => {
-    const gold = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "gold");
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
     const actual = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "actual");
     const dir = outDir();
-    const r = compare(gold, actual, dir, { profile: "component/strict" });
+    const r = compare(baseline, actual, dir, { profile: "component/strict" });
     expect(r.pass).toBe(true);
     expect(r.matchRatio).toBe(1);
     expect(r.areaGapPercent).toBe(0);
@@ -55,7 +55,7 @@ describe("compare pipeline", () => {
   });
 
   it("fails on a broken region (pixel + budget)", () => {
-    const gold = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "gold");
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
     const broken = withRect(
       makeSolidPng(200, 100, [240, 240, 240, 255]),
       {
@@ -67,16 +67,16 @@ describe("compare pipeline", () => {
       [200, 30, 30, 255],
     );
     const actual = write(broken, "actual");
-    const r = compare(gold, actual, outDir(), { profile: "component/strict" });
+    const r = compare(baseline, actual, outDir(), { profile: "component/strict" });
     expect(r.pass).toBe(false);
     expect(r.topIssues.some((i) => i.kind === "pixel")).toBe(true);
     expect(r.topIssues.every((i) => i.kind !== "pixel" || i.repairCandidate === false)).toBe(true);
   });
 
   it("area-gap over threshold short-circuits downstream signals with a size topIssue", () => {
-    const gold = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "gold");
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
     const actual = write(makeSolidPng(240, 120, [240, 240, 240, 255]), "actual");
-    const r = compare(gold, actual, outDir(), { profile: "component/strict" });
+    const r = compare(baseline, actual, outDir(), { profile: "component/strict" });
     expect(r.pass).toBe(false);
     expect(r.areaGapPercent).toBeGreaterThan(2);
     expect(r.matchRatio).toBeNull();
@@ -90,9 +90,9 @@ describe("compare pipeline", () => {
   });
 
   it("small size drift under areaGap threshold still compares (pad align)", () => {
-    const gold = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "gold");
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
     const actual = write(makeSolidPng(201, 100, [240, 240, 240, 255]), "actual");
-    const r = compare(gold, actual, outDir(), { profile: "component/strict" });
+    const r = compare(baseline, actual, outDir(), { profile: "component/strict" });
     expect(r.matchRatio).not.toBeNull();
     expect(r.resizedForCompare).toBe(true);
   });
@@ -107,9 +107,9 @@ describe("compare pipeline", () => {
 
   it("dark compare pads with border color so smaller actual still passes", () => {
     const dark: [number, number, number, number] = [20, 20, 24, 255];
-    const gold = write(makeSolidPng(200, 100, dark), "dark-gold");
+    const baseline = write(makeSolidPng(200, 100, dark), "dark-baseline");
     const actual = write(makeSolidPng(198, 98, dark), "dark-actual");
-    const r = compare(gold, actual, outDir(), { profile: "component/dev" });
+    const r = compare(baseline, actual, outDir(), { profile: "component/dev" });
     expect(r.pass).toBe(true);
     expect(r.resizedForCompare).toBe(true);
     expect(r.matchRatio).toBe(1);
@@ -117,9 +117,9 @@ describe("compare pipeline", () => {
   });
 
   it("expect-size mismatch fails even when images match", () => {
-    const gold = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "gold");
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
     const actual = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "actual");
-    const r = compare(gold, actual, outDir(), {
+    const r = compare(baseline, actual, outDir(), {
       profile: "component/strict",
       expectSize: { width: 544, height: 464 },
     });
@@ -131,9 +131,9 @@ describe("compare pipeline", () => {
   });
 
   it("pass is derived from per-signal thresholds only", () => {
-    const gold = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "gold");
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
     const actual = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "actual");
-    const r = compare(gold, actual, outDir(), { profile: "component/strict" });
+    const r = compare(baseline, actual, outDir(), { profile: "component/strict" });
     expect(r.pass).toBe(true);
 
     const broken = withRect(
@@ -147,22 +147,22 @@ describe("compare pipeline", () => {
       [10, 10, 10, 255],
     );
     const badActual = write(broken, "bad");
-    const bad = compare(gold, badActual, outDir(), { profile: "component/strict" });
+    const bad = compare(baseline, badActual, outDir(), { profile: "component/strict" });
     expect(bad.pass).toBe(false);
     expect(bad.topIssues.length).toBeGreaterThan(0);
   });
 
   it("flags color mismatch via deltaE on recolor", () => {
-    const gold = write(makeSolidPng(200, 100, [0, 120, 220, 255]), "gold");
+    const baseline = write(makeSolidPng(200, 100, [0, 120, 220, 255]), "baseline");
     const actual = write(makeSolidPng(200, 100, [50, 170, 120, 255]), "actual");
-    const r = compare(gold, actual, outDir(), { profile: "component/strict" });
+    const r = compare(baseline, actual, outDir(), { profile: "component/strict" });
     expect(r.pass).toBe(false);
     expect(r.avgDeltaE).not.toBeNull();
     expect(r.avgDeltaE as number).toBeGreaterThan(3);
   });
 
   it("dispersed residuals stay low severity (text rasterization class)", () => {
-    const goldPng = makeSolidPng(800, 600, [240, 240, 240, 255]);
+    const baselinePng = makeSolidPng(800, 600, [240, 240, 240, 255]);
     const hot = makeSolidPng(800, 600, [240, 240, 240, 255]);
     let placed = 0;
     for (let y = 0; y < 600 && placed < 100; y += 60) {
@@ -175,16 +175,16 @@ describe("compare pipeline", () => {
         placed += 1;
       }
     }
-    const gold = write(goldPng, "gold");
+    const baseline = write(baselinePng, "baseline");
     const actual = write(hot, "actual");
-    const r = compare(gold, actual, outDir(), { profile: "page" });
+    const r = compare(baseline, actual, outDir(), { profile: "page" });
     expect(r.pass).toBe(true);
     expect(r.warnings).toHaveLength(0);
     expect(r.topIssues.some((i) => i.kind === "residual" && i.severity === "low")).toBe(true);
   });
 
   it("connected residual cluster blocks done-gate even when signal thresholds pass", () => {
-    const goldPng = makeSolidPng(800, 600, [240, 240, 240, 255]);
+    const baselinePng = makeSolidPng(800, 600, [240, 240, 240, 255]);
     const hot = makeSolidPng(800, 600, [240, 240, 240, 255]);
     for (let i = 0; i < 100; i++) {
       for (const x of [100 + i, 101 + i]) {
@@ -196,7 +196,7 @@ describe("compare pipeline", () => {
         hot.data[offset + 3] = 255;
       }
     }
-    const r = compare(write(goldPng, "gold"), write(hot, "actual"), outDir(), {
+    const r = compare(write(baselinePng, "baseline"), write(hot, "actual"), outDir(), {
       profile: "page",
     });
     expect(r.pass).toBe(true);

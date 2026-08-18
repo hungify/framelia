@@ -93,7 +93,7 @@ async function writeScore(outDir: string, overrides: Record<string, unknown> = {
       ssim: 0.97,
       avgDeltaE: 2.4,
       diffPixels: 120,
-      goldSize: { width: 320, height: 240 },
+      baselineSize: { width: 320, height: 240 },
       actualSize: { width: 320, height: 240 },
       baseline: { kind: "web", path: baselinePath, url: "https://baseline.test", revision: "main" },
       target: { url: "https://actual.test" },
@@ -177,7 +177,7 @@ describe("dashboard projection", () => {
       viewport: { deviceScaleFactor: 2 },
       artifactPaths: {
         score: "contracts/home/visual-score.json",
-        baseline: "contracts/home/baseline.png",
+        baseline: "contracts/home/figma-baseline.png",
         actual: "contracts/home/actual.png",
         diff: "contracts/home/diff.png",
       },

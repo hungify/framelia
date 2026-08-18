@@ -5,7 +5,7 @@
   "description": "Visual verification monorepo for Figma-to-web and web-to-web workflows.",
   "license": "MIT",
   "scripts": {
-    "build": "pnpm --filter @framelia/dashboard-server build",
+    "build": "pnpm --filter @framelia/contracts build && pnpm --filter @framelia/verify build && pnpm --filter @framelia/dashboard-server build && pnpm --filter framelia build",
     "dev:dashboard": "pnpm --filter @framelia/dashboard dev",
     "framelia": "pnpm --filter framelia cli",
     "typecheck": "pnpm -r typecheck",

@@ -18,17 +18,18 @@ export type {
   DoneGateViewport,
   ViewportVerdict,
 } from "./done-gate/index.ts";
-export { fetchGold, goldMetaPath, readGoldMeta } from "./fetch-gold.ts";
-export type { FetchGoldOptions, FetchGoldOutcome, GoldMeta } from "./fetch-gold.ts";
+export { fetchBaseline, baselineMetaPath, readBaselineMeta } from "./fetch-baseline.ts";
+export type { FetchBaselineOptions, FetchBaselineOutcome, BaselineMeta } from "./fetch-baseline.ts";
 export { assertProjectRelativePath, loadEnvFiles, loadProjectEnv } from "./load-env.ts";
 export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";
-export { checkGoldStaleness, DEFAULT_MAX_GOLD_AGE_DAYS } from "./staleness.ts";
+export { checkBaselineStaleness, DEFAULT_MAX_BASELINE_AGE_DAYS } from "./staleness.ts";
 export type { StalenessOptions } from "./staleness.ts";
 export { getProfile, PROFILES } from "./profiles.ts";
 export type { Profile } from "./profiles.ts";
 export { doneGateFromArtifact, writeVerificationArtifact } from "./verify.ts";
 export { SCHEMA_VERSION, AppError } from "./types.ts";
+export { RUN_ARTIFACT, FIGMA_BASELINE_ARTIFACT, WEB_BASELINE_ARTIFACT } from "./artifacts.ts";
 export {
   DEFAULT_IMAGE_SCALE,
   EXIT_OK,
@@ -78,3 +79,11 @@ export type {
   ContractScope,
   ExpectStyle,
 } from "@framelia/contracts";
+export {
+  clearNodeMetaCache,
+  deriveExpectStyle,
+  getNodeMetadata,
+  resolveNodeSpec,
+  resolveToken,
+} from "./figma-api.ts";
+export type { NodeMetadata, ResolveNodeSpecOutcome } from "./figma-api.ts";

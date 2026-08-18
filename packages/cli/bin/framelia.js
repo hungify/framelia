@@ -1,24 +1,15 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { register } from "tsx/esm/api";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const cli = path.join(here, "..", "src", "cli.ts");
-const require = createRequire(import.meta.url);
+// Only the CLI's own code is precompiled (dist/cli.js). A user's
+// framelia.config.ts is arbitrary TypeScript, dynamically imported at
+// runtime -- register a loader hook once, up front, so that plain import()
+// calls anywhere downstream (see src/config.ts) transparently handle it.
+//
+// This is why "tsx" is a dependency, not a devDependency, in package.json:
+// it isn't a dev-time convenience here, it's the runtime mechanism that
+// makes framelia.config.ts loadable in a published install. Do not move it.
+register();
 
-let tsxCli;
-try {
-  tsxCli = require.resolve("tsx/cli");
-} catch {
-  console.error("framelia: missing dependency `tsx`. Run: pnpm add tsx");
-  process.exit(1);
-}
-
-const result = spawnSync(process.execPath, [tsxCli, cli, ...process.argv.slice(2)], {
-  stdio: "inherit",
-  env: process.env,
-});
-
-process.exit(result.status ?? 1);
+const { run } = await import("../dist/cli.js");
+await run();

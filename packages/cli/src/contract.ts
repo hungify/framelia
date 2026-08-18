@@ -8,7 +8,7 @@ import {
   visualArtifactPath,
   type ExpectStyle,
 } from "@framelia/contracts";
-import { deriveExpectStyle, resolveNodeSpec } from "@framelia/verify/internal";
+import { deriveExpectStyle, resolveNodeSpec } from "@framelia/verify";
 
 import {
   createContractRequest,
@@ -20,9 +20,37 @@ export { createContractRequest, writeContractRequest } from "./contract/scaffold
 
 type BaselineAnswers = ContractAnswers["baseline"];
 
-function cancelled(value: unknown): value is symbol {
-  if (!p.isCancel(value)) return false;
-  p.cancel("Setup cancelled.");
+/**
+ * Everything runCreateContract needs from @clack/prompts, as a seam: the real
+ * module in production, a scripted fake in tests. Lets the branch structure
+ * (custom viewport, region scope, cancellation) be exercised directly instead
+ * of only through a full CLI subprocess with every flag supplied.
+ */
+export interface PromptAdapter {
+  text(options: Parameters<typeof p.text>[0]): ReturnType<typeof p.text>;
+  select<T extends string>(
+    options: Parameters<typeof p.select<T>>[0],
+  ): ReturnType<typeof p.select<T>>;
+  cancel(message: string): void;
+  isCancel(value: unknown): boolean;
+  intro(message: string): void;
+  outro(message: string): void;
+  warn(message: string): void;
+}
+
+export const realPromptAdapter: PromptAdapter = {
+  text: (options) => p.text(options),
+  select: (options) => p.select(options),
+  cancel: (message) => p.cancel(message),
+  isCancel: (value) => p.isCancel(value),
+  intro: (message) => p.intro(message),
+  outro: (message) => p.outro(message),
+  warn: (message) => p.log.warn(message),
+};
+
+function cancelled(prompts: PromptAdapter, value: unknown): value is symbol {
+  if (!prompts.isCancel(value)) return false;
+  prompts.cancel("Setup cancelled.");
   process.exitCode = 1;
   return true;
 }
@@ -34,7 +62,7 @@ function validateHttpUrl(value: string | undefined): string | undefined {
   return httpUrlSchema.safeParse(value).success ? undefined : "Enter an http:// or https:// URL.";
 }
 
-function positiveInteger(value: string | undefined): string | undefined {
+function validatePositiveInteger(value: string | undefined): string | undefined {
   if (value == null) return "Required.";
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? undefined : "Enter a positive integer.";
@@ -51,23 +79,40 @@ function requireFlag<T>(flagName: string, value: T, validate: (value: T) => stri
   return value;
 }
 
-async function text(options: Parameters<typeof p.text>[0]): Promise<string | undefined> {
-  const value = await p.text(options);
-  return cancelled(value) ? undefined : value;
+/** Resolves one field: the flag if supplied (validated as a CLI usage error), otherwise
+ * an interactive prompt with the same validator. Every prompted field in this command
+ * goes through here, so a flag can always stand in for the prompt it replaces. */
+async function resolveField(
+  flagName: string,
+  flagValue: string | undefined,
+  validate: (value: string | undefined) => string | undefined,
+  prompt: () => Promise<string | undefined>,
+): Promise<string | undefined> {
+  return flagValue !== undefined ? requireFlag(flagName, flagValue, validate) : await prompt();
+}
+
+async function text(
+  prompts: PromptAdapter,
+  options: Parameters<typeof p.text>[0],
+): Promise<string | undefined> {
+  const value = await prompts.text(options);
+  return cancelled(prompts, value) ? undefined : value;
 }
 
 async function select<T extends string>(
+  prompts: PromptAdapter,
   options: Parameters<typeof p.select<T>>[0],
 ): Promise<T | undefined> {
-  const value = await p.select<T>(options);
-  return cancelled(value) ? undefined : value;
+  const value = await prompts.select<T>(options);
+  return cancelled(prompts, value) ? undefined : value;
 }
 
 async function positiveIntegerText(
+  prompts: PromptAdapter,
   message: string,
   placeholder?: string,
 ): Promise<number | undefined> {
-  const value = await text({ message, placeholder, validate: positiveInteger });
+  const value = await text(prompts, { message, placeholder, validate: validatePositiveInteger });
   return value === undefined ? undefined : Number(value);
 }
 
@@ -76,7 +121,10 @@ async function positiveIntegerText(
  * Never blocks contract creation — a missing token or network error just means
  * the contract ships without expectStyle, same as before this existed.
  */
-async function tryFetchExpectStyle(baseline: BaselineAnswers): Promise<ExpectStyle | undefined> {
+async function tryFetchExpectStyle(
+  prompts: PromptAdapter,
+  baseline: BaselineAnswers,
+): Promise<ExpectStyle | undefined> {
   const resolved = await resolveNodeSpec({
     fileKey: baseline.fileKey,
     nodeId: baseline.nodeId,
@@ -84,11 +132,20 @@ async function tryFetchExpectStyle(baseline: BaselineAnswers): Promise<ExpectSty
     purpose: "expected component style",
   });
   if (!resolved.ok) {
-    p.log.warn(`Skipping expected-style bake-in: ${resolved.warning}`);
+    prompts.warn(`Skipping expected-style bake-in: ${resolved.warning}`);
     return undefined;
   }
   return deriveExpectStyle(resolved.meta);
 }
+
+/** Single source of truth for the --viewport choices, shared by CreateContractOptions
+ * and commands/contract.ts's flag parser -- adding a preset here is enough. */
+export const VIEWPORT_PRESETS = ["desktop", "mobile", "custom"] as const;
+export type ViewportPreset = (typeof VIEWPORT_PRESETS)[number];
+
+/** Single source of truth for the --scope choices; see VIEWPORT_PRESETS. */
+export const SCOPE_KINDS = ["page", "region"] as const;
+export type ScopeKind = (typeof SCOPE_KINDS)[number];
 
 export interface CreateContractOptions {
   projectRoot: string;
@@ -99,68 +156,75 @@ export interface CreateContractOptions {
   contractId?: string;
   fileKey?: string;
   nodeId?: string;
-  viewport?: "desktop" | "mobile" | "custom";
+  viewport?: ViewportPreset;
   viewportName?: string;
   viewportWidth?: number;
   viewportHeight?: number;
-  scope?: "page" | "region";
+  scope?: ScopeKind;
   pageReason?: string;
   selector?: string;
   regionWidth?: number;
   regionHeight?: number;
 }
 
-export async function runCreateContract(options: CreateContractOptions): Promise<void> {
-  p.intro("Create Framelia visual contract");
+function validateContractId(value: string | undefined): string | undefined {
+  return CONTRACT_ID_PATTERN.test(value ?? "")
+    ? undefined
+    : "Use lowercase letters, numbers, dots, or hyphens.";
+}
 
-  const targetUrl = options.targetUrl
-    ? requireFlag("--target-url", options.targetUrl, validateHttpUrl)
-    : await text({
-        message: "Target application URL",
-        placeholder: "http://127.0.0.1:3000",
-        initialValue: "http://127.0.0.1:3000",
-        validate: validateHttpUrl,
-      });
+function validateNodeId(value: string | undefined): string | undefined {
+  return FIGMA_NODE_ID.test(value ?? "") ? undefined : "Enter a Figma node ID such as 153:5181.";
+}
+
+export async function runCreateContract(
+  options: CreateContractOptions,
+  prompts: PromptAdapter = realPromptAdapter,
+): Promise<void> {
+  prompts.intro("Create Framelia visual contract");
+
+  const targetUrl = await resolveField("--target-url", options.targetUrl, validateHttpUrl, () =>
+    text(prompts, {
+      message: "Target application URL",
+      placeholder: "http://127.0.0.1:3000",
+      initialValue: "http://127.0.0.1:3000",
+      validate: validateHttpUrl,
+    }),
+  );
   if (!targetUrl) return;
 
-  const contractId = options.contractId
-    ? requireFlag("--contract-id", options.contractId, (value) =>
-        CONTRACT_ID_PATTERN.test(value ?? "")
-          ? undefined
-          : "Use lowercase letters, numbers, dots, or hyphens.",
-      )
-    : await text({
+  const contractId = await resolveField(
+    "--contract-id",
+    options.contractId,
+    validateContractId,
+    () =>
+      text(prompts, {
         message: "Contract ID",
         placeholder: "home.desktop",
         initialValue: "home.desktop",
-        validate: (value) =>
-          CONTRACT_ID_PATTERN.test(value ?? "")
-            ? undefined
-            : "Use lowercase letters, numbers, dots, or hyphens.",
-      });
+        validate: validateContractId,
+      }),
+  );
   if (!contractId) return;
 
-  const fileKey = options.fileKey
-    ? requireFlag("--file-key", options.fileKey, required)
-    : await text({ message: "Figma file key", validate: required });
+  const fileKey = await resolveField("--file-key", options.fileKey, required, () =>
+    text(prompts, { message: "Figma file key", validate: required }),
+  );
   if (!fileKey) return;
 
-  const nodeId = options.nodeId
-    ? requireFlag("--node-id", options.nodeId, (value) =>
-        FIGMA_NODE_ID.test(value ?? "") ? undefined : "Enter a Figma node ID such as 153:5181.",
-      )
-    : await text({
-        message: "Figma node ID",
-        placeholder: "153:5181",
-        validate: (value) =>
-          FIGMA_NODE_ID.test(value ?? "") ? undefined : "Enter a Figma node ID such as 153:5181.",
-      });
+  const nodeId = await resolveField("--node-id", options.nodeId, validateNodeId, () =>
+    text(prompts, {
+      message: "Figma node ID",
+      placeholder: "153:5181",
+      validate: validateNodeId,
+    }),
+  );
   if (!nodeId) return;
   const baseline: BaselineAnswers = { kind: "figma", fileKey, nodeId };
 
   const viewportPreset =
     options.viewport ??
-    (await select<"desktop" | "mobile" | "custom">({
+    (await select<"desktop" | "mobile" | "custom">(prompts, {
       message: "Viewport",
       options: [
         { value: "desktop", label: "Desktop", hint: "1440 × 1024" },
@@ -172,13 +236,14 @@ export async function runCreateContract(options: CreateContractOptions): Promise
 
   let viewport: ContractAnswers["viewport"];
   if (viewportPreset === "custom") {
-    const name = options.viewportName
-      ? requireFlag("--viewport-name", options.viewportName, required)
-      : await text({ message: "Viewport name", placeholder: "tablet", validate: required });
+    const name = await resolveField("--viewport-name", options.viewportName, required, () =>
+      text(prompts, { message: "Viewport name", placeholder: "tablet", validate: required }),
+    );
     if (!name) return;
-    const width = options.viewportWidth ?? (await positiveIntegerText("Viewport width"));
+    const width = options.viewportWidth ?? (await positiveIntegerText(prompts, "Viewport width"));
     if (width === undefined) return;
-    const height = options.viewportHeight ?? (await positiveIntegerText("Viewport height"));
+    const height =
+      options.viewportHeight ?? (await positiveIntegerText(prompts, "Viewport height"));
     if (height === undefined) return;
     viewport = { name, width, height };
   } else {
@@ -190,7 +255,7 @@ export async function runCreateContract(options: CreateContractOptions): Promise
 
   const scopeKind =
     options.scope ??
-    (await select<"page" | "region">({
+    (await select<"page" | "region">(prompts, {
       message: "Capture scope",
       options: [
         { value: "page", label: "Full page" },
@@ -201,30 +266,32 @@ export async function runCreateContract(options: CreateContractOptions): Promise
 
   let scope: ContractAnswers["scope"];
   if (scopeKind === "page") {
-    const pageReason = options.pageReason
-      ? requireFlag("--page-reason", options.pageReason, required)
-      : await text({
-          message: "Why does baseline represent complete page?",
-          placeholder: "Baseline node represents complete page.",
-          initialValue: "Baseline node represents complete page.",
-          validate: required,
-        });
+    const pageReason = await resolveField("--page-reason", options.pageReason, required, () =>
+      text(prompts, {
+        message: "Why does baseline represent complete page?",
+        placeholder: "Baseline node represents complete page.",
+        initialValue: "Baseline node represents complete page.",
+        validate: required,
+      }),
+    );
     if (!pageReason) return;
     scope = { kind: "page", pageReason };
   } else {
-    const selector = options.selector
-      ? requireFlag("--selector", options.selector, required)
-      : await text({
-          message: "CSS selector",
-          placeholder: "[data-testid=card]",
-          validate: required,
-        });
+    const selector = await resolveField("--selector", options.selector, required, () =>
+      text(prompts, {
+        message: "CSS selector",
+        placeholder: "[data-testid=card]",
+        validate: required,
+      }),
+    );
     if (!selector) return;
-    const width = options.regionWidth ?? (await positiveIntegerText("Expected region width"));
+    const width =
+      options.regionWidth ?? (await positiveIntegerText(prompts, "Expected region width"));
     if (width === undefined) return;
-    const height = options.regionHeight ?? (await positiveIntegerText("Expected region height"));
+    const height =
+      options.regionHeight ?? (await positiveIntegerText(prompts, "Expected region height"));
     if (height === undefined) return;
-    const expectStyle = await tryFetchExpectStyle(baseline);
+    const expectStyle = await tryFetchExpectStyle(prompts, baseline);
     scope = {
       kind: "region",
       selector,
@@ -246,5 +313,5 @@ export async function runCreateContract(options: CreateContractOptions): Promise
     options.outputPath ?? visualArtifactPath(featureName, VISUAL_CONTRACT_FILE),
   );
   writeContractRequest(outputPath, request, options.force);
-  p.outro(`Created ${outputPath}`);
+  prompts.outro(`Created ${outputPath}`);
 }

@@ -10,7 +10,7 @@ import {
   type AttachJsonFn,
 } from "./attach.ts";
 import { captureActual } from "./capture.ts";
-import type { FrameliaScoreAttachment } from "./score-attachment.ts";
+import { buildScoreAttachment, type FrameliaScoreAttachment } from "./score-attachment.ts";
 import { withTimeout } from "./timeout.ts";
 
 export interface ComparePagesOptions {
@@ -45,6 +45,9 @@ export async function runComparePages(
   context: ComparePagesContext,
 ): Promise<MatcherReturnType> {
   const { timeoutMs, workDir } = context;
+  // Web-to-web comparisons default to component/dev (not toMatchFigma's
+  // component/strict) — these have no Figma baseline, aren't done-gate
+  // eligible, and dev's looser thresholds fit an informal check.
   const profile = options.profile ?? (options.selector ? "component/dev" : "page");
 
   try {
@@ -99,14 +102,7 @@ export async function runComparePages(
       actual: aPath,
       diff: outcome.diffPath,
     });
-    const scoreAttachment: FrameliaScoreAttachment = {
-      pass: outcome.pass,
-      matchRatio: outcome.matchRatio,
-      ssim: outcome.ssim,
-      avgDeltaE: outcome.avgDeltaE,
-      diffPixels: outcome.diffPixels,
-      goldSize: outcome.goldSize,
-      actualSize: outcome.actualSize,
+    const scoreAttachment: FrameliaScoreAttachment = buildScoreAttachment(outcome, {
       targetUrl: pageA.url(),
       baselineKind: "web",
       attachmentBaseName: baseName,
@@ -117,7 +113,7 @@ export async function runComparePages(
       masks: options.masks,
       maxMaskedAreaRatio: options.maxMaskedAreaRatio,
       captureEvidence: captureA,
-    };
+    });
     await context.attachJson(`${baseName}${SCORE_ATTACHMENT_SUFFIX}`, scoreAttachment);
 
     return {

@@ -3,6 +3,7 @@
     "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "customConditions": ["framelia-dev"],
     "lib": ["ES2023", "DOM"],
     "strict": true,
     "noUncheckedIndexedAccess": true,

@@ -53,7 +53,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build release assets
-        run: pnpm --filter @framelia/dashboard-server build
+        run: pnpm run build
       - name: Verify synchronized package versions
         id: release
         shell: bash

@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 import type { GetFileNodesResponse, GetImagesResponse } from "@figma/rest-api-spec";
 
-import { GOLD_ARTIFACT } from "./artifacts.ts";
+import { FIGMA_BASELINE_ARTIFACT } from "./artifacts.ts";
 import { compositeOnCanvas, parsePng, writePng } from "./compare/png.ts";
 import {
   DEFAULT_IMAGE_SCALE,
@@ -17,7 +17,7 @@ import {
 } from "./constants.ts";
 import { resolveToken } from "./figma-api.ts";
 
-export interface FetchGoldOptions {
+export interface FetchBaselineOptions {
   fileKey: string;
   nodeId: string;
   outPath: string;
@@ -34,7 +34,7 @@ export interface ApiCallLogEntry {
   status: number;
 }
 
-export interface GoldMeta {
+export interface BaselineMeta {
   nodeId: string;
   fileKey: string;
   lastModified: string | null;
@@ -43,19 +43,19 @@ export interface GoldMeta {
   apiCallLog: ApiCallLogEntry[];
 }
 
-export type FetchGoldOutcome =
+export type FetchBaselineOutcome =
   | {
       ok: true;
       fetched: true;
-      goldPath: string;
+      baselinePath: string;
       metaPath: string;
-      meta: GoldMeta;
+      meta: BaselineMeta;
       warnings: string[];
     }
   | { ok: true; fetched: false; errorClass: "retryable"; message: string; warnings: string[] }
   | { ok: false; fetched: false; errorClass: "auth" | "config"; message: string };
 
-export async function fetchGold(options: FetchGoldOptions): Promise<FetchGoldOutcome> {
+export async function fetchBaseline(options: FetchBaselineOptions): Promise<FetchBaselineOutcome> {
   const token = resolveToken(options.token);
   if (!token) {
     return {
@@ -70,10 +70,10 @@ export async function fetchGold(options: FetchGoldOptions): Promise<FetchGoldOut
   const warnings: string[] = [];
   const apiCallLog: ApiCallLogEntry[] = [];
   const scale = options.scale ?? DEFAULT_IMAGE_SCALE;
-  let tempGoldPath: string | undefined;
+  let tempBaselinePath: string | undefined;
   let tempMetaPath: string | undefined;
-  let goldCommitted = false;
-  let previousGold: Buffer | null = null;
+  let baselineCommitted = false;
+  let previousBaseline: Buffer | null = null;
 
   // Shared by every outbound request in this flow -- the api.figma.com JSON calls and the
   // final CDN image download alike -- so a transient 429/5xx self-heals the same way
@@ -110,7 +110,7 @@ export async function fetchGold(options: FetchGoldOptions): Promise<FetchGoldOut
       endpoint.split("?")[0] ?? endpoint,
     );
 
-  const classify = (status: number, context: string): FetchGoldOutcome | null => {
+  const classify = (status: number, context: string): FetchBaselineOutcome | null => {
     if (status === HTTP_STATUS.UNAUTHORIZED || status === HTTP_STATUS.FORBIDDEN) {
       return {
         ok: false,
@@ -132,7 +132,7 @@ export async function fetchGold(options: FetchGoldOptions): Promise<FetchGoldOut
         ok: true,
         fetched: false,
         errorClass: "retryable",
-        message: `Figma API unavailable (${status}) during ${context}; existing gold on disk remains usable.`,
+        message: `Figma API unavailable (${status}) during ${context}; existing baseline on disk remains usable.`,
         warnings,
       };
     }
@@ -197,31 +197,31 @@ export async function fetchGold(options: FetchGoldOptions): Promise<FetchGoldOut
         ok: true,
         fetched: false,
         errorClass: "retryable",
-        message: `Image download failed (${pngRes.status}); existing gold on disk remains usable.`,
+        message: `Image download failed (${pngRes.status}); existing baseline on disk remains usable.`,
         warnings,
       };
     }
     const buf = Buffer.from(await pngRes.arrayBuffer());
     const outDir = path.dirname(options.outPath);
     fs.mkdirSync(outDir, { recursive: true });
-    previousGold = fs.existsSync(options.outPath) ? fs.readFileSync(options.outPath) : null;
+    previousBaseline = fs.existsSync(options.outPath) ? fs.readFileSync(options.outPath) : null;
     const tempSuffix = `.tmp-${process.pid}-${Date.now()}`;
-    tempGoldPath = `${options.outPath}${tempSuffix}`;
-    tempMetaPath = `${goldMetaPath(options.outPath)}${tempSuffix}`;
-    fs.writeFileSync(tempGoldPath, buf);
+    tempBaselinePath = `${options.outPath}${tempSuffix}`;
+    tempMetaPath = `${baselineMetaPath(options.outPath)}${tempSuffix}`;
+    fs.writeFileSync(tempBaselinePath, buf);
     // Validate the download is a well-formed PNG before committing it (throws on
     // corruption); parse the buffer already in memory instead of reading it back off disk.
     const downloaded = parsePng(buf);
 
     if (options.canvasFill) {
       const composited = compositeOnCanvas(downloaded, options.canvasFill);
-      writePng(tempGoldPath, composited);
+      writePng(tempBaselinePath, composited);
       warnings.push(
-        `composited gold onto canvasFill ${options.canvasFill} (alpha/shadow flattened).`,
+        `composited baseline onto canvasFill ${options.canvasFill} (alpha/shadow flattened).`,
       );
     }
 
-    const meta: GoldMeta = {
+    const meta: BaselineMeta = {
       nodeId: options.nodeId,
       fileKey: options.fileKey,
       lastModified: metaJson.lastModified ?? null,
@@ -229,42 +229,42 @@ export async function fetchGold(options: FetchGoldOptions): Promise<FetchGoldOut
       apiCallCount: apiCallLog.length,
       apiCallLog,
     };
-    const metaPath = goldMetaPath(options.outPath);
+    const metaPath = baselineMetaPath(options.outPath);
     fs.writeFileSync(tempMetaPath, `${JSON.stringify(meta, null, JSON_INDENT_SPACES)}\n`);
-    fs.renameSync(tempGoldPath, options.outPath);
-    goldCommitted = true;
+    fs.renameSync(tempBaselinePath, options.outPath);
+    baselineCommitted = true;
     fs.renameSync(tempMetaPath, metaPath);
-    tempGoldPath = undefined;
+    tempBaselinePath = undefined;
     tempMetaPath = undefined;
 
-    return { ok: true, fetched: true, goldPath: options.outPath, metaPath, meta, warnings };
+    return { ok: true, fetched: true, baselinePath: options.outPath, metaPath, meta, warnings };
   } catch (err) {
-    if (goldCommitted) {
-      if (previousGold) fs.writeFileSync(options.outPath, previousGold);
+    if (baselineCommitted) {
+      if (previousBaseline) fs.writeFileSync(options.outPath, previousBaseline);
       else fs.rmSync(options.outPath, { force: true });
     }
-    for (const tempPath of [tempGoldPath, tempMetaPath]) {
+    for (const tempPath of [tempBaselinePath, tempMetaPath]) {
       if (tempPath) fs.rmSync(tempPath, { force: true });
     }
     return {
       ok: true,
       fetched: false,
       errorClass: "retryable",
-      message: `Network error during fetch-gold (${sanitizeError(err)}); existing gold on disk remains usable.`,
+      message: `Network error during fetch-baseline (${sanitizeError(err)}); existing baseline on disk remains usable.`,
       warnings,
     };
   }
 }
 
-export function goldMetaPath(goldPath: string): string {
-  return path.join(path.dirname(goldPath), GOLD_ARTIFACT.meta);
+export function baselineMetaPath(baselinePath: string): string {
+  return path.join(path.dirname(baselinePath), FIGMA_BASELINE_ARTIFACT.meta);
 }
 
-export function readGoldMeta(goldPath: string): GoldMeta | null {
-  const p = goldMetaPath(goldPath);
+export function readBaselineMeta(baselinePath: string): BaselineMeta | null {
+  const p = baselineMetaPath(baselinePath);
   if (!fs.existsSync(p)) return null;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8")) as GoldMeta;
+    return JSON.parse(fs.readFileSync(p, "utf8")) as BaselineMeta;
   } catch {
     return null;
   }

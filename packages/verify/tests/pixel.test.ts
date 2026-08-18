@@ -22,13 +22,13 @@ describe("countRealDiffPixels", () => {
 
 describe("pixelCompare", () => {
   it("defaults includeAA to false", () => {
-    const gold = makeSolidPng(3, 3, [0, 0, 0, 255]);
+    const baseline = makeSolidPng(3, 3, [0, 0, 0, 255]);
     const actual = makeSolidPng(3, 3, [0, 0, 0, 255]);
     actual.data[(3 * 1 + 1) << 2] = 255;
     actual.data[((3 * 1 + 1) << 2) + 1] = 255;
     actual.data[((3 * 1 + 1) << 2) + 2] = 255;
-    expect(pixelCompare(gold, actual).diffPixels).toBe(
-      pixelCompare(gold, actual, undefined, false).diffPixels,
+    expect(pixelCompare(baseline, actual).diffPixels).toBe(
+      pixelCompare(baseline, actual, undefined, false).diffPixels,
     );
   });
 });

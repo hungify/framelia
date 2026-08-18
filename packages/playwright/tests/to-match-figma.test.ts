@@ -36,7 +36,7 @@ function stubFigmaFetch(png: Buffer, options: { imageDelayMs?: number } = {}): v
     }
     if (url.includes("/v1/images/")) {
       return new Response(
-        JSON.stringify({ images: { [NODE_ID]: "https://cdn.example/gold.png" } }),
+        JSON.stringify({ images: { [NODE_ID]: "https://cdn.example/baseline.png" } }),
         {
           status: 200,
         },

@@ -13,6 +13,15 @@ import {
 } from "../lib/contract-tree";
 import { isTypingTarget } from "../lib/dom";
 
+/** Wraps `direction` steps from `currentIndex` within a list of `length` items. */
+export function nextSelectionIndex(
+  currentIndex: number,
+  direction: number,
+  length: number,
+): number {
+  return (((currentIndex + direction) % length) + length) % length;
+}
+
 export function useRunDashboard() {
   const route = useRoute();
   const router = useRouter();
@@ -70,8 +79,7 @@ export function useRunDashboard() {
     if (!selected.value || contracts.value.length === 0) return;
     const index = contracts.value.findIndex((contract) => contract.id === selected.value?.id);
     if (index < 0) return;
-    const next =
-      contracts.value[(index + direction + contracts.value.length) % contracts.value.length];
+    const next = contracts.value[nextSelectionIndex(index, direction, contracts.value.length)];
     if (next) selectContract(next);
   }
 

@@ -1,8 +1,8 @@
 import type { PNG } from "pngjs";
 import { ssim } from "ssim.js";
 
-export function ssimCompare(gold: PNG, actual: PNG): number {
-  const a = toImageData(gold);
+export function ssimCompare(baseline: PNG, actual: PNG): number {
+  const a = toImageData(baseline);
   const b = toImageData(actual);
   const { mssim } = ssim(a, b, { maxSize: Infinity });
   return mssim;

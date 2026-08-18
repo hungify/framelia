@@ -7,10 +7,10 @@ export interface Bbox {
   y1: number;
 }
 
-export function avgDeltaE2000(gold: PNG, actual: PNG, bbox: Bbox, maxPixels = 100_000): number {
-  if (gold.width !== actual.width || gold.height !== actual.height) {
+export function avgDeltaE2000(baseline: PNG, actual: PNG, bbox: Bbox, maxPixels = 100_000): number {
+  if (baseline.width !== actual.width || baseline.height !== actual.height) {
     throw new Error(
-      `avgDeltaE2000 requires equal dimensions: gold ${gold.width}x${gold.height}, actual ${actual.width}x${actual.height}`,
+      `avgDeltaE2000 requires equal dimensions: baseline ${baseline.width}x${baseline.height}, actual ${actual.width}x${actual.height}`,
     );
   }
   const { x0, y0, x1, y1 } = bbox;
@@ -21,11 +21,11 @@ export function avgDeltaE2000(gold: PNG, actual: PNG, bbox: Bbox, maxPixels = 10
   let count = 0;
   for (let y = y0; y < y1; y += stride) {
     for (let x = x0; x < x1; x += stride) {
-      const i = (gold.width * y + x) << 2;
+      const i = (baseline.width * y + x) << 2;
       const lab1 = rgbToLab(
-        gold.data[i] as number,
-        gold.data[i + 1] as number,
-        gold.data[i + 2] as number,
+        baseline.data[i] as number,
+        baseline.data[i + 1] as number,
+        baseline.data[i + 2] as number,
       );
       const lab2 = rgbToLab(
         actual.data[i] as number,

@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import {
@@ -6,6 +7,7 @@ import {
   FRAMELIA_DIR,
   VISUAL_VERIFICATION_FILE,
   VISUAL_VERIFICATIONS_DIR,
+  type DashboardContractResult,
   type DashboardRun,
   type VerificationArtifact,
 } from "@framelia/contracts";
@@ -21,7 +23,13 @@ import { JSON_INDENT_SPACES, runWithConcurrency, type ContractDefaults } from "@
 import { nanoid } from "nanoid";
 
 import { loadFrameliaConfig } from "../config.ts";
-import { defaultConcurrency } from "../default-concurrency.ts";
+
+const MAX_DEFAULT_CONCURRENCY = 4;
+
+/** Bounded default concurrency for parallel per-artifact work: min(4, CPU cores). */
+function defaultConcurrency(): number {
+  return Math.min(MAX_DEFAULT_CONCURRENCY, os.availableParallelism?.() ?? 2);
+}
 
 export async function readVerificationArtifact(filePath: string): Promise<VerificationArtifact> {
   let value: unknown;
@@ -78,44 +86,39 @@ export function featureKeyFromArtifactEntry(entry: string): string {
   return parts.join("/") || "root";
 }
 
+/**
+ * Replaces every string leaf equal to a known virtual path with its remapped form.
+ * Walks generically instead of naming each evidence field, so a contract field that
+ * carries a virtual path (present in `remap`) is namespaced automatically -- including
+ * ones added to DashboardContractResult after this function was written.
+ */
+function remapVirtualPaths<T>(value: T, remap: ReadonlyMap<string, string>): T {
+  if (typeof value === "string") return (remap.get(value) ?? value) as T;
+  if (Array.isArray(value)) return value.map((item) => remapVirtualPaths(item, remap)) as T;
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        remapVirtualPaths(item, remap),
+      ]),
+    ) as T;
+  }
+  return value;
+}
+
 function withFeaturePrefix(projection: DashboardProjection, feature: string): DashboardProjection {
   const prefix = `${encodeURIComponent(feature)}/`;
-  const remap = (virtual: string) =>
-    virtual.startsWith("contracts/") ? `${prefix}${virtual}` : virtual;
+  const remap = new Map<string, string>();
   const files = new Map<string, string>();
-  for (const [virtual, real] of projection.files) files.set(remap(virtual), real);
-  const contracts = projection.run.contracts.map((contract) => ({
-    ...contract,
+  for (const [virtual, real] of projection.files) {
+    const prefixed = virtual.startsWith("contracts/") ? `${prefix}${virtual}` : virtual;
+    remap.set(virtual, prefixed);
+    files.set(prefixed, real);
+  }
+  const contracts: DashboardContractResult[] = projection.run.contracts.map((contract) => ({
+    ...remapVirtualPaths(contract, remap),
     feature,
     id: `${feature}.${contract.id}`,
-    ...(contract.baseline
-      ? { baseline: { ...contract.baseline, path: remap(contract.baseline.path) } }
-      : {}),
-    ...(contract.actual
-      ? { actual: { ...contract.actual, path: remap(contract.actual.path) } }
-      : {}),
-    ...(contract.diff ? { diff: { ...contract.diff, path: remap(contract.diff.path) } } : {}),
-    ...(contract.captureEvidence
-      ? {
-          captureEvidence: {
-            ...contract.captureEvidence,
-            artifactPaths: {
-              ...(contract.captureEvidence.artifactPaths.score
-                ? { score: remap(contract.captureEvidence.artifactPaths.score) }
-                : {}),
-              ...(contract.captureEvidence.artifactPaths.baseline
-                ? { baseline: remap(contract.captureEvidence.artifactPaths.baseline) }
-                : {}),
-              ...(contract.captureEvidence.artifactPaths.actual
-                ? { actual: remap(contract.captureEvidence.artifactPaths.actual) }
-                : {}),
-              ...(contract.captureEvidence.artifactPaths.diff
-                ? { diff: remap(contract.captureEvidence.artifactPaths.diff) }
-                : {}),
-            },
-          },
-        }
-      : {}),
   }));
   return { files, run: { ...projection.run, contracts } };
 }

@@ -11,7 +11,7 @@ export interface FrameliaScoreAttachment {
   ssim: number | null;
   avgDeltaE: number | null;
   diffPixels: number | null;
-  goldSize: { width: number; height: number };
+  baselineSize: { width: number; height: number };
   actualSize: { width: number; height: number };
   targetUrl: string;
   baselineKind: "figma" | "web";
@@ -30,9 +30,44 @@ export interface FrameliaScoreAttachment {
   nodeId?: string;
 }
 import type { VisualMask } from "@framelia/contracts";
-import type { ExpectSize, ProfileName } from "@framelia/verify";
+import type { CompareOutcome, ExpectSize, ProfileName } from "@framelia/verify";
 import type { CaptureEvidence } from "@framelia/verify/internal";
 
 export type MatcherScope =
   | { kind: "page"; fullPage: boolean }
   | { kind: "region"; selector: string; expectedSize?: ExpectSize };
+
+/** Fields a matcher must supply on top of what a compare() outcome already carries. */
+export interface ScoreAttachmentBase {
+  targetUrl: string;
+  baselineKind: "figma" | "web";
+  attachmentBaseName: string;
+  profile: ProfileName;
+  scope: MatcherScope;
+  masks?: VisualMask[];
+  maxMaskedAreaRatio?: number;
+  captureEvidence?: CaptureEvidence;
+}
+
+/**
+ * The one place that turns a compare() outcome into a FrameliaScoreAttachment.
+ * Every matcher (toMatchFigma, toMatchPage, toMatchUrl) calls this so outcome
+ * fields like topIssues/warnings can't be silently dropped by one caller.
+ */
+export function buildScoreAttachment(
+  outcome: CompareOutcome,
+  base: ScoreAttachmentBase,
+): FrameliaScoreAttachment {
+  return {
+    pass: outcome.pass,
+    matchRatio: outcome.matchRatio,
+    ssim: outcome.ssim,
+    avgDeltaE: outcome.avgDeltaE,
+    diffPixels: outcome.diffPixels,
+    baselineSize: outcome.baselineSize,
+    actualSize: outcome.actualSize,
+    topIssues: outcome.topIssues,
+    warnings: outcome.warnings,
+    ...base,
+  };
+}

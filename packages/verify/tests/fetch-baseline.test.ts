@@ -5,13 +5,13 @@ import * as path from "node:path";
 import { PNG } from "pngjs";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { fetchGold } from "../src/index.ts";
+import { fetchBaseline } from "../src/index.ts";
 import { makeSolidPng } from "../src/internal.ts";
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-fetch-gold-"));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-fetch-baseline-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-describe("fetchGold requests", () => {
+describe("fetchBaseline requests", () => {
   it("encodes file keys and bounds every outbound request with a timeout signal", async () => {
     const calls: Array<{ url: string; signal?: AbortSignal | null }> = [];
     const png = PNG.sync.write(makeSolidPng(2, 2, [255, 255, 255, 255]));
@@ -28,9 +28,12 @@ describe("fetchGold requests", () => {
         );
       }
       if (url.includes("/v1/images/")) {
-        return new Response(JSON.stringify({ images: { "1:2": "https://cdn.example/gold.png" } }), {
-          status: 200,
-        });
+        return new Response(
+          JSON.stringify({ images: { "1:2": "https://cdn.example/baseline.png" } }),
+          {
+            status: 200,
+          },
+        );
       }
       return new Response(Uint8Array.from(png).buffer, {
         status: 200,
@@ -38,10 +41,10 @@ describe("fetchGold requests", () => {
       });
     }) as typeof fetch;
 
-    const result = await fetchGold({
+    const result = await fetchBaseline({
       fileKey: "file/with?reserved",
       nodeId: "1:2",
-      outPath: path.join(tmp, "figma-gold.png"),
+      outPath: path.join(tmp, "figma-baseline.png"),
       token: "token",
       fetchImpl,
     });

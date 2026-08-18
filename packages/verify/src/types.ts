@@ -135,7 +135,7 @@ export interface CompareOutcome {
   clusterFail: boolean;
   diffPixels: number | null;
   totalPixels: number | null;
-  goldSize: { width: number; height: number };
+  baselineSize: { width: number; height: number };
   actualSize: { width: number; height: number };
   resizedForCompare: boolean;
   topIssues: TopIssue[];

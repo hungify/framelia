@@ -3,8 +3,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import {
+  assembleContractResult,
+  deriveCaptureEvidenceDiagnostics,
+  deriveComparisonSummary,
+  deriveDashboardVerdict,
+  projectCapture,
+  projectCaptureEvidence,
   visualScoreArtifactSchema,
-  type CaptureEvidenceArtifact,
   type VisualScoreArtifact,
   type VerificationArtifact,
   type VerificationRequest,
@@ -15,7 +20,7 @@ import {
   type DashboardSummary,
   type DashboardVerdict,
 } from "@framelia/contracts";
-import { type ContractDefaults } from "@framelia/verify";
+import { FIGMA_BASELINE_ARTIFACT, RUN_ARTIFACT, type ContractDefaults } from "@framelia/verify";
 
 type DashboardFileMap = Map<string, string>;
 
@@ -59,75 +64,9 @@ function virtualPath(id: string, name: string): string {
   return `contracts/${encodeURIComponent(id)}/${name}`;
 }
 
-function normalizedUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    url.hash = "";
-    url.searchParams.sort();
-    return url.href;
-  } catch {
-    return null;
-  }
-}
-
-function urlsEqual(a: string, b: string): boolean {
-  const normalizedA = normalizedUrl(a);
-  const normalizedB = normalizedUrl(b);
-  if (normalizedA !== null && normalizedB !== null) return normalizedA === normalizedB;
-  return a === b;
-}
-
 interface DashboardScore {
   score: VisualScoreArtifact;
   captureEvidence?: DashboardCaptureEvidence;
-}
-
-function maskEvidenceFrom(
-  value: CaptureEvidenceArtifact["maskEvidence"],
-): DashboardCaptureEvidence["maskEvidence"] {
-  return value ?? null;
-}
-
-/**
- * Project already-validated capture evidence (see captureEvidenceSchema in
- * @framelia/contracts) into the dashboard's display shape. Shape checking
- * lives in the schema; this only enriches (redirectMismatch, deviceScaleFactor)
- * and drops fields the dashboard doesn't render (contract identity, raw
- * capture/sample paths, computed style).
- */
-function captureEvidenceFrom(
-  value: CaptureEvidenceArtifact | undefined,
-  expectedUrl: string,
-  deviceScaleFactor: number | undefined,
-): DashboardCaptureEvidence | undefined {
-  if (!value) return undefined;
-  return {
-    finalUrl: value.finalUrl,
-    expectedUrl,
-    redirectMismatch: !urlsEqual(value.finalUrl, expectedUrl),
-    viewport: value.viewport
-      ? {
-          width: value.viewport.width,
-          height: value.viewport.height,
-          ...(deviceScaleFactor !== undefined ? { deviceScaleFactor } : {}),
-        }
-      : null,
-    scope:
-      value.scope.kind === "page"
-        ? { kind: "page", fullPage: value.scope.fullPage ?? false }
-        : value.scope,
-    elementRect: value.elementRect,
-    readiness: value.readiness,
-    fonts: value.fonts,
-    actions: value.actions,
-    startedAt: value.startedAt,
-    finishedAt: value.finishedAt,
-    capturedAt: value.capturedAt,
-    screenshotHashes: value.screenshotHashes,
-    warnings: value.warnings,
-    maskEvidence: maskEvidenceFrom(value.maskEvidence),
-    artifactPaths: {},
-  };
 }
 
 async function readScore(
@@ -137,17 +76,21 @@ async function readScore(
 ): Promise<DashboardScore | undefined> {
   try {
     const raw: unknown = JSON.parse(
-      await fs.readFile(path.join(outDir, "visual-score.json"), "utf8"),
+      await fs.readFile(path.join(outDir, RUN_ARTIFACT.score), "utf8"),
     );
     const score = visualScoreArtifactSchema.parse(raw);
     return {
       score,
-      captureEvidence: captureEvidenceFrom(score.captureEvidence, expectedUrl, deviceScaleFactor),
+      captureEvidence: projectCaptureEvidence(
+        score.captureEvidence,
+        expectedUrl,
+        deviceScaleFactor,
+      ),
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     console.error(
-      `framelia dashboard: failed to read visual-score.json in ${outDir}: ${String(error)}`,
+      `framelia dashboard: failed to read ${RUN_ARTIFACT.score} in ${outDir}: ${String(error)}`,
     );
     return undefined;
   }
@@ -167,6 +110,21 @@ function provenance(
     return `figma://${fileKey}/${nodeId}`;
   }
   return score.baseline?.url ?? "Figma baseline";
+}
+
+function unmatchedRegionDiagnostic(
+  contract: VerificationRequest["contracts"][number],
+  result: VerificationArtifact["results"][number],
+): DashboardDiagnostic | null {
+  if (result.ok) return null;
+  if (contract.scope.kind !== "region") return null;
+  if (result.error !== "SELECTOR_NOT_FOUND" && result.error !== "SELECTOR_AMBIGUOUS") return null;
+  return {
+    kind: "unmatched-region",
+    code: result.error,
+    message: result.message ?? "Region selector did not resolve to exactly one rendered element.",
+    blocking: true,
+  };
 }
 
 interface ContractResultInput {
@@ -190,99 +148,34 @@ interface ContractResultProjection {
  */
 function deriveContractResult(input: ContractResultInput): ContractResultProjection {
   const { contract, result, score, captureEvidence, rawTargetUrl, createdAt } = input;
-  const diagnostics: DashboardDiagnostic[] = score?.diagnostics ? [...score.diagnostics] : [];
-  if (result.ok) {
-    if (!captureEvidence)
-      diagnostics.push({
-        kind: "warning",
-        code: "CAPTURE_EVIDENCE_MISSING",
-        message:
-          "Capture evidence is missing or malformed; visual result cannot be treated as a clean pass.",
-        blocking: true,
-      });
-    else {
-      if (captureEvidence.redirectMismatch)
-        diagnostics.push({
-          kind: "warning",
-          code: "REDIRECT_MISMATCH",
-          message: `Expected ${captureEvidence.expectedUrl}; captured ${captureEvidence.finalUrl}.`,
-          blocking: true,
-        });
-      const fontDiagnosticPresent = diagnostics.some(
-        (diagnostic) => diagnostic.code === "FONT_FALLBACK_OR_LOAD_FAILURE",
-      );
-      if (
-        !fontDiagnosticPresent &&
-        (!captureEvidence.fonts.supported ||
-          captureEvidence.fonts.status !== "loaded" ||
-          captureEvidence.fonts.failed.length)
-      )
-        diagnostics.push({
-          kind: "font-fallback",
-          code: "FONT_FALLBACK_OR_LOAD_FAILURE",
-          message: `Font readiness: ${captureEvidence.fonts.status}; failed faces: ${captureEvidence.fonts.failed.join(", ") || "none reported"}.`,
-          blocking: false,
-        });
-      if (captureEvidence.readiness?.status === "failed")
-        diagnostics.push({
-          kind: "warning",
-          code: "READINESS_FAILED",
-          message: "Target readiness did not pass before capture.",
-          blocking: true,
-        });
-      for (const action of captureEvidence.actions.filter(
-        (failedAction) => failedAction.status === "failed",
-      ))
-        diagnostics.push({
-          kind: "warning",
-          code: "NAVIGATION_ACTION_FAILED",
-          message: `Action ${action.index + 1} (${action.kind}) failed after ${action.attempts} attempt(s): ${action.error ?? "unknown error"}.`,
-          blocking: true,
-        });
-      if (captureEvidence.maskEvidence && captureEvidence.maskEvidence.status !== "applied")
-        diagnostics.push({
-          kind: "warning",
-          code: captureEvidence.maskEvidence.code ?? "MASK_EVIDENCE_INCOMPLETE",
-          message:
-            captureEvidence.maskEvidence.message ??
-            `Mask evidence ${captureEvidence.maskEvidence.status}.`,
-          blocking: captureEvidence.maskEvidence.status === "failed",
-        });
-    }
-  }
-  if (
-    !result.ok &&
-    contract.scope.kind === "region" &&
-    (result.error === "SELECTOR_NOT_FOUND" || result.error === "SELECTOR_AMBIGUOUS")
-  ) {
-    diagnostics.push({
-      kind: "unmatched-region",
-      code: result.error,
-      message: result.message ?? "Region selector did not resolve to exactly one rendered element.",
-      blocking: true,
-    });
-  }
+  const scoreDiagnostics = score?.diagnostics ? [...score.diagnostics] : [];
+  const diagnostics: DashboardDiagnostic[] = [
+    ...scoreDiagnostics,
+    ...(result.ok ? deriveCaptureEvidenceDiagnostics(captureEvidence, scoreDiagnostics) : []),
+    ...(!result.ok
+      ? [unmatchedRegionDiagnostic(contract, result)].filter(
+          (diagnostic): diagnostic is DashboardDiagnostic => diagnostic !== null,
+        )
+      : []),
+  ];
   const hasMask =
     diagnostics.some((diagnostic) => diagnostic.kind === "masked-pass") ||
     captureEvidence?.maskEvidence?.status === "applied";
-  const status: DashboardVerdict =
-    !result.ok || diagnostics.some((diagnostic) => diagnostic.blocking)
-      ? "blocked"
-      : result.pass
-        ? hasMask
-          ? "masked-pass"
-          : "passed"
-        : "failed";
+  const status: DashboardVerdict = deriveDashboardVerdict({
+    resultOk: result.ok,
+    pass: result.pass,
+    diagnostics,
+    maskApplied: hasMask,
+  });
   const baselinePath = score?.artifacts?.baseline ?? score?.baseline?.path;
-  const actualPath = score?.artifacts?.actual ?? path.join(result.outDir, "actual.png");
+  const actualPath = score?.artifacts?.actual ?? path.join(result.outDir, RUN_ARTIFACT.actual);
   const diffPath = score?.artifacts?.diff ?? null;
-  const baselineVirtual = virtualPath(contract.id, "baseline.png");
-  const actualVirtual = virtualPath(contract.id, "actual.png");
-  const diffVirtual = virtualPath(contract.id, "diff.png");
-  const scoreVirtual = virtualPath(contract.id, "visual-score.json");
+  const baselineVirtual = virtualPath(contract.id, FIGMA_BASELINE_ARTIFACT.image);
+  const actualVirtual = virtualPath(contract.id, RUN_ARTIFACT.actual);
+  const diffVirtual = virtualPath(contract.id, RUN_ARTIFACT.diff);
+  const scoreVirtual = virtualPath(contract.id, RUN_ARTIFACT.score);
   const files: (readonly [string, string])[] = [];
-  if (score)
-    files.push([scoreVirtual, path.resolve(path.join(result.outDir, "visual-score.json"))]);
+  if (score) files.push([scoreVirtual, path.resolve(path.join(result.outDir, RUN_ARTIFACT.score))]);
   if (baselinePath) files.push([baselineVirtual, path.resolve(baselinePath)]);
   if (score) files.push([actualVirtual, path.resolve(actualPath)]);
   if (diffPath) files.push([diffVirtual, path.resolve(diffPath)]);
@@ -300,20 +193,19 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
   const evidenceHash = hashes
     ? `sha256:${crypto.createHash("sha256").update(JSON.stringify(hashes)).digest("hex")}`
     : undefined;
-  const dashboardResult: DashboardContractResult = {
+  const dashboardResult = assembleContractResult({
     id: contract.id,
     name: contract.id,
     tags: [contract.viewport.name, contract.scope.kind],
     status,
-    phase: "complete",
     baselineKind: contract.baseline.kind,
     ...(score && baselinePath
       ? {
           baseline: {
             path: baselineVirtual,
             hash: hashes?.baseline,
-            width: score.goldSize?.width,
-            height: score.goldSize?.height,
+            width: score.baselineSize?.width,
+            height: score.baselineSize?.height,
             revision: score.baseline?.fetchedAt,
             provenance: provenance(score, contract),
           },
@@ -327,42 +219,26 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
         }
       : {}),
     ...(diffPath ? { diff: { path: diffVirtual, hash: hashes?.diff ?? undefined } } : {}),
-    capture: {
-      kind: contract.scope.kind === "page" ? "viewport" : "element",
+    capture: projectCapture({
       viewport: { width: contract.viewport.width, height: contract.viewport.height },
-      ...(contract.scope.kind === "region"
-        ? {
-            target: {
-              definition: { kind: "css" as const, value: contract.scope.selector },
+      region:
+        contract.scope.kind === "region"
+          ? {
+              selector: contract.scope.selector,
               matchCount: result.ok ? 1 : 0,
               stable: score?.stability === "stable",
-              ...(contract.scope.expectSize ? { expectedSize: contract.scope.expectSize } : {}),
-              ...(projectedCaptureEvidence?.scope.kind === "region" &&
-              projectedCaptureEvidence.elementRect
-                ? { actualSize: projectedCaptureEvidence.elementRect }
-                : {}),
-              ...(!result.ok
-                ? { reason: result.message ?? result.error ?? "Region selector did not resolve." }
-                : {}),
-            },
-          }
-        : {}),
-    },
-    ...(score
-      ? {
-          comparison: {
-            algorithm: "framelia-multi-signal",
-            diffPixels: score.diffPixels ?? null,
-            diffRatio: score.matchRatio == null ? null : 1 - score.matchRatio,
-            matchRatio: score.matchRatio ?? null,
-            ssim: score.ssim ?? null,
-            avgDeltaE: score.avgDeltaE ?? null,
-            sizeMatch:
-              score.goldSize?.width === score.actualSize?.width &&
-              score.goldSize?.height === score.actualSize?.height,
-          },
-        }
-      : {}),
+              expectedSize: contract.scope.expectSize,
+              actualSize:
+                projectedCaptureEvidence?.scope.kind === "region"
+                  ? (projectedCaptureEvidence.elementRect ?? undefined)
+                  : undefined,
+              reason: !result.ok
+                ? (result.message ?? result.error ?? "Region selector did not resolve.")
+                : undefined,
+            }
+          : undefined,
+    }),
+    ...(score ? { comparison: deriveComparisonSummary(score) } : {}),
     ...(maskEvidence ? { maskEvidence } : {}),
     ...(projectedCaptureEvidence ? { captureEvidence: projectedCaptureEvidence } : {}),
     blockers: result.ok
@@ -373,10 +249,10 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
             message: result.message ?? "Verification blocked.",
           },
         ],
-    ...(diagnostics.length ? { diagnostics } : {}),
+    diagnostics,
     ...(evidenceHash ? { evidenceHash } : {}),
     finishedAt: createdAt,
-  };
+  });
   return { result: dashboardResult, files };
 }
 

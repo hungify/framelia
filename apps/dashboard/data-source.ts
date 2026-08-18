@@ -7,6 +7,41 @@ async function fetchJson(url: string): Promise<DashboardRun> {
   return response.json() as Promise<DashboardRun>;
 }
 
+/** A live run only stops taking further updates once it has actually finished. */
+export function shouldCloseEventsOnError(run: DashboardRun | undefined): boolean {
+  return Boolean(run?.finishedAt);
+}
+
+/** Multiple runs can share one EventSource lifetime; only react to the run we're showing. */
+export function shouldRefreshOnRunEvent(
+  currentRunId: string | undefined,
+  event: DashboardEvent,
+): boolean {
+  return event.runId === currentRunId;
+}
+
+/**
+ * Wires an EventSource's "run"/"error" listeners to refresh/close decisions. Takes the
+ * EventSource constructor and the current run as injected dependencies (rather than reaching
+ * for `window.EventSource` and a closed-over ref directly) so the wiring itself -- not just
+ * the decision functions above -- has a seam a test can exercise with a fake EventSource.
+ */
+export function connectRunEvents(
+  onMatchingRunEvent: () => void | Promise<void>,
+  getCurrentRun: () => DashboardRun | undefined,
+  EventSourceCtor: typeof EventSource = EventSource,
+): EventSource {
+  const events = new EventSourceCtor("/events");
+  events.addEventListener("run", (event) => {
+    const update = JSON.parse((event as MessageEvent<string>).data) as DashboardEvent;
+    if (shouldRefreshOnRunEvent(getCurrentRun()?.runId, update)) void onMatchingRunEvent();
+  });
+  events.addEventListener("error", () => {
+    if (shouldCloseEventsOnError(getCurrentRun())) events.close();
+  });
+  return events;
+}
+
 export function useRunArtifact() {
   const run = ref<DashboardRun>();
   const loading = ref(true);
@@ -74,14 +109,7 @@ export function useRunArtifact() {
       liveMode.value = false;
     }
     if (!liveMode.value) return;
-    events = new EventSource("/events");
-    events.addEventListener("run", async (event) => {
-      const update = JSON.parse((event as MessageEvent<string>).data) as DashboardEvent;
-      if (update.runId === run.value?.runId) await refresh();
-    });
-    events.addEventListener("error", () => {
-      if (run.value?.finishedAt) events?.close();
-    });
+    events = connectRunEvents(refresh, () => run.value);
   });
 
   onBeforeUnmount(() => events?.close());

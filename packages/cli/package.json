@@ -1,6 +1,6 @@
 {
   "name": "framelia",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "CLI-first Figma-to-web and web-to-web visual verification with stable capture and artifact-based done gates.",
   "keywords": [
     "cli",
@@ -25,25 +25,31 @@
   },
   "files": [
     "bin",
+    "dist",
     "src",
     "README.md",
     "LICENSE"
   ],
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "framelia-dev": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
+    "build": "tsup",
     "cli": "tsx src/cli.ts",
+    "pretest": "pnpm --filter @framelia/contracts build && pnpm --filter @framelia/verify build && pnpm --filter @framelia/dashboard-server build && pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm run typecheck && pnpm test",
-    "verify": "tsx src/cli.ts verify",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test",
     "done-gate": "tsx src/cli.ts done-gate"
   },
   "dependencies": {
@@ -59,6 +65,7 @@
   },
   "devDependencies": {
     "@types/node": "26.0.1",
+    "tsup": "^8.5.1",
     "typescript": "6.0.3",
     "vitest": "^4.1.10",
     "zod": "^4.4.3"

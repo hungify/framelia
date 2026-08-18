@@ -1,6 +1,6 @@
 {
   "name": "@framelia/verify",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Visual verification engine for Figma-to-web and web-to-web workflows.",
   "homepage": "https://github.com/hungify/framelia/tree/main/packages/verify",
   "bugs": {
@@ -13,24 +13,35 @@
     "directory": "packages/verify"
   },
   "files": [
+    "dist",
     "src",
     "README.md",
     "LICENSE"
   ],
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./internal": "./src/internal.ts"
+    ".": {
+      "framelia-dev": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./internal": {
+      "framelia-dev": "./src/internal.ts",
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    }
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
+    "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check:domain-boundary": "node scripts/check-domain-boundary.mjs"
+    "check:domain-boundary": "node scripts/check-domain-boundary.mjs",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test && pnpm run check:domain-boundary"
   },
   "dependencies": {
     "@figma/rest-api-spec": "^0.41.0",
@@ -47,6 +58,7 @@
     "@types/node": "26.0.1",
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
+    "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "6.0.3",
     "vitest": "^4.1.10"

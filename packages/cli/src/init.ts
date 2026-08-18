@@ -2,11 +2,38 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import * as p from "@clack/prompts";
-import { DEFAULT_AUTH_STATE_PATH } from "@framelia/contracts";
+import {
+  contractDefaultsSchema,
+  DEFAULT_AUTH_STATE_PATH,
+  type ContractDefaults,
+} from "@framelia/contracts";
 
 import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "./config.ts";
 
 const AUTH_GITIGNORE = "*\n!.gitignore\n";
+
+/**
+ * One illustrative literal per ContractDefaults field, rendered into the scaffolded
+ * config's commented example block. Typed as Record<keyof ContractDefaults, string> so
+ * adding a field to contractDefaultsSchema without adding an example here is a compile
+ * error, not a silently stale `framelia init` template.
+ */
+const CONTRACT_DEFAULT_EXAMPLES: Record<keyof ContractDefaults, string> = {
+  stabilitySamples: "3",
+  timeoutMs: "60_000",
+  devtoolsSelector: "true",
+  deviceScaleFactor: "1",
+  fontPolicy: '"required"',
+  animationPolicy: '"freeze"',
+  retry: "{ attempts: 2, delayMs: 1_000 }",
+  maxMaskedAreaRatio: "0.15",
+};
+
+const CONTRACT_DEFAULTS_COMMENT = contractDefaultsSchema
+  .keyof()
+  .options.map((key) => `  // ${key}: ${CONTRACT_DEFAULT_EXAMPLES[key]},`)
+  .join("\n");
+
 const CONFIG_SOURCE = `import { defineConfig } from "framelia";
 
 export default defineConfig({
@@ -14,14 +41,7 @@ export default defineConfig({
   // storageStatePath: "${DEFAULT_AUTH_STATE_PATH}",
 
   // Project-wide capture defaults:
-  // stabilitySamples: 3,
-  // timeoutMs: 60_000,
-  // devtoolsSelector: true,
-  // deviceScaleFactor: 1,
-  // fontPolicy: "required",
-  // animationPolicy: "freeze",
-  // retry: { attempts: 2, delayMs: 1_000 },
-  // maxMaskedAreaRatio: 0.15,
+${CONTRACT_DEFAULTS_COMMENT}
 });
 `;
 

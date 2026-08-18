@@ -11,14 +11,14 @@ describe("ssimCompare", () => {
   });
 
   it("returns less than 1 for different images", () => {
-    const gold = makeSolidPng(32, 32, [255, 255, 255, 255]);
+    const baseline = makeSolidPng(32, 32, [255, 255, 255, 255]);
     const actual = makeSolidPng(32, 32, [0, 0, 0, 255]);
-    const result = ssimCompare(gold, actual);
+    const result = ssimCompare(baseline, actual);
     expect(result).toBeLessThan(1);
   });
 
   it("detects small structural shift on 800x600 without downsample washout", () => {
-    const gold = makeSolidPng(800, 600, [240, 240, 240, 255]);
+    const baseline = makeSolidPng(800, 600, [240, 240, 240, 255]);
     const actual = makeSolidPng(800, 600, [240, 240, 240, 255]);
     for (let x = 100; x < 700; x++) {
       for (let y = 200; y < 201; y++) {
@@ -28,8 +28,8 @@ describe("ssimCompare", () => {
         actual.data[i + 2] = 230;
       }
     }
-    const same = ssimCompare(gold, gold);
-    const diff = ssimCompare(gold, actual);
+    const same = ssimCompare(baseline, baseline);
+    const diff = ssimCompare(baseline, actual);
     expect(same).toBeGreaterThan(0.999);
     expect(diff).toBeLessThan(same - 0.001);
   });

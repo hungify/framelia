@@ -9,9 +9,9 @@ export const RUN_ARTIFACT = {
   punchList: "punch-list.json",
 } as const;
 
-export const GOLD_ARTIFACT = {
-  image: "figma-gold.png",
-  meta: "figma-gold.meta.json",
+export const FIGMA_BASELINE_ARTIFACT = {
+  image: "figma-baseline.png",
+  meta: "figma-baseline.meta.json",
 } as const;
 
 export const WEB_BASELINE_ARTIFACT = {
@@ -32,5 +32,5 @@ export function baselineArtifacts(kind: BaselineSource["kind"]): {
   image: string;
   meta: string;
 } {
-  return kind === "figma" ? GOLD_ARTIFACT : WEB_BASELINE_ARTIFACT;
+  return kind === "figma" ? FIGMA_BASELINE_ARTIFACT : WEB_BASELINE_ARTIFACT;
 }

@@ -31,7 +31,7 @@ function scoreDir(
   const dir = path.join(tmp, `vp-${n++}`);
   fs.mkdirSync(dir, { recursive: true });
   const timestamp = new Date().toISOString();
-  const names = { image: "figma-gold.png", meta: "figma-gold.meta.json" };
+  const names = { image: "figma-baseline.png", meta: "figma-baseline.meta.json" };
   const baselinePath = path.join(dir, names.image);
   const metaPath = path.join(dir, names.meta);
   for (const name of [names.image, "actual.png", "diff.png"])

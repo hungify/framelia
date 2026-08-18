@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 
 import * as p from "@clack/prompts";
 import { httpUrlSchema } from "@framelia/contracts";
@@ -7,11 +6,12 @@ import { recordStorageState } from "@framelia/verify";
 import type { Command } from "commander";
 
 import { loadFrameliaConfig } from "../config.ts";
-import { subcommand } from "./shared.ts";
+import { resolveProjectRoot, subcommand } from "./shared.ts";
 
 interface AuthOptions {
   url: string;
   projectRoot?: string;
+  yes?: boolean;
 }
 
 function validateHttpUrl(value: string): void {
@@ -20,14 +20,20 @@ function validateHttpUrl(value: string): void {
   }
 }
 
-async function confirm(message: string): Promise<void> {
+/** --yes only bypasses the existing-state replacement confirmation. The login
+ * completion prompt stays interactive regardless -- it is the user's own signal
+ * that they finished logging in inside the opened browser, not a "just confirm
+ * this" checkpoint assumeYes can pre-answer. */
+async function confirm(message: string, assumeYes: boolean): Promise<void> {
+  if (assumeYes) return;
   const answer = await p.confirm({ message, initialValue: true });
   if (p.isCancel(answer) || !answer) throw new Error("Auth capture cancelled.");
 }
 
-async function authCommand(options: AuthOptions): Promise<void> {
+export async function authCommand(options: AuthOptions): Promise<void> {
   validateHttpUrl(options.url);
-  const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
+  const assumeYes = options.yes ?? false;
+  const projectRoot = resolveProjectRoot(options.projectRoot);
   const config = await loadFrameliaConfig(projectRoot);
   if (!config.resolvedStorageStatePath) {
     throw new Error(
@@ -37,13 +43,13 @@ async function authCommand(options: AuthOptions): Promise<void> {
 
   p.intro("Record Playwright login state");
   if (fs.existsSync(config.resolvedStorageStatePath)) {
-    await confirm(`Replace existing auth state at ${config.storageStatePath}?`);
+    await confirm(`Replace existing auth state at ${config.storageStatePath}?`, assumeYes);
   }
 
   const result = await recordStorageState({
     url: options.url,
     outputPath: config.resolvedStorageStatePath,
-    waitForUser: () => confirm("Finish login in browser, then save session?"),
+    waitForUser: () => confirm("Finish login in browser, then save session?", false),
   });
   p.note(
     [
@@ -61,6 +67,7 @@ export function registerAuthCommand(program: Command): void {
     subcommand("auth", "Open Playwright for login and save browser session state.")
       .requiredOption("--url <url>", "login URL")
       .option("--project-root <dir>", "target project root")
+      .option("--yes", "skip existing auth-state replacement confirmation")
       .action(authCommand),
   );
 }

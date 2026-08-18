@@ -1,6 +1,6 @@
 {
   "name": "@framelia/playwright",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Playwright custom matchers for Figma-to-web and web-to-web visual verification.",
   "homepage": "https://github.com/hungify/framelia/tree/main/packages/playwright",
   "bugs": {

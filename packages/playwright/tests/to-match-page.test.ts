@@ -74,6 +74,7 @@ describe("runToMatchPage", () => {
     const context = await browser.newContext({ viewport: SIZE });
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-page-"));
     const attachCalls: Array<{ name: string; path: string }> = [];
+    const jsonAttachments: Array<{ name: string; data: unknown }> = [];
     try {
       const pageA = await context.newPage();
       const pageB = await context.newPage();
@@ -91,7 +92,9 @@ describe("runToMatchPage", () => {
           attach: async (name, filePath) => {
             attachCalls.push({ name, path: filePath });
           },
-          attachJson: async () => undefined,
+          attachJson: async (name, data) => {
+            jsonAttachments.push({ name, data });
+          },
         },
       );
 
@@ -105,6 +108,17 @@ describe("runToMatchPage", () => {
       );
       expect(attachCalls).toHaveLength(3);
       for (const call of attachCalls) expect(fs.existsSync(call.path)).toBe(true);
+
+      // buildScoreAttachment must carry topIssues/warnings through for web-to-web
+      // comparisons too, not just toMatchFigma -- a full black-vs-white page diff
+      // always produces at least one topIssue.
+      const scoreAttachment = jsonAttachments[0]?.data as {
+        topIssues?: unknown[];
+        warnings?: unknown[];
+      };
+      expect(Array.isArray(scoreAttachment.topIssues)).toBe(true);
+      expect(scoreAttachment.topIssues!.length).toBeGreaterThan(0);
+      expect(Array.isArray(scoreAttachment.warnings)).toBe(true);
     } finally {
       await context.close();
       await appA.close();

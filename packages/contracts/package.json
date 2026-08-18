@@ -1,6 +1,6 @@
 {
   "name": "@framelia/contracts",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Versioned contracts, artifacts, and dashboard event types for Framelia.",
   "homepage": "https://github.com/hungify/framelia/tree/main/packages/contracts",
   "bugs": {
@@ -13,26 +13,34 @@
     "directory": "packages/contracts"
   },
   "files": [
+    "dist",
     "src",
     "README.md",
     "LICENSE"
   ],
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "framelia-dev": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck"
   },
   "dependencies": {
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "26.0.1",
+    "tsup": "^8.5.1",
     "typescript": "6.0.3"
   },
   "engines": {

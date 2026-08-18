@@ -16,7 +16,7 @@ import {
   exportDashboardReport,
   readVerificationArtifact,
 } from "../dashboard/report.ts";
-import { subcommand } from "./shared.ts";
+import { resolveProjectRoot, subcommand } from "./shared.ts";
 
 async function serveDashboard(source: DashboardSource, open: boolean): Promise<void> {
   const server = await startDashboardServer({ source });
@@ -36,15 +36,20 @@ export async function runAggregatedDashboard(options: {
   await serveDashboard(await aggregateDashboardSource(options.projectRoot), options.open);
 }
 
+/** Recovers the suite name an artifact was captured under from its file path. */
+function suiteNameFromArtifactPath(artifactPath: string): string {
+  return path.basename(path.dirname(path.resolve(artifactPath)));
+}
+
 async function openCommand(options: { artifact: string; open: boolean }): Promise<void> {
   const artifact = await readVerificationArtifact(options.artifact);
-  const suiteName = path.basename(path.dirname(path.resolve(options.artifact)));
+  const suiteName = suiteNameFromArtifactPath(options.artifact);
   await serveDashboard(await archivedDashboardSource(artifact, suiteName), options.open);
 }
 
 async function reportCommand(options: { artifact: string; output: string }): Promise<void> {
   const artifact = await readVerificationArtifact(options.artifact);
-  const suiteName = path.basename(path.dirname(path.resolve(options.artifact)));
+  const suiteName = suiteNameFromArtifactPath(options.artifact);
   const indexPath = await exportDashboardReport({
     artifact,
     suiteName,
@@ -69,7 +74,7 @@ export function registerDashboardCommands(program: Command): void {
       .option("--no-open", "do not open dashboard in browser")
       .action((options: { projectRoot?: string; open: boolean }) =>
         runAggregatedDashboard({
-          projectRoot: path.resolve(options.projectRoot ?? process.cwd()),
+          projectRoot: resolveProjectRoot(options.projectRoot),
           open: options.open,
         }),
       ),

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { verificationRequestSchema, type VerificationRequest } from "@framelia/contracts";
+import { EXIT_OK, EXIT_VISUAL_FAIL, JSON_INDENT_SPACES } from "@framelia/verify";
 import { Command, InvalidArgumentError } from "commander";
 
 /** Parses a JSON file, wrapping fs/parse errors with the file path. */
@@ -16,16 +16,15 @@ export function readJsonFile(filePath: string): unknown {
   }
 }
 
-/** Reads and validates a schema-v4 visual contract, wrapping schema errors with the file path. */
-export function readVerificationRequest(filePath: string): VerificationRequest {
-  try {
-    return verificationRequestSchema.parse(readJsonFile(filePath));
-  } catch (error) {
-    throw new Error(
-      `Cannot read valid visual contract ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
+/** Resolves `--project-root` (or the cwd) the same way every command does. */
+export function resolveProjectRoot(raw?: string): string {
+  return path.resolve(raw ?? process.cwd());
+}
+
+/** Prints a command's JSON result and sets the process exit code from its outcome. */
+export function emitResult(result: unknown, ok: boolean): void {
+  console.log(JSON.stringify(result, null, JSON_INDENT_SPACES));
+  process.exitCode = ok ? EXIT_OK : EXIT_VISUAL_FAIL;
 }
 
 export function subcommand(name: string, description: string): Command {

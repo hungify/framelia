@@ -1,25 +1,14 @@
-import * as path from "node:path";
+import { Option, type Command } from "commander";
 
-import { InvalidArgumentError, type Command } from "commander";
-
-import { runCreateContract, type CreateContractOptions } from "../contract.ts";
-import { positiveInteger, subcommand } from "./shared.ts";
+import {
+  runCreateContract,
+  SCOPE_KINDS,
+  VIEWPORT_PRESETS,
+  type CreateContractOptions,
+} from "../contract.ts";
+import { positiveInteger, resolveProjectRoot, subcommand } from "./shared.ts";
 
 type CreateContractFlags = Omit<CreateContractOptions, "projectRoot"> & { projectRoot?: string };
-
-function viewportPreset(raw: string): "desktop" | "mobile" | "custom" {
-  if (raw !== "desktop" && raw !== "mobile" && raw !== "custom") {
-    throw new InvalidArgumentError('must be "desktop", "mobile", or "custom"');
-  }
-  return raw;
-}
-
-function scopeKind(raw: string): "page" | "region" {
-  if (raw !== "page" && raw !== "region") {
-    throw new InvalidArgumentError('must be "page" or "region"');
-  }
-  return raw;
-}
 
 export function registerContractCommands(program: Command): void {
   const contract = subcommand("contract", "Create and manage visual contracts.");
@@ -36,7 +25,9 @@ export function registerContractCommands(program: Command): void {
       .option("--contract-id <id>", "contract id, e.g. home.desktop")
       .option("--file-key <key>", "Figma file key")
       .option("--node-id <id>", "Figma node id, e.g. 153:5181")
-      .option("--viewport <preset>", "desktop, mobile, or custom", viewportPreset)
+      .addOption(
+        new Option("--viewport <preset>", "desktop, mobile, or custom").choices(VIEWPORT_PRESETS),
+      )
       .option("--viewport-name <name>", "viewport name (with --viewport custom)")
       .option(
         "--viewport-width <n>",
@@ -48,7 +39,7 @@ export function registerContractCommands(program: Command): void {
         "viewport height in px (with --viewport custom)",
         positiveInteger,
       )
-      .option("--scope <kind>", "page or region", scopeKind)
+      .addOption(new Option("--scope <kind>", "page or region").choices(SCOPE_KINDS))
       .option(
         "--page-reason <text>",
         "why the baseline represents the complete page (with --scope page)",
@@ -67,7 +58,7 @@ export function registerContractCommands(program: Command): void {
       .action(({ output, ...options }: CreateContractFlags & { output?: string }) =>
         runCreateContract({
           ...options,
-          projectRoot: path.resolve(options.projectRoot ?? process.cwd()),
+          projectRoot: resolveProjectRoot(options.projectRoot),
           outputPath: output,
         }),
       ),

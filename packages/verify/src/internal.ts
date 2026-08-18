@@ -1,26 +1,30 @@
 /**
  * Low-level building blocks behind the primary compare()/done-gate pipeline.
- * Import from here only when composing a custom diagnostic pipeline (see cli
- * `debug` commands) — everything here bypasses the gating logic that the
- * primary entry points apply on top of it.
+ * Real callers: @framelia/playwright's capture.ts and score-attachment.ts
+ * depend on captureReadyPage/CaptureCoreOutcome/CaptureEvidence for every
+ * matcher run, not just diagnostic tooling — everything here bypasses the
+ * gating logic that the primary entry points apply on top of it, so treat
+ * it as a second real interface (capture primitives), not a scratch space.
  */
 
+export { areaGap } from "./compare/area-gap.ts";
+export { avgDeltaE2000 } from "./compare/delta-e.ts";
 export {
-  areaGap,
-  avgDeltaE2000,
-  compositeOnCanvas,
   countRealDiffPixels,
   diffBoundingBox,
   largestRealDiffCluster,
+  pixelCompare,
+} from "./compare/pixel.ts";
+export {
+  compositeOnCanvas,
   makeSolidPng,
   padTo,
   parseHexRgb,
   parsePng,
-  pixelCompare,
   readPng,
-  ssimCompare,
   writePng,
-} from "./compare/index.ts";
+} from "./compare/png.ts";
+export { ssimCompare } from "./compare/ssim.ts";
 
 export { resolveSelector } from "./capture/readiness.ts";
 export { captureReadyPage } from "./capture/core.ts";
@@ -34,14 +38,3 @@ export type {
   MaskEvidence,
   ReadyCaptureSpec,
 } from "./capture/types.ts";
-
-export { diffPhase } from "./phases.ts";
-
-export {
-  clearNodeMetaCache,
-  deriveExpectStyle,
-  getNodeMetadata,
-  resolveNodeSpec,
-  resolveToken,
-} from "./figma-api.ts";
-export type { NodeMetadata, ResolveNodeSpecOutcome } from "./figma-api.ts";

@@ -52,8 +52,10 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm --filter @framelia/verify exec playwright install --with-deps chromium
       - name: Build release assets
-        run: pnpm --filter @framelia/dashboard-server build
+        run: pnpm run build
       - name: Verify synchronized package versions
         id: release
         shell: bash

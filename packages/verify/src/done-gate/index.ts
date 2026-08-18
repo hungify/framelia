@@ -36,10 +36,10 @@ export function checkDoneGate(options: DoneGateOptions): DoneGateVerdict {
     const result = loadScore(outDir);
     if (!result.ok) {
       reasons.push(result.message);
-      return verdict(contract.viewport, reasons);
+      return verdict(contract.id, contract.viewport, reasons);
     }
     reasons.push(...checkScore(result.score, contract, outDir, thresholds, cwd));
-    return verdict(contract.viewport, reasons);
+    return verdict(contract.id, contract.viewport, reasons);
   });
 
   return { schemaVersion: SCHEMA_VERSION, done: viewports.every((item) => item.done), viewports };
@@ -82,6 +82,6 @@ function loadScore(outDir: string): LoadedScore {
   return { ok: true, score: parsed.data };
 }
 
-function verdict(viewport: string, reasons: string[]): ViewportVerdict {
-  return { viewport, done: reasons.length === 0, reasons };
+function verdict(id: string | undefined, viewport: string, reasons: string[]): ViewportVerdict {
+  return { ...(id ? { id } : {}), viewport, done: reasons.length === 0, reasons };
 }

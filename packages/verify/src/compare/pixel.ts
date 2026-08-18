@@ -20,14 +20,14 @@ export interface PixelResult {
 }
 
 export function pixelCompare(
-  gold: PNG,
+  baseline: PNG,
   actual: PNG,
   threshold = PIXEL_THRESHOLD,
   includeAA = false,
 ): PixelResult {
-  const { width, height } = gold;
+  const { width, height } = baseline;
   const diff = new PNG({ width, height });
-  const diffPixels = pixelmatch(gold.data, actual.data, diff.data, width, height, {
+  const diffPixels = pixelmatch(baseline.data, actual.data, diff.data, width, height, {
     threshold,
     includeAA,
   });

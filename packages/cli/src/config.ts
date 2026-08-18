@@ -37,19 +37,16 @@ export function assertSingleConfigFile(matches: string[]): void {
   }
 }
 
-const KNOWN_KEYS = new Set([
-  "storageStatePath",
-  "envFile",
-  "stabilitySamples",
-  "timeoutMs",
-  "devtoolsSelector",
-  "deviceScaleFactor",
-  "fontPolicy",
-  "animationPolicy",
-  "retry",
-  "maxMaskedAreaRatio",
-]);
+/** Derived from the schema, not hand-listed — stays in sync with ContractDefaults by construction. */
+const CONTRACT_DEFAULT_KEYS = contractDefaultsSchema.keyof().options;
+
+const KNOWN_KEYS = new Set<string>(["storageStatePath", "envFile", ...CONTRACT_DEFAULT_KEYS]);
 // Still screen-specific — belongs in visual-contract.json, never framelia.config.
+// Hand-maintained, not derived: these names span the request/contract/baseline
+// schemas plus capture options that aren't unified under one Zod object (see
+// verify/capture/types.ts's ReadyCaptureSpec doc comment), so there's no single
+// schema to call .keyof() on the way CONTRACT_DEFAULT_KEYS does above. Keep this
+// list in sync by hand when the visual-contract.json shape changes.
 const SCREEN_SPECIFIC_KEYS = new Set([
   "target",
   "route",
@@ -88,17 +85,6 @@ function normalizeEnvFile(value: unknown, root: string): string | string[] | und
   }
   throw new Error("framelia.config envFile must be a string or string array.");
 }
-
-const CONTRACT_DEFAULT_KEYS = [
-  "stabilitySamples",
-  "timeoutMs",
-  "devtoolsSelector",
-  "deviceScaleFactor",
-  "fontPolicy",
-  "animationPolicy",
-  "retry",
-  "maxMaskedAreaRatio",
-] as const;
 
 function normalizeContractDefaults(config: Record<string, unknown>): ContractDefaults {
   const present = Object.fromEntries(
@@ -159,20 +145,13 @@ export async function loadFrameliaConfig(projectRoot: string): Promise<ResolvedF
   ) {
     throw new Error("framelia.config storageStatePath must be a non-empty string.");
   }
+
+  const resolved: ResolvedFrameliaConfig = { configPath, ...defaults };
+  if (envFile) resolved.envFile = envFile;
   if (typeof storageStatePath === "string") {
     assertProjectRelativePath(root, storageStatePath, "framelia.config storageStatePath");
-    return {
-      configPath,
-      storageStatePath,
-      ...(envFile ? { envFile } : {}),
-      ...defaults,
-      resolvedStorageStatePath: path.resolve(root, storageStatePath),
-    };
+    resolved.storageStatePath = storageStatePath;
+    resolved.resolvedStorageStatePath = path.resolve(root, storageStatePath);
   }
-
-  return {
-    configPath,
-    ...(envFile ? { envFile } : {}),
-    ...defaults,
-  };
+  return resolved;
 }

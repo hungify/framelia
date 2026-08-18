@@ -67,10 +67,10 @@ describe("published CLI", () => {
   it.each([
     [
       "compare",
-      ["--gold", "missing.png", "--actual", "missing.png", "--profile", "audit"],
+      ["--baseline", "missing.png", "--actual", "missing.png", "--profile", "audit"],
       undefined,
     ],
-    ["schema", ["--target", "request"], 'must be "contract" or "artifact"'],
+    ["schema", ["--target", "request"], undefined],
   ])("rejects invalid %s enum flags at usage boundary", (command, args, expectedMessage) => {
     const result = spawnSync(
       process.execPath,

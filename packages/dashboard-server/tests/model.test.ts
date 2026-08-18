@@ -54,7 +54,7 @@ async function fixture(): Promise<{ artifact: VerificationArtifact }> {
       ssim: 0.98,
       avgDeltaE: 1.2,
       diffPixels: 10,
-      goldSize: { width: 320, height: 240 },
+      baselineSize: { width: 320, height: 240 },
       actualSize: { width: 320, height: 240 },
       baseline: { kind: "web", path: baselinePath, url: "https://baseline.test", revision: "main" },
       target: { url: "https://actual.test" },

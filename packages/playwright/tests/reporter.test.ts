@@ -60,7 +60,7 @@ function scoreAttachment(
     ssim: 1,
     avgDeltaE: 0,
     diffPixels: 0,
-    goldSize: { width: 10, height: 10 },
+    baselineSize: { width: 10, height: 10 },
     actualSize: { width: 10, height: 10 },
     targetUrl: "http://localhost/",
     baselineKind: "figma",
@@ -248,7 +248,7 @@ describe("FrameliaReporter", () => {
       "visual-score.json",
       "run-meta.json",
       "punch-list.json",
-      "figma-gold.meta.json",
+      "figma-baseline.meta.json",
     ])
       expect(
         fs.existsSync(path.join(projectRoot, ".framelia/visual-verifications/test-a", name)),

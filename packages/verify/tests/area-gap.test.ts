@@ -19,9 +19,9 @@ describe("areaGap", () => {
   });
 
   it("same area different aspect fails", () => {
-    const gold = makeSolidPng(400, 100, [0, 0, 0, 255]);
+    const baseline = makeSolidPng(400, 100, [0, 0, 0, 255]);
     const actual = makeSolidPng(200, 200, [0, 0, 0, 255]);
-    const r = areaGap(gold, actual);
+    const r = areaGap(baseline, actual);
     expect(r.areaGapPercent).toBeGreaterThan(50);
   });
 

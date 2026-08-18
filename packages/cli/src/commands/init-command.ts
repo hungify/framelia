@@ -1,9 +1,7 @@
-import * as path from "node:path";
-
 import type { Command } from "commander";
 
 import { runProjectInit } from "../init.ts";
-import { subcommand } from "./shared.ts";
+import { resolveProjectRoot, subcommand } from "./shared.ts";
 
 export function registerInitCommand(program: Command): void {
   program.addCommand(
@@ -12,7 +10,7 @@ export function registerInitCommand(program: Command): void {
       .option("--force", "replace existing Framelia config")
       .action((options: { projectRoot?: string; force?: boolean }) =>
         runProjectInit({
-          projectRoot: path.resolve(options.projectRoot ?? process.cwd()),
+          projectRoot: resolveProjectRoot(options.projectRoot),
           force: options.force,
         }),
       ),

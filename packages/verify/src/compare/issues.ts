@@ -29,7 +29,7 @@ export function sizeGapIssue(gap: AreaGapResult, profile: Profile): TopIssue | n
     kind: "size",
     message:
       `per-axis size gap ${gap.areaGapPercent.toFixed(2)}% exceeds ` +
-      `${profile.maxAreaGapPercent}% (gold ${gap.goldSize.width}x${gap.goldSize.height}, ` +
+      `${profile.maxAreaGapPercent}% (baseline ${gap.baselineSize.width}x${gap.baselineSize.height}, ` +
       `actual ${gap.actualSize.width}x${gap.actualSize.height})`,
     hint: "Fix the element's rendered size first; pixel/SSIM/deltaE were skipped as they would only reflect the size skew.",
     repairCandidate: true,

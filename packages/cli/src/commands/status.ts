@@ -1,9 +1,7 @@
-import * as path from "node:path";
-
-import { JSON_INDENT_SPACES } from "@framelia/verify";
+import { JSON_INDENT_SPACES, resolveToken } from "@framelia/verify";
 import type { Command } from "commander";
 
-import { subcommand } from "./shared.ts";
+import { resolveProjectRoot, subcommand } from "./shared.ts";
 
 export function registerStatusCommand(program: Command, packageVersion: string): void {
   program.addCommand(
@@ -18,8 +16,8 @@ export function registerStatusCommand(program: Command, packageVersion: string):
               version: packageVersion,
               mode: "cli",
               baselineKinds: ["figma"],
-              projectRoot: path.resolve(options.projectRoot ?? process.cwd()),
-              figmaTokenAvailable: Boolean(process.env.FIGMA_ACCESS_TOKEN),
+              projectRoot: resolveProjectRoot(options.projectRoot),
+              figmaTokenAvailable: Boolean(resolveToken()),
             },
             null,
             JSON_INDENT_SPACES,

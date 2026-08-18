@@ -1,26 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type {
-  BaselineSource,
-  FigmaBaselineSource,
-  VerificationContract,
-} from "@framelia/contracts";
+import type { BaselineSource, FigmaBaselineSource } from "@framelia/contracts";
 
-import { GOLD_ARTIFACT } from "./artifacts.ts";
+import { FIGMA_BASELINE_ARTIFACT } from "./artifacts.ts";
 import {
-  fetchGold,
-  goldMetaPath,
-  readGoldMeta,
-  type FetchGoldOptions,
-  type FetchGoldOutcome,
-} from "./fetch-gold.ts";
-import { checkGoldStaleness } from "./staleness.ts";
+  fetchBaseline,
+  baselineMetaPath,
+  readBaselineMeta,
+  type FetchBaselineOptions,
+  type FetchBaselineOutcome,
+} from "./fetch-baseline.ts";
+import { checkBaselineStaleness } from "./staleness.ts";
 import type { ContractDefaults, ProfileName, ResolvedBaseline } from "./types.ts";
 
 export interface BaselineResolveOptions<TSource extends BaselineSource = BaselineSource> {
   source: TSource;
-  contract: VerificationContract;
   outDir: string;
   profile: ProfileName;
   stabilitySamples: number;
@@ -37,20 +32,20 @@ export interface BaselineProvider<TSource extends BaselineSource = BaselineSourc
   resolve(options: BaselineResolveOptions<TSource>): Promise<BaselineResolveOutcome>;
 }
 
-type FetchGoldFn = (options: FetchGoldOptions) => Promise<FetchGoldOutcome>;
+type FetchBaselineFn = (options: FetchBaselineOptions) => Promise<FetchBaselineOutcome>;
 
 export class FigmaBaselineProvider implements BaselineProvider<FigmaBaselineSource> {
   readonly kind = "figma" as const;
 
   constructor(
-    private readonly fetchImpl: FetchGoldFn = fetchGold,
-    private readonly stalenessImpl: typeof checkGoldStaleness = checkGoldStaleness,
+    private readonly fetchImpl: FetchBaselineFn = fetchBaseline,
+    private readonly stalenessImpl: typeof checkBaselineStaleness = checkBaselineStaleness,
   ) {}
 
   async resolve(
     options: BaselineResolveOptions<FigmaBaselineSource>,
   ): Promise<BaselineResolveOutcome> {
-    const baselinePath = path.join(options.outDir, GOLD_ARTIFACT.image);
+    const baselinePath = path.join(options.outDir, FIGMA_BASELINE_ARTIFACT.image);
     const fetched = await this.fetchImpl({
       fileKey: options.source.fileKey,
       nodeId: options.source.nodeId,
@@ -59,11 +54,11 @@ export class FigmaBaselineProvider implements BaselineProvider<FigmaBaselineSour
       canvasFill: options.source.canvasFill,
     });
     if (!fetched.fetched) {
-      // fetchGold's own message says the cached gold on disk "remains usable" for a
+      // fetchBaseline's own message says the cached baseline on disk "remains usable" for a
       // retryable failure -- honor that instead of aborting verification outright when
       // a previously-fetched baseline is actually there to fall back to.
       if (fetched.errorClass === "retryable" && fs.existsSync(baselinePath)) {
-        const cachedMeta = readGoldMeta(baselinePath);
+        const cachedMeta = readBaselineMeta(baselinePath);
         if (cachedMeta) {
           const stalenessWarnings = await this.stalenessImpl(baselinePath);
           return {
@@ -72,7 +67,7 @@ export class FigmaBaselineProvider implements BaselineProvider<FigmaBaselineSour
               evidence: {
                 kind: "figma",
                 path: path.resolve(baselinePath),
-                metaPath: path.resolve(goldMetaPath(baselinePath)),
+                metaPath: path.resolve(baselineMetaPath(baselinePath)),
                 fileKey: cachedMeta.fileKey,
                 nodeId: cachedMeta.nodeId,
                 fetchedAt: cachedMeta.fetchedAt,
@@ -80,7 +75,7 @@ export class FigmaBaselineProvider implements BaselineProvider<FigmaBaselineSour
               },
               warnings: [
                 ...fetched.warnings,
-                `Figma baseline fetch failed (${fetched.message}); using cached gold from ${cachedMeta.fetchedAt}.`,
+                `Figma baseline fetch failed (${fetched.message}); using cached baseline from ${cachedMeta.fetchedAt}.`,
                 ...stalenessWarnings,
               ],
             },
@@ -95,7 +90,7 @@ export class FigmaBaselineProvider implements BaselineProvider<FigmaBaselineSour
       baseline: {
         evidence: {
           kind: "figma",
-          path: path.resolve(fetched.goldPath),
+          path: path.resolve(fetched.baselinePath),
           metaPath: path.resolve(fetched.metaPath),
           fileKey: fetched.meta.fileKey,
           nodeId: fetched.meta.nodeId,

@@ -118,7 +118,7 @@ export const visualScoreArtifactSchema = z
     ssim: z.number().min(0).max(1).nullable(),
     avgDeltaE: z.number().nonnegative().nullable(),
     diffPixels: z.number().int().nonnegative().nullable(),
-    goldSize: scoreSizeSchema,
+    baselineSize: scoreSizeSchema,
     actualSize: scoreSizeSchema,
     baseline: z
       .object({

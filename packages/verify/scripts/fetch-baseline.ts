@@ -1,8 +1,8 @@
-import { fetchGold } from "../src/fetch-gold.ts";
+import { fetchBaseline } from "../src/fetch-baseline.ts";
 
 const [fileKey, nodeId, outPath, scaleRaw] = process.argv.slice(2);
 if (!fileKey || !nodeId || !outPath) {
-  console.error("Usage: fetch-gold <fileKey> <nodeId> <outPath> [scale]");
+  console.error("Usage: fetch-baseline <fileKey> <nodeId> <outPath> [scale]");
   process.exit(2);
 }
 const scale = scaleRaw == null ? 1 : Number(scaleRaw);
@@ -11,7 +11,7 @@ if (!Number.isFinite(scale) || scale <= 0) {
   process.exit(2);
 }
 
-const result = await fetchGold({
+const result = await fetchBaseline({
   fileKey,
   nodeId,
   outPath,

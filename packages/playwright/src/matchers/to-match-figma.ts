@@ -1,5 +1,5 @@
 import type { VisualMask } from "@framelia/contracts";
-import type { ExpectSize, VerificationContract } from "@framelia/verify";
+import type { ExpectSize } from "@framelia/verify";
 import { compare, FigmaBaselineProvider } from "@framelia/verify";
 import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
 import { test } from "@playwright/test";
@@ -11,7 +11,8 @@ import {
   type AttachJsonFn,
 } from "../attach.ts";
 import { captureActual } from "../capture.ts";
-import type { FrameliaScoreAttachment } from "../score-attachment.ts";
+import { defaultFigmaProfile } from "../figma-profile.ts";
+import { buildScoreAttachment, type FrameliaScoreAttachment } from "../score-attachment.ts";
 import { withTimeout } from "../timeout.ts";
 
 export interface ToMatchFigmaOptions {
@@ -37,9 +38,6 @@ export interface ToMatchFigmaContext {
 }
 
 const FILE_KEY_ENV_VAR = "FRAMELIA_FIGMA_FILE_KEY";
-/** Matches contracts' CONTRACT_ID_PATTERN; unread by FigmaBaselineProvider.resolve(), which
- * only consumes options.source/outDir — this is a type-satisfying stand-in, not live config. */
-const SYNTHETIC_CONTRACT_ID = "framelia-playwright-matcher";
 
 /**
  * Runner-agnostic core: everything toMatchFigma does except reach into
@@ -66,14 +64,13 @@ export async function runToMatchFigma(
   }
 
   const baseName = sanitizeAttachmentBaseName(nodeId);
-  const profile = options.profile ?? (options.selector ? "component/strict" : "page");
+  const profile = defaultFigmaProfile(options.profile, Boolean(options.selector));
 
   try {
     const [baselineOutcome, captureOutcome] = await withTimeout(
       Promise.all([
         new FigmaBaselineProvider().resolve({
           source: { kind: "figma", fileKey, nodeId },
-          contract: syntheticContract(fileKey, nodeId, workDir),
           outDir: workDir,
           profile,
           stabilitySamples: 1,
@@ -121,27 +118,20 @@ export async function runToMatchFigma(
       diff: outcome.diffPath,
     });
     const scoreAttachment: FrameliaScoreAttachment = {
-      pass: outcome.pass,
-      matchRatio: outcome.matchRatio,
-      ssim: outcome.ssim,
-      avgDeltaE: outcome.avgDeltaE,
-      diffPixels: outcome.diffPixels,
-      goldSize: outcome.goldSize,
-      actualSize: outcome.actualSize,
-      targetUrl: received.url(),
-      baselineKind: "figma",
-      attachmentBaseName: baseName,
-      profile,
-      scope: options.selector
-        ? { kind: "region", selector: options.selector, expectedSize: options.expectSize }
-        : { kind: "page", fullPage: options.fullPage ?? false },
-      masks: options.masks,
-      maxMaskedAreaRatio: options.maxMaskedAreaRatio,
-      captureEvidence: captureOutcome,
+      ...buildScoreAttachment(outcome, {
+        targetUrl: received.url(),
+        baselineKind: "figma",
+        attachmentBaseName: baseName,
+        profile,
+        scope: options.selector
+          ? { kind: "region", selector: options.selector, expectedSize: options.expectSize }
+          : { kind: "page", fullPage: options.fullPage ?? false },
+        masks: options.masks,
+        maxMaskedAreaRatio: options.maxMaskedAreaRatio,
+        captureEvidence: captureOutcome,
+      }),
       baselineFetchedAt: baselineOutcome.baseline.evidence.fetchedAt,
       baselineLastModified: baselineOutcome.baseline.evidence.lastModified,
-      topIssues: outcome.topIssues,
-      warnings: outcome.warnings,
       fileKey,
       nodeId,
     };
@@ -160,16 +150,6 @@ export async function runToMatchFigma(
       message: () => `toMatchFigma: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-}
-
-function syntheticContract(fileKey: string, nodeId: string, outDir: string): VerificationContract {
-  return {
-    id: SYNTHETIC_CONTRACT_ID,
-    baseline: { kind: "figma", fileKey, nodeId },
-    viewport: { name: "matcher", width: 0, height: 0 },
-    outDir,
-    scope: { kind: "page", pageReason: "framelia-playwright-matcher" },
-  };
 }
 
 /**

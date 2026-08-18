@@ -19,9 +19,12 @@ test.beforeEach(() => {
         { status: 200 },
       );
     if (url.includes("/v1/images/"))
-      return new Response(JSON.stringify({ images: { [NODE_ID]: "https://cdn.test/gold.png" } }), {
-        status: 200,
-      });
+      return new Response(
+        JSON.stringify({ images: { [NODE_ID]: "https://cdn.test/baseline.png" } }),
+        {
+          status: 200,
+        },
+      );
     return new Response(PNG_BODY, { status: 200, headers: { "content-type": "image/png" } });
   }) as typeof fetch;
 });

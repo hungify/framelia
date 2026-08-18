@@ -68,9 +68,10 @@ export function doneGateFromArtifact(
     now: options.now,
   });
   const results = new Map(artifact.results.map((result) => [result.id, result]));
-  artifact.request.contracts.forEach((contract, index) => {
+  const viewportsById = new Map(verdict.viewports.map((viewport) => [viewport.id, viewport]));
+  artifact.request.contracts.forEach((contract) => {
     const result = results.get(contract.id);
-    const viewport = verdict.viewports[index];
+    const viewport = viewportsById.get(contract.id);
     if (viewport && (!result || result.ok !== true || result.pass !== true)) {
       viewport.reasons.push("verification artifact result is not passing.");
       viewport.done = false;
@@ -98,6 +99,7 @@ function contractToDoneGate(
 ): DoneGateViewport {
   const scope = resolveContractScope(contract);
   return {
+    id: contract.id,
     viewport: contract.viewport.name,
     outDir: resolveArtifactPath(contract.outDir, projectRoot),
     baseline: contract.baseline,

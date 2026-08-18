@@ -4,19 +4,19 @@ import * as path from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { checkGoldStaleness } from "../src/index.ts";
+import { checkBaselineStaleness } from "../src/index.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fidelity-staleness-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 let n = 0;
-function goldWithMeta(meta: Record<string, unknown>): string {
+function baselineWithMeta(meta: Record<string, unknown>): string {
   const dir = path.join(tmp, `g-${n++}`);
   fs.mkdirSync(dir, { recursive: true });
-  const gold = path.join(dir, "figma-gold.png");
-  fs.writeFileSync(gold, "png");
-  fs.writeFileSync(path.join(dir, "figma-gold.meta.json"), JSON.stringify(meta));
-  return gold;
+  const baseline = path.join(dir, "figma-baseline.png");
+  fs.writeFileSync(baseline, "png");
+  fs.writeFileSync(path.join(dir, "figma-baseline.meta.json"), JSON.stringify(meta));
+  return baseline;
 }
 
 const baseMeta = {
@@ -27,26 +27,26 @@ const baseMeta = {
   apiCallLog: [],
 };
 
-describe("gold staleness (warnings only, never hard-fail)", () => {
+describe("baseline staleness (warnings only, never hard-fail)", () => {
   it("no sidecar -> warning", async () => {
     const dir = path.join(tmp, `g-${n++}`);
     fs.mkdirSync(dir, { recursive: true });
-    const gold = path.join(dir, "figma-gold.png");
-    fs.writeFileSync(gold, "png");
-    const w = await checkGoldStaleness(gold, { token: "" });
-    expect(w[0]).toMatch(/no figma-gold\.meta\.json/);
+    const baseline = path.join(dir, "figma-baseline.png");
+    fs.writeFileSync(baseline, "png");
+    const w = await checkBaselineStaleness(baseline, { token: "" });
+    expect(w[0]).toMatch(/no figma-baseline\.meta\.json/);
   });
 
-  it("no token + fresh gold -> no warnings", async () => {
-    const gold = goldWithMeta({ ...baseMeta, fetchedAt: new Date().toISOString() });
-    const w = await checkGoldStaleness(gold, { token: "" });
+  it("no token + fresh baseline -> no warnings", async () => {
+    const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: new Date().toISOString() });
+    const w = await checkBaselineStaleness(baseline, { token: "" });
     expect(w).toHaveLength(0);
   });
 
-  it("no token + old gold -> time-based heuristic warning (does not detect real changes)", async () => {
+  it("no token + old baseline -> time-based heuristic warning (does not detect real changes)", async () => {
     const old = new Date(Date.now() - 20 * 86_400_000).toISOString();
-    const gold = goldWithMeta({ ...baseMeta, fetchedAt: old });
-    const w = await checkGoldStaleness(gold, { token: "", maxAgeDays: 14 });
+    const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: old });
+    const w = await checkBaselineStaleness(baseline, { token: "", maxAgeDays: 14 });
     expect(w[0]).toMatch(/not re-verified in \d+d, no token/);
   });
 
@@ -59,17 +59,17 @@ describe("gold staleness (warnings only, never hard-fail)", () => {
   }
 
   it("token + changed lastModified -> stale warning", async () => {
-    const gold = goldWithMeta({ ...baseMeta, fetchedAt: new Date().toISOString() });
-    const w = await checkGoldStaleness(gold, {
+    const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: new Date().toISOString() });
+    const w = await checkBaselineStaleness(baseline, {
       token: "t",
       fetchImpl: figmaMeta("2026-07-18T09:00:00Z"),
     });
-    expect(w[0]).toMatch(/gold may be stale/);
+    expect(w[0]).toMatch(/baseline may be stale/);
   });
 
   it("token + unchanged lastModified -> clean", async () => {
-    const gold = goldWithMeta({ ...baseMeta, fetchedAt: new Date().toISOString() });
-    const w = await checkGoldStaleness(gold, {
+    const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: new Date().toISOString() });
+    const w = await checkBaselineStaleness(baseline, {
       token: "t",
       fetchImpl: figmaMeta(baseMeta.lastModified),
     });
@@ -78,30 +78,30 @@ describe("gold staleness (warnings only, never hard-fail)", () => {
 
   it("token + network failure -> warning + time fallback, never a throw", async () => {
     const old = new Date(Date.now() - 20 * 86_400_000).toISOString();
-    const gold = goldWithMeta({ ...baseMeta, fetchedAt: old });
+    const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: old });
     const fetchImpl = (async () => {
       throw new Error("ECONNREFUSED");
     }) as typeof fetch;
-    const w = await checkGoldStaleness(gold, { token: "t", fetchImpl, maxAgeDays: 14 });
-    expect(w.some((x) => x.includes("re-check failed"))).toBe(true);
-    expect(w.some((x) => x.includes("not re-verified"))).toBe(true);
+    const w = await checkBaselineStaleness(baseline, { token: "t", fetchImpl, maxAgeDays: 14 });
+    expect(w.some((x: string) => x.includes("re-check failed"))).toBe(true);
+    expect(w.some((x: string) => x.includes("not re-verified"))).toBe(true);
   });
 
   it("invalid fetchedAt reports unknown freshness", async () => {
-    const gold = goldWithMeta({ ...baseMeta, fetchedAt: "not-a-date" });
-    const w = await checkGoldStaleness(gold, { token: "" });
-    expect(w.some((warning) => warning.includes("no valid fetchedAt"))).toBe(true);
+    const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: "not-a-date" });
+    const w = await checkBaselineStaleness(baseline, { token: "" });
+    expect(w.some((warning: string) => warning.includes("no valid fetchedAt"))).toBe(true);
   });
 
   it("missing lastModified falls back to age check", async () => {
     const old = new Date(Date.now() - 20 * 86_400_000).toISOString();
-    const gold = goldWithMeta({ ...baseMeta, lastModified: null, fetchedAt: old });
-    const w = await checkGoldStaleness(gold, {
+    const baseline = baselineWithMeta({ ...baseMeta, lastModified: null, fetchedAt: old });
+    const w = await checkBaselineStaleness(baseline, {
       token: "t",
       fetchImpl: figmaMeta(baseMeta.lastModified),
       maxAgeDays: 14,
     });
-    expect(w.some((warning) => warning.includes("lacks a usable lastModified"))).toBe(true);
-    expect(w.some((warning) => warning.includes("not re-verified"))).toBe(true);
+    expect(w.some((warning: string) => warning.includes("lacks a usable lastModified"))).toBe(true);
+    expect(w.some((warning: string) => warning.includes("not re-verified"))).toBe(true);
   });
 });

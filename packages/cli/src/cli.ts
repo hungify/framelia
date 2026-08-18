@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
+import { pathToFileURL } from "node:url";
 
 import { EXIT_OK, EXIT_USAGE_ERROR, loadProjectEnv } from "@framelia/verify";
 import { Command, CommanderError } from "commander";
 
+import { DuplicateFlagError, rejectDuplicateFlags, type FlagSpec } from "./argv-flags.ts";
 import { registerAuthCommand } from "./commands/auth.ts";
 import { registerContractCommands } from "./commands/contract.ts";
 import { registerDashboardCommands, runAggregatedDashboard } from "./commands/dashboard.ts";
@@ -46,12 +48,13 @@ export function createProgram(): Command {
   return program;
 }
 
-function collectKnownOptions(command: Command): Map<string, boolean> {
-  const known = new Map<string, boolean>();
+function optionFlagsOf(command: Command): FlagSpec[] {
+  const flags: FlagSpec[] = [];
   for (const option of command.options) {
-    if (option.long) known.set(option.long, option.required || option.optional);
+    if (option.long)
+      flags.push({ flag: option.long, takesValue: option.required || option.optional });
   }
-  return known;
+  return flags;
 }
 
 /** Walks argv's leading non-flag tokens down the subcommand tree (e.g. "contract create"),
@@ -69,42 +72,31 @@ function resolveCommandChain(program: Command, argv: string[]): Command[] {
   return chain;
 }
 
-function rejectDuplicateOptions(program: Command, argv: string[]): void {
-  const knownOptions = new Map<string, boolean>();
+/** Commander adapter: translates the resolved command chain's Option objects into the
+ * flag/takesValue pairs rejectDuplicateFlags (in argv-flags.ts) actually classifies argv
+ * against. Keeps the classification logic itself free of Commander's internal shape. */
+function knownFlagsFor(program: Command, argv: string[]): FlagSpec[] {
+  const takesValueByFlag = new Map<string, boolean>();
   for (const command of resolveCommandChain(program, argv)) {
-    for (const [flag, takesValue] of collectKnownOptions(command))
-      knownOptions.set(flag, takesValue);
+    for (const { flag, takesValue } of optionFlagsOf(command))
+      takesValueByFlag.set(flag, takesValue);
   }
-
-  const seen = new Set<string>();
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]!;
-    if (!argument.startsWith("--")) continue;
-    const [flag, inlineValue] = argument.split(/=(.*)/, 2);
-    if (!flag || !knownOptions.has(flag)) continue;
-    if (seen.has(flag)) {
-      throw new CommanderError(
-        EXIT_USAGE_ERROR,
-        "commander.duplicateOption",
-        `error: option '${flag}' used more than once`,
-      );
-    }
-    seen.add(flag);
-    if (knownOptions.get(flag) && inlineValue === undefined) index += 1;
-  }
+  return [...takesValueByFlag].map(([flag, takesValue]) => ({ flag, takesValue }));
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const program = createProgram();
   try {
-    rejectDuplicateOptions(program, argv);
+    rejectDuplicateFlags(argv, knownFlagsFor(program, argv));
     await program.parseAsync(argv, { from: "user" });
   } catch (error) {
+    if (error instanceof DuplicateFlagError) {
+      console.error(error.message);
+      program.outputHelp();
+      process.exitCode = EXIT_USAGE_ERROR;
+      return;
+    }
     if (error instanceof CommanderError) {
-      if (error.code === "commander.duplicateOption") {
-        console.error(error.message);
-        program.outputHelp();
-      }
       process.exitCode = error.exitCode === EXIT_OK ? EXIT_OK : EXIT_USAGE_ERROR;
       return;
     }
@@ -112,15 +104,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
 }
 
-const isMain =
-  process.argv[1] != null &&
-  (process.argv[1].endsWith("/cli.ts") ||
-    process.argv[1].endsWith("/cli.js") ||
-    process.argv[1].endsWith("framelia.js"));
-
-if (isMain) {
-  main().catch((error) => {
+/** Entry point for both the dev script (`tsx src/cli.ts`) and the published
+ * bin (`bin/framelia.js`, importing the built `dist/cli.js`) -- one place
+ * owns "run the CLI and turn an unexpected throw into a usage-error exit." */
+export async function run(argv = process.argv.slice(2)): Promise<void> {
+  await main(argv).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = EXIT_USAGE_ERROR;
   });
 }
+
+const isMain = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMain) void run();

@@ -1,16 +1,17 @@
 import * as path from "node:path";
 
 import { verificationArtifactSchema } from "@framelia/contracts";
-import {
-  doneGateFromArtifact,
-  EXIT_OK,
-  EXIT_VISUAL_FAIL,
-  JSON_INDENT_SPACES,
-} from "@framelia/verify";
+import { doneGateFromArtifact } from "@framelia/verify";
 import { Option, type Command } from "commander";
 
 import { loadFrameliaConfig } from "../config.ts";
-import { positiveNumber, readJsonFile, subcommand } from "./shared.ts";
+import {
+  emitResult,
+  positiveNumber,
+  readJsonFile,
+  resolveProjectRoot,
+  subcommand,
+} from "./shared.ts";
 
 interface DoneGateOptions {
   artifact: string;
@@ -22,21 +23,14 @@ interface DoneGateOptions {
 
 async function doneGateCommand(options: DoneGateOptions): Promise<void> {
   const artifact = verificationArtifactSchema.parse(readJsonFile(options.artifact));
-  const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
+  const projectRoot = resolveProjectRoot(options.projectRoot);
   const config = await loadFrameliaConfig(projectRoot);
   const verdict = doneGateFromArtifact(artifact, {
     maxScoreAgeMs: options.maxScoreAgeMs,
     maxBaselineAgeMs: options.maxBaselineAgeMs ?? options.maxGoldAgeMs,
     defaults: config,
   });
-  console.log(
-    JSON.stringify(
-      { artifactPath: path.resolve(options.artifact), ...verdict },
-      null,
-      JSON_INDENT_SPACES,
-    ),
-  );
-  process.exitCode = verdict.done ? EXIT_OK : EXIT_VISUAL_FAIL;
+  emitResult({ artifactPath: path.resolve(options.artifact), ...verdict }, verdict.done);
 }
 
 export function registerDoneGateCommand(program: Command): void {

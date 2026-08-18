@@ -1,7 +1,12 @@
-import type { DashboardRun } from "@framelia/contracts";
+import type { DashboardEvent, DashboardRun } from "@framelia/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useRunArtifact } from "../data-source.ts";
+import {
+  connectRunEvents,
+  shouldCloseEventsOnError,
+  shouldRefreshOnRunEvent,
+  useRunArtifact,
+} from "../data-source.ts";
 
 function run(runId: string): DashboardRun {
   return {
@@ -33,6 +38,72 @@ describe("artifactUrl", () => {
     expect(artifactUrl("contracts/home desktop/actual.png")).toBe(
       "/artifacts/contracts/home%20desktop/actual.png",
     );
+  });
+});
+
+function dashboardEvent(runId: string): DashboardEvent {
+  return { sequence: 1, runId, status: "running", timestamp: new Date().toISOString() };
+}
+
+class FakeEventSource {
+  url: string;
+  closed = false;
+  listeners = new Map<string, (event: unknown) => void>();
+  constructor(url: string) {
+    this.url = url;
+  }
+  addEventListener(type: string, listener: (event: unknown) => void) {
+    this.listeners.set(type, listener);
+  }
+  close() {
+    this.closed = true;
+  }
+  emit(type: string, event: unknown) {
+    this.listeners.get(type)?.(event);
+  }
+}
+
+describe("shouldCloseEventsOnError", () => {
+  it("only closes once the run has actually finished", () => {
+    expect(shouldCloseEventsOnError(undefined)).toBe(false);
+    expect(shouldCloseEventsOnError(run("a"))).toBe(false);
+    expect(shouldCloseEventsOnError({ ...run("a"), finishedAt: new Date().toISOString() })).toBe(
+      true,
+    );
+  });
+});
+
+describe("shouldRefreshOnRunEvent", () => {
+  it("only matches the run currently displayed", () => {
+    expect(shouldRefreshOnRunEvent("a", dashboardEvent("a"))).toBe(true);
+    expect(shouldRefreshOnRunEvent("a", dashboardEvent("b"))).toBe(false);
+    expect(shouldRefreshOnRunEvent(undefined, dashboardEvent("a"))).toBe(false);
+  });
+});
+
+describe("connectRunEvents", () => {
+  it("triggers the callback only for a 'run' event matching the current run", () => {
+    let current: DashboardRun | undefined = run("a");
+    const onMatchingRunEvent = vi.fn<() => void>();
+    const source = connectRunEvents(
+      onMatchingRunEvent,
+      () => current,
+      FakeEventSource as unknown as typeof EventSource,
+    ) as unknown as FakeEventSource;
+
+    source.emit("run", { data: JSON.stringify(dashboardEvent("b")) });
+    expect(onMatchingRunEvent).not.toHaveBeenCalled();
+
+    source.emit("run", { data: JSON.stringify(dashboardEvent("a")) });
+    expect(onMatchingRunEvent).toHaveBeenCalledTimes(1);
+
+    current = run("changed");
+    source.emit("error", {});
+    expect(source.closed).toBe(false);
+
+    current = { ...current, finishedAt: new Date().toISOString() };
+    source.emit("error", {});
+    expect(source.closed).toBe(true);
   });
 });
 

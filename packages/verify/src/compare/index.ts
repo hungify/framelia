@@ -29,25 +29,9 @@ import { ssimCompare } from "./ssim.ts";
 
 const MAX_AREA_GAP_PERCENT = 100;
 
-export { areaGap } from "./area-gap.ts";
-export { avgDeltaE2000 } from "./delta-e.ts";
-export {
-  countRealDiffPixels,
-  diffBoundingBox,
-  largestRealDiffCluster,
-  pixelCompare,
-} from "./pixel.ts";
-export {
-  compositeOnCanvas,
-  detectBorderColor,
-  makeSolidPng,
-  padTo,
-  parseHexRgb,
-  parsePng,
-  readPng,
-  writePng,
-} from "./png.ts";
-export { ssimCompare } from "./ssim.ts";
+// This module's seam is `compare()` alone -- the pipeline orchestrator. Low-level
+// building blocks (area-gap, delta-e, pixel, png, ssim) have their own seam at
+// internal.ts; import from the submodules directly there, not through this barrel.
 
 interface Size {
   width: number;
@@ -57,7 +41,7 @@ interface Size {
 /** Shared shape for the two early-exit paths: no pixel/SSIM/deltaE signal was ever computed. */
 function skippedOutcome(input: {
   areaGapPercent: number;
-  goldSize: Size;
+  baselineSize: Size;
   actualSize: Size;
   topIssues: TopIssue[];
   warnings: string[];
@@ -71,7 +55,7 @@ function skippedOutcome(input: {
     clusterFail: false,
     diffPixels: null,
     totalPixels: null,
-    goldSize: input.goldSize,
+    baselineSize: input.baselineSize,
     actualSize: input.actualSize,
     resizedForCompare: false,
     topIssues: input.topIssues,
@@ -81,29 +65,29 @@ function skippedOutcome(input: {
 }
 
 export function compare(
-  goldPath: string,
+  baselinePath: string,
   actualPath: string,
   outDir: string,
   options: CompareOptions,
 ): CompareOutcome {
   const profile = getProfile(options.profile);
 
-  let gold: PNG;
+  let baseline: PNG;
   let actual: PNG;
   try {
-    gold = readPng(goldPath);
+    baseline = readPng(baselinePath);
     actual = readPng(actualPath);
   } catch (err) {
     return skippedOutcome({
       areaGapPercent: MAX_AREA_GAP_PERCENT,
-      goldSize: { width: 0, height: 0 },
+      baselineSize: { width: 0, height: 0 },
       actualSize: { width: 0, height: 0 },
       topIssues: [
         {
           severity: "high",
           kind: "pixel",
           message: `Cannot read PNG: ${err instanceof Error ? err.message : String(err)}`,
-          hint: "Check gold and actual paths",
+          hint: "Check baseline and actual paths",
           repairCandidate: false,
           blocking: true,
         },
@@ -118,34 +102,34 @@ export function compare(
   const expectSizeProblem = expectSizeIssue(actual, options.expectSize);
   if (expectSizeProblem) topIssues.push(expectSizeProblem);
 
-  const gap = areaGap(gold, actual);
+  const gap = areaGap(baseline, actual);
   const sizeGapProblem = sizeGapIssue(gap, profile);
   if (sizeGapProblem) {
     topIssues.push(sizeGapProblem);
     return skippedOutcome({
       areaGapPercent: gap.areaGapPercent,
-      goldSize: gap.goldSize,
+      baselineSize: gap.baselineSize,
       actualSize: gap.actualSize,
       topIssues,
       warnings,
     });
   }
 
-  const width = Math.max(gold.width, actual.width);
-  const height = Math.max(gold.height, actual.height);
-  const resizedForCompare = gold.width !== actual.width || gold.height !== actual.height;
-  const fillColor = detectBorderColor(gold);
-  const goldAligned = padTo(gold, width, height, fillColor);
+  const width = Math.max(baseline.width, actual.width);
+  const height = Math.max(baseline.height, actual.height);
+  const resizedForCompare = baseline.width !== actual.width || baseline.height !== actual.height;
+  const fillColor = detectBorderColor(baseline);
+  const baselineAligned = padTo(baseline, width, height, fillColor);
   const actualAligned = padTo(actual, width, height, fillColor);
 
-  const pixel = pixelCompare(goldAligned, actualAligned, PIXEL_THRESHOLD, false);
+  const pixel = pixelCompare(baselineAligned, actualAligned, PIXEL_THRESHOLD, false);
   const diffPath = path.join(outDir, RUN_ARTIFACT.diff);
   writePng(diffPath, pixel.diff);
 
-  const ssim = ssimCompare(goldAligned, actualAligned);
+  const ssim = ssimCompare(baselineAligned, actualAligned);
 
   const bbox = diffBoundingBox(pixel.diff);
-  const avgDeltaE = bbox ? avgDeltaE2000(goldAligned, actualAligned, bbox) : 0;
+  const avgDeltaE = bbox ? avgDeltaE2000(baselineAligned, actualAligned, bbox) : 0;
 
   const clusterOn = options.clusterCheck ?? profile.cluster;
   const clusterFail =
@@ -186,7 +170,7 @@ export function compare(
     clusterFail,
     diffPixels: pixel.diffPixels,
     totalPixels: pixel.totalPixels,
-    goldSize: gap.goldSize,
+    baselineSize: gap.baselineSize,
     actualSize: gap.actualSize,
     resizedForCompare,
     topIssues,

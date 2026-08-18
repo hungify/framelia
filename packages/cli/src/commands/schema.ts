@@ -4,21 +4,15 @@ import {
   verificationRequestSchema,
 } from "@framelia/contracts";
 import { JSON_INDENT_SPACES } from "@framelia/verify";
-import { InvalidArgumentError, type Command } from "commander";
+import { Option, type Command } from "commander";
 
 import { subcommand } from "./shared.ts";
 
-type SchemaTarget = "contract" | "artifact";
+const SCHEMA_TARGETS = ["contract", "artifact"] as const;
+type SchemaTarget = (typeof SCHEMA_TARGETS)[number];
 
 interface SchemaOptions {
   target: SchemaTarget;
-}
-
-function schemaTarget(raw: string): SchemaTarget {
-  if (raw !== "contract" && raw !== "artifact") {
-    throw new InvalidArgumentError('must be "contract" or "artifact"');
-  }
-  return raw;
 }
 
 function schemaCommand(options: SchemaOptions): void {
@@ -33,7 +27,11 @@ export function registerSchemaCommand(program: Command): void {
       "schema",
       "Print the live JSON Schema for a visual contract or verification artifact.",
     )
-      .option("--target <contract|artifact>", "schema to print", schemaTarget, "contract")
+      .addOption(
+        new Option("--target <contract|artifact>", "schema to print")
+          .choices(SCHEMA_TARGETS)
+          .default("contract"),
+      )
       .action(schemaCommand),
   );
 }

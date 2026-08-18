@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import RunDashboard from "../views/RunDashboard.vue";
+import ProductDashboard from "../views/ProductDashboard.vue";
 </script>
 
 <template>
-  <RunDashboard />
+  <ProductDashboard />
 </template>

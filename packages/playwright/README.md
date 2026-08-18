@@ -92,3 +92,7 @@ Reporter can persist the same evidence required by `framelia done-gate`.
 
 Web-to-web matcher results remain runtime/dashboard evidence. Contract and done-gate artifacts are
 Figma-baselined after schema-v4 pivot.
+
+## Consumer reference app
+
+See [`examples/framelia-reference-app/`](../../examples/framelia-reference-app/) for a standalone TanStack Start consumer showing Better Auth, protected routes, auth storage state, deterministic visual fixtures, Reporter configuration, and all three matchers.

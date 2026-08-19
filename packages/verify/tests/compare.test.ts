@@ -205,4 +205,34 @@ describe("compare pipeline", () => {
       r.topIssues.some((issue) => issue.kind === "residual" && issue.severity === "medium"),
     ).toBe(true);
   });
+
+  it("clusterCheck override fails a component whose defect is concentrated in one region, even though every other signal passes", () => {
+    const baselinePng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    let actualPng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    actualPng = withRect(actualPng, { x: 10, y: 10, w: 16, h: 16 }, [150, 150, 150, 255]);
+    // Stray pixel far from the concentrated block: stretches the diff bounding box across
+    // most of the image, diluting avgDeltaE (computed over the whole bbox, not just the
+    // diffing pixels) so this test isolates the cluster signal from the color signal.
+    actualPng = withRect(actualPng, { x: 299, y: 299, w: 1, h: 1 }, [150, 150, 150, 255]);
+
+    const baseline = write(baselinePng, "baseline");
+    const actual = write(actualPng, "actual");
+    // component/strict's own `cluster` setting is false -- this proves the `clusterCheck`
+    // override (what resolveFigmaCompareOptions uses for the component default) independently
+    // fails a concentrated defect that clears matchRatio, maxDiffPixels, SSIM, and avgDeltaE.
+    const r = compare(baseline, actual, outDir(), {
+      profile: "component/strict",
+      clusterCheck: true,
+    });
+
+    expect(r.matchRatio).not.toBeNull();
+    expect(r.matchRatio as number).toBeGreaterThanOrEqual(0.995);
+    expect(r.avgDeltaE).not.toBeNull();
+    expect(r.avgDeltaE as number).toBeLessThan(3.0);
+    expect(r.ssim).toBeGreaterThanOrEqual(0.985);
+    expect(r.diffPixels).not.toBeNull();
+    expect(r.diffPixels as number).toBeLessThanOrEqual(500);
+    expect(r.clusterFail).toBe(true);
+    expect(r.pass).toBe(false);
+  });
 });

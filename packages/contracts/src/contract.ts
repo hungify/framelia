@@ -100,6 +100,8 @@ export const verificationContractSchema = z
     outDir: z.string().regex(VISUAL_ARTIFACT_DIR_PATTERN).optional(),
     scope: contractScopeSchema,
     profile: componentProfileSchema.optional(),
+    /** Resolved clusterCheck override compare() ran with -- see resolveFigmaCompareOptions. */
+    clusterCheck: z.boolean().optional(),
     masks: z.array(visualMaskSchema).min(1).max(MAX_MASK_SELECTORS).optional(),
   })
   .strict()

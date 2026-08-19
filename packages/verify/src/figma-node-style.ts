@@ -1,0 +1,78 @@
+import type { Node, SolidPaint } from "@figma/rest-api-spec";
+
+export interface StyleSnapshot {
+  color?: string;
+  spacing?: { top: number; right: number; bottom: number; left: number };
+  fontSize?: number;
+  fontWeight?: number;
+  cornerRadius?: number;
+}
+
+export function extractFigmaStyle(node: Node): StyleSnapshot {
+  const snapshot: StyleSnapshot = {};
+
+  const color = extractColor(node);
+  if (color !== undefined) snapshot.color = color;
+
+  const spacing = extractSpacing(node);
+  if (spacing !== undefined) snapshot.spacing = spacing;
+
+  if (node.type === "TEXT") {
+    if (node.style.fontSize !== undefined) snapshot.fontSize = node.style.fontSize;
+    if (node.style.fontWeight !== undefined) snapshot.fontWeight = node.style.fontWeight;
+  }
+
+  if ("cornerRadius" in node && node.cornerRadius !== undefined) {
+    snapshot.cornerRadius = node.cornerRadius;
+  }
+
+  return snapshot;
+}
+
+function extractSpacing(node: Node): StyleSnapshot["spacing"] {
+  if (!("paddingTop" in node)) return undefined;
+  const { paddingTop, paddingRight, paddingBottom, paddingLeft } = node;
+  // Only report spacing when all four sides are actually present -- a node
+  // missing any one of them (non-auto-layout, or partial/malformed) must
+  // leave spacing undefined rather than fabricate 0 for the rest.
+  if (
+    paddingTop === undefined ||
+    paddingRight === undefined ||
+    paddingBottom === undefined ||
+    paddingLeft === undefined
+  ) {
+    return undefined;
+  }
+  return { top: paddingTop, right: paddingRight, bottom: paddingBottom, left: paddingLeft };
+}
+
+function extractColor(node: Node): string | undefined {
+  if (!("fills" in node) || !Array.isArray(node.fills)) return undefined;
+  const solidFill = node.fills.find(
+    (fill): fill is SolidPaint => fill.type === "SOLID" && fill.visible !== false,
+  );
+  if (!solidFill) return undefined;
+  // solidFill.color is always the resolved literal, even when boundVariables.color
+  // points at a Figma Variable -- resolving the variable itself needs the
+  // Enterprise-only Variables API, out of scope for this feature, so it's
+  // deliberately never read here.
+  return toHexColor(solidFill.color, solidFill.opacity);
+}
+
+function toHexColor(
+  color: { r: number; g: number; b: number },
+  opacity: number | undefined,
+): string {
+  // Paint opacity is separate from color's own alpha component; undefined
+  // means fully opaque. Always emit 8 digits (opaque = "ff") so a later
+  // equality-based diff never has to special-case 6-vs-8-digit strings.
+  const alpha = opacity ?? 1;
+  return `#${toHexChannel(color.r)}${toHexChannel(color.g)}${toHexChannel(color.b)}${toHexChannel(alpha)}`;
+}
+
+function toHexChannel(value: number): string {
+  const clamped = Math.min(1, Math.max(0, value));
+  return Math.round(clamped * 255)
+    .toString(16)
+    .padStart(2, "0");
+}

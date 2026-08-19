@@ -110,5 +110,6 @@ function contractToDoneGate(
     pageReason: scope.pageReason,
     masks: contract.masks,
     maxMaskedAreaRatio: defaults.maxMaskedAreaRatio,
+    profileOverrides: contract.profileOverrides,
   };
 }

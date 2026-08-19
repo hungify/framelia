@@ -48,6 +48,7 @@ export type {
   BaselineEvidence,
   FigmaBaselineEvidence,
   ProfileName,
+  ProfileOverrides,
   RejectResult,
   RunType,
   Stability,

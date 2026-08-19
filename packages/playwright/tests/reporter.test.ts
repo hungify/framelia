@@ -291,6 +291,44 @@ describe("FrameliaReporter", () => {
     expect(score).toMatchObject({ clusterCheck: true });
   });
 
+  it("persists profileOverrides into both the contract and the durable score (regression guard: report-projection must not re-derive it, there's nothing to re-derive it from)", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "component matches figma with a tightened threshold");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(
+      testA,
+      passedResultWithImages("test-a", imageDir, {
+        profile: "component/strict",
+        profileOverrides: { minMatch: 0.999, maxDiffPixels: 10 },
+        scope: { kind: "region", selector: ".card" },
+      }),
+    );
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const artifactPath = path.join(
+      projectRoot,
+      ".framelia/visual-verifications/test-a/visual-verification.json",
+    );
+    const artifact = verificationArtifactSchema.parse(
+      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
+    );
+    expect(artifact.request.contracts[0]).toMatchObject({
+      profileOverrides: { minMatch: 0.999, maxDiffPixels: 10 },
+    });
+
+    const score = JSON.parse(
+      fs.readFileSync(
+        path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
+        "utf8",
+      ),
+    );
+    expect(score).toMatchObject({ profileOverrides: { minMatch: 0.999, maxDiffPixels: 10 } });
+  });
+
   it("persists every Figma matcher score attachment separately", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");

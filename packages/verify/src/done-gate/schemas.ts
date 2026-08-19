@@ -1,4 +1,5 @@
 import {
+  profileOverridesSchema,
   profileSchema,
   runTypeSchema,
   stabilitySchema,
@@ -81,6 +82,7 @@ export const ScoreFileSchema = z.looseObject({
     actual: z.string(),
     diff: z.string().nullable(),
   }),
+  profileOverrides: profileOverridesSchema.optional(),
   topIssues: z.array(TopIssueSchema).optional(),
   diagnostics: z
     .array(
@@ -108,6 +110,7 @@ export const RunMetaSchema = z.looseObject({
   pageReason: z.string().nullable(),
   masks: z.array(visualMaskSchema).nullable().optional(),
   maxMaskedAreaRatio: z.number().nullable().optional(),
+  profileOverrides: profileOverridesSchema.optional(),
   captureEvidence: CaptureEvidenceSchema.optional(),
   baselineCaptureEvidence: CaptureEvidenceSchema.optional(),
   viewportSize: z.strictObject({ width: z.number().positive(), height: z.number().positive() }),

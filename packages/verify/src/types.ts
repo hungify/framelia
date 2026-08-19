@@ -2,6 +2,7 @@ import {
   SCHEMA_VERSION,
   type ContractDefaults,
   type ProfileName,
+  type ProfileOverrides,
   type RunType,
   type Stability,
 } from "@framelia/contracts";
@@ -9,7 +10,7 @@ import {
 import type { MaskEvidence } from "./capture/types.ts";
 
 export { SCHEMA_VERSION };
-export type { ContractDefaults, ProfileName, RunType, Stability };
+export type { ContractDefaults, ProfileName, ProfileOverrides, RunType, Stability };
 
 export class AppError extends Error {
   readonly code: string;
@@ -124,6 +125,8 @@ export interface CompareOptions {
   profile: ProfileName;
   expectSize?: ExpectSize;
   clusterCheck?: boolean;
+  /** Per-contract author override of specific threshold fields; unset fields keep the resolved profile's own value. */
+  profileOverrides?: ProfileOverrides;
 }
 
 export interface CompareOutcome {

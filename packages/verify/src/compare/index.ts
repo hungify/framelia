@@ -64,13 +64,28 @@ function skippedOutcome(input: {
   };
 }
 
+/**
+ * Drops explicitly-`undefined` keys before merging overrides onto a profile's defaults.
+ * An override object built from optional variables (e.g. `{ minMatch: maybeUndefined }`)
+ * can carry a present-but-`undefined` key; a plain spread would let that `undefined`
+ * clobber the resolved default (comparisons against `undefined` are always false, so
+ * `minMatch: undefined` silently fails the match-ratio check with no diagnostic).
+ * `null` is preserved -- it's a legitimate value (`maxDiffPixels: null` means no cap).
+ */
+function definedOverrides<T extends object>(overrides: T | undefined): Partial<T> {
+  if (!overrides) return {};
+  return Object.fromEntries(
+    Object.entries(overrides).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
+}
+
 export function compare(
   baselinePath: string,
   actualPath: string,
   outDir: string,
   options: CompareOptions,
 ): CompareOutcome {
-  const profile = getProfile(options.profile);
+  const profile = { ...getProfile(options.profile), ...definedOverrides(options.profileOverrides) };
 
   let baseline: PNG;
   let actual: PNG;

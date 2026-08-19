@@ -26,7 +26,6 @@ import {
 import type { TestCase, TestResult } from "@playwright/test/reporter";
 
 import { SCORE_ATTACHMENT_SUFFIX } from "./attach.ts";
-import { defaultFigmaProfile } from "./figma-profile.ts";
 import type { FrameliaScoreAttachment } from "./score-attachment.ts";
 
 export const FALLBACK_TARGET_URL = "http://localhost/";
@@ -247,7 +246,10 @@ export function deriveContract(
     nodeId: primary.nodeId ?? "0:0",
   };
 
-  const profile = defaultFigmaProfile(primary.profile, scope.kind === "region");
+  // primary.profile/clusterCheck are already resolved (set at matcher time by
+  // resolveFigmaCompareOptions) -- re-running resolveFigmaCompareOptions on the resolved
+  // profile would hit its `explicit` branch and silently drop a forced clusterCheck default.
+  const profile = primary.profile ?? "page";
   const verificationContract: VerificationContract = {
     id,
     baseline,
@@ -266,6 +268,7 @@ export function deriveContract(
           }
         : { kind: "page", pageReason: SYNTHETIC_PAGE_REASON },
     ...(profile === "page" ? {} : { profile }),
+    ...(primary.clusterCheck !== undefined ? { clusterCheck: primary.clusterCheck } : {}),
     ...(primary.masks?.length ? { masks: primary.masks } : {}),
   };
 
@@ -388,7 +391,10 @@ export function writeEvidence(
   );
   const captureEvidence = score.captureEvidence;
   const scope = score.scope ?? { kind: "page" as const, fullPage: false };
-  const profile = defaultFigmaProfile(score.profile, scope.kind === "region");
+  // Same reasoning as deriveContract: score.profile is already resolved, so read
+  // score.clusterCheck directly instead of re-deriving it from the resolved profile.
+  const profile = score.profile ?? "page";
+  const clusterCheck = score.clusterCheck;
   const expectedSize =
     scope.kind === "region"
       ? (scope.expectedSize ?? captureEvidence?.elementRect ?? score.actualSize)
@@ -425,6 +431,7 @@ export function writeEvidence(
     baselineSize: score.baselineSize,
     actualSize: score.actualSize,
     artifacts: { baseline: baselinePath, actual: actualPath, diff: diffPath ?? null },
+    ...(clusterCheck !== undefined ? { clusterCheck } : {}),
     ...(score.topIssues?.length ? { topIssues: score.topIssues } : {}),
     ...(score.warnings?.length ? { warnings: score.warnings } : {}),
     ...(captureEvidence ? { captureEvidence } : {}),
@@ -445,6 +452,7 @@ export function writeEvidence(
         profile,
         runType: "final",
         pageReason: SYNTHETIC_PAGE_REASON,
+        ...(clusterCheck !== undefined ? { clusterCheck } : {}),
         ...(score.masks?.length ? { masks: score.masks } : {}),
         // Recorded from the project's config default, not score.maxMaskedAreaRatio (the
         // matcher's per-call capture option) -- contractToDoneGate compares against the same

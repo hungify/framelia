@@ -255,6 +255,42 @@ describe("FrameliaReporter", () => {
       ).toBe(true);
   });
 
+  it("persists the resolved clusterCheck override into both the contract and the durable score (regression guard: report-projection must not re-derive it from the already-resolved profile)", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "component matches figma");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(
+      testA,
+      passedResultWithImages("test-a", imageDir, {
+        profile: "component/strict",
+        clusterCheck: true,
+        scope: { kind: "region", selector: ".card" },
+      }),
+    );
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const artifactPath = path.join(
+      projectRoot,
+      ".framelia/visual-verifications/test-a/visual-verification.json",
+    );
+    const artifact = verificationArtifactSchema.parse(
+      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
+    );
+    expect(artifact.request.contracts[0]).toMatchObject({ clusterCheck: true });
+
+    const score = JSON.parse(
+      fs.readFileSync(
+        path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
+        "utf8",
+      ),
+    );
+    expect(score).toMatchObject({ clusterCheck: true });
+  });
+
   it("persists every Figma matcher score attachment separately", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");

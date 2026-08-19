@@ -17,6 +17,8 @@ export interface FrameliaScoreAttachment {
   baselineKind: "figma" | "web";
   attachmentBaseName?: string;
   profile?: ProfileName;
+  /** Resolved clusterCheck override compare() actually ran with -- see resolveFigmaCompareOptions. */
+  clusterCheck?: boolean;
   scope?: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
@@ -43,6 +45,7 @@ export interface ScoreAttachmentBase {
   baselineKind: "figma" | "web";
   attachmentBaseName: string;
   profile: ProfileName;
+  clusterCheck?: boolean;
   scope: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;

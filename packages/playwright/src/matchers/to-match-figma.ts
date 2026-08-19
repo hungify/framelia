@@ -11,7 +11,7 @@ import {
   type AttachJsonFn,
 } from "../attach.ts";
 import { captureActual } from "../capture.ts";
-import { defaultFigmaProfile } from "../figma-profile.ts";
+import { resolveFigmaCompareOptions } from "../figma-profile.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "../score-attachment.ts";
 import { withTimeout } from "../timeout.ts";
 
@@ -64,7 +64,10 @@ export async function runToMatchFigma(
   }
 
   const baseName = sanitizeAttachmentBaseName(nodeId);
-  const profile = defaultFigmaProfile(options.profile, Boolean(options.selector));
+  const { profile, clusterCheck } = resolveFigmaCompareOptions(
+    options.profile,
+    Boolean(options.selector),
+  );
 
   try {
     const [baselineOutcome, captureOutcome] = await withTimeout(
@@ -110,6 +113,7 @@ export async function runToMatchFigma(
     const actualPath = captureOutcome.capturePaths[0]!;
     const outcome = compare(baselineOutcome.baseline.evidence.path, actualPath, workDir, {
       profile,
+      clusterCheck,
     });
 
     await attachDiffTriplet(context.attach, baseName, {
@@ -123,6 +127,7 @@ export async function runToMatchFigma(
         baselineKind: "figma",
         attachmentBaseName: baseName,
         profile,
+        clusterCheck,
         scope: options.selector
           ? { kind: "region", selector: options.selector, expectedSize: options.expectSize }
           : { kind: "page", fullPage: options.fullPage ?? false },

@@ -27,14 +27,20 @@ export interface FrameliaScoreAttachment {
   captureEvidence?: CaptureEvidence;
   baselineFetchedAt?: string;
   baselineLastModified?: string | null;
-  topIssues?: Array<{ kind: string; severity: string; message: string }>;
+  topIssues?: TopIssue[];
   warnings?: string[];
   /** Set only for baselineKind "figma" -- lets the Reporter rebuild a real baseline pointer. */
   fileKey?: string;
   nodeId?: string;
 }
 import type { VisualMask } from "@framelia/contracts";
-import type { CompareOutcome, ExpectSize, ProfileName, ProfileOverrides } from "@framelia/verify";
+import type {
+  CompareOutcome,
+  ExpectSize,
+  ProfileName,
+  ProfileOverrides,
+  TopIssue,
+} from "@framelia/verify";
 import type { CaptureEvidence } from "@framelia/verify/internal";
 
 export type MatcherScope =

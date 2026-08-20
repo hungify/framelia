@@ -109,6 +109,31 @@ export const visualDiagnosticSchema = z
   })
   .strict();
 
+/** Mirrors @framelia/verify's TopIssue -- contracts can't import it (verify depends on
+ * contracts, not the reverse), so this schema restates the same shape independently. */
+export const topIssueSchema = z
+  .object({
+    severity: z.enum(["high", "medium", "low"]),
+    kind: z.enum([
+      "size",
+      "expect-size",
+      "pixel",
+      "ssim",
+      "color",
+      "cluster",
+      "style-typography",
+      "style-color",
+      "baseline-stability",
+      "capture-stability",
+      "residual",
+    ]),
+    message: z.string().min(1),
+    hint: z.string().optional(),
+    repairCandidate: z.boolean(),
+    blocking: z.boolean(),
+  })
+  .strict();
+
 export const visualScoreArtifactSchema = z
   .object({
     schemaVersion: z.literal(SCHEMA_VERSION),
@@ -149,6 +174,7 @@ export const visualScoreArtifactSchema = z
       })
       .loose(),
     diagnostics: z.array(visualDiagnosticSchema).optional(),
+    topIssues: z.array(topIssueSchema).optional(),
     captureEvidence: captureEvidenceSchema.optional().catch(undefined),
     baselineCaptureEvidence: captureEvidenceSchema.optional().catch(undefined),
   })
@@ -157,3 +183,4 @@ export const visualScoreArtifactSchema = z
 export type VisualScoreArtifact = z.infer<typeof visualScoreArtifactSchema>;
 export type CaptureEvidenceArtifact = z.infer<typeof captureEvidenceSchema>;
 export type VisualDiagnostic = z.infer<typeof visualDiagnosticSchema>;
+export type VisualTopIssue = z.infer<typeof topIssueSchema>;

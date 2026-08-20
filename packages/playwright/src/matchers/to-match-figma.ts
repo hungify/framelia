@@ -1,6 +1,6 @@
 import type { VisualMask } from "@framelia/contracts";
-import type { ExpectSize, ProfileOverrides } from "@framelia/verify";
-import { compare, FigmaBaselineProvider } from "@framelia/verify";
+import type { ExpectSize, StyleSnapshot, TopIssue, ProfileOverrides } from "@framelia/verify";
+import { compare, compareStyles, FigmaBaselineProvider } from "@framelia/verify";
 import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
 import { test } from "@playwright/test";
 
@@ -10,10 +10,29 @@ import {
   SCORE_ATTACHMENT_SUFFIX,
   type AttachJsonFn,
 } from "../attach.ts";
+import { captureElementStyle } from "../capture-style.ts";
 import { captureActual } from "../capture.ts";
 import { resolveFigmaCompareOptions } from "../figma-profile.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "../score-attachment.ts";
 import { withTimeout } from "../timeout.ts";
+
+/**
+ * Style comparison is best-effort and informational-only (see compareStyles):
+ * a capture-style failure (stale selector, detached element) must never fail
+ * the match itself, only skip the style issues for this run.
+ */
+async function captureStyleIssues(
+  page: Page,
+  selector: string,
+  figmaStyle: StyleSnapshot,
+): Promise<TopIssue[]> {
+  try {
+    const actualStyle = await captureElementStyle(page, selector);
+    return compareStyles(figmaStyle, actualStyle);
+  } catch {
+    return [];
+  }
+}
 
 export interface ToMatchFigmaOptions {
   /** Figma file key. Falls back to FRAMELIA_FIGMA_FILE_KEY when omitted. */
@@ -119,13 +138,26 @@ export async function runToMatchFigma(
       profileOverrides: options.profileOverrides,
     });
 
+    // Component-scope only (selector set) -- style comparison needs a single
+    // element to capture computed style from, and only applies when the Figma
+    // baseline fetch was fresh enough to have extracted one (see ResolvedBaseline).
+    const styleIssues =
+      options.selector && baselineOutcome.baseline.figmaStyle
+        ? await captureStyleIssues(received, options.selector, baselineOutcome.baseline.figmaStyle)
+        : [];
+    // Style mismatches are informational-only (TopIssue.blocking: false) and
+    // never affect `outcome.pass` -- merged in after compare() decided pass/fail.
+    const outcomeWithStyle = styleIssues.length
+      ? { ...outcome, topIssues: [...outcome.topIssues, ...styleIssues] }
+      : outcome;
+
     await attachDiffTriplet(context.attach, baseName, {
       expected: baselineOutcome.baseline.evidence.path,
       actual: actualPath,
       diff: outcome.diffPath,
     });
     const scoreAttachment: FrameliaScoreAttachment = {
-      ...buildScoreAttachment(outcome, {
+      ...buildScoreAttachment(outcomeWithStyle, {
         targetUrl: received.url(),
         baselineKind: "figma",
         attachmentBaseName: baseName,

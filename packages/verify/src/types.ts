@@ -8,6 +8,7 @@ import {
 } from "@framelia/contracts";
 
 import type { MaskEvidence } from "./capture/types.ts";
+import type { StyleSnapshot } from "./figma-node-style.ts";
 
 export { SCHEMA_VERSION };
 export type { ContractDefaults, ProfileName, ProfileOverrides, RunType, Stability };
@@ -149,4 +150,6 @@ export interface CompareOutcome {
 export interface ResolvedBaseline {
   evidence: BaselineEvidence;
   warnings: string[];
+  /** Only set on a fresh Figma fetch (see FigmaBaselineProvider) -- undefined for a cached-baseline fallback. */
+  figmaStyle?: StyleSnapshot;
 }

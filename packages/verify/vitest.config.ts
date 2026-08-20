@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
@@ -13,6 +13,11 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts"],
+    // Real-network tests live under tests/integration and are opt-in only
+    // (see vitest.integration.config.ts / `pnpm test:integration`) -- they
+    // need a live FIGMA_ACCESS_TOKEN and must never run in the default
+    // `pnpm test` / CI-on-every-PR path.
+    exclude: [...configDefaults.exclude, "tests/integration/**"],
     testTimeout: 60_000,
   },
 });

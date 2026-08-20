@@ -39,6 +39,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
     "check:domain-boundary": "node scripts/check-domain-boundary.mjs",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test && pnpm run check:domain-boundary"

@@ -11,6 +11,7 @@ import {
   isUrl,
   sameBaseline,
   sameMasks,
+  sameProfileOverrides,
   sameSize,
   sameTarget,
 } from "./contract-predicates.ts";
@@ -62,6 +63,8 @@ function validateIdentity(score: ScoreFile, contract: DoneGateViewport): string[
     reasons.push("baseline does not match contract.");
   if (score.viewport !== contract.viewport) reasons.push("viewport does not match contract.");
   if (score.profile !== contract.profile) reasons.push("profile does not match contract.");
+  if (!sameProfileOverrides(contract.profile, score.profileOverrides, contract.profileOverrides))
+    reasons.push("profileOverrides do not match contract.");
   if (score.profile === "page" && !score.pageReason?.trim())
     reasons.push("page score missing pageReason.");
   if (score.profile === "page" && score.pageReason !== contract.pageReason)
@@ -188,6 +191,8 @@ function runMetaReasons(outDir: string, contract: DoneGateViewport): string[] {
       reasons.push("run-meta baseline mismatch.");
     if (meta.viewport !== contract.viewport || meta.profile !== contract.profile)
       reasons.push("run-meta viewport/profile mismatch.");
+    if (!sameProfileOverrides(contract.profile, meta.profileOverrides, contract.profileOverrides))
+      reasons.push("run-meta profileOverrides do not match contract.");
     if (meta.runType !== "final") reasons.push("run-meta runType must be final.");
     if (contract.profile === "page" && meta.pageReason !== contract.pageReason)
       reasons.push("run-meta pageReason mismatch.");

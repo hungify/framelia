@@ -19,6 +19,8 @@ export interface FrameliaScoreAttachment {
   profile?: ProfileName;
   /** Resolved clusterCheck override compare() actually ran with -- see resolveFigmaCompareOptions. */
   clusterCheck?: boolean;
+  /** Explicit per-contract threshold overrides compare() actually ran with. */
+  profileOverrides?: ProfileOverrides;
   scope?: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
@@ -32,7 +34,7 @@ export interface FrameliaScoreAttachment {
   nodeId?: string;
 }
 import type { VisualMask } from "@framelia/contracts";
-import type { CompareOutcome, ExpectSize, ProfileName } from "@framelia/verify";
+import type { CompareOutcome, ExpectSize, ProfileName, ProfileOverrides } from "@framelia/verify";
 import type { CaptureEvidence } from "@framelia/verify/internal";
 
 export type MatcherScope =
@@ -46,6 +48,7 @@ export interface ScoreAttachmentBase {
   attachmentBaseName: string;
   profile: ProfileName;
   clusterCheck?: boolean;
+  profileOverrides?: ProfileOverrides;
   scope: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;

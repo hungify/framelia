@@ -269,6 +269,9 @@ export function deriveContract(
         : { kind: "page", pageReason: SYNTHETIC_PAGE_REASON },
     ...(profile === "page" ? {} : { profile }),
     ...(primary.clusterCheck !== undefined ? { clusterCheck: primary.clusterCheck } : {}),
+    // profileOverrides is an explicit author choice, not a computed default -- there is
+    // nothing to re-derive it from, so it's read straight off the persisted score attachment.
+    ...(primary.profileOverrides ? { profileOverrides: primary.profileOverrides } : {}),
     ...(primary.masks?.length ? { masks: primary.masks } : {}),
   };
 
@@ -395,6 +398,9 @@ export function writeEvidence(
   // score.clusterCheck directly instead of re-deriving it from the resolved profile.
   const profile = score.profile ?? "page";
   const clusterCheck = score.clusterCheck;
+  // profileOverrides is an explicit author choice with nothing to re-derive it from --
+  // same reasoning as clusterCheck above, read straight off the persisted score.
+  const profileOverrides = score.profileOverrides;
   const expectedSize =
     scope.kind === "region"
       ? (scope.expectedSize ?? captureEvidence?.elementRect ?? score.actualSize)
@@ -432,6 +438,7 @@ export function writeEvidence(
     actualSize: score.actualSize,
     artifacts: { baseline: baselinePath, actual: actualPath, diff: diffPath ?? null },
     ...(clusterCheck !== undefined ? { clusterCheck } : {}),
+    ...(profileOverrides ? { profileOverrides } : {}),
     ...(score.topIssues?.length ? { topIssues: score.topIssues } : {}),
     ...(score.warnings?.length ? { warnings: score.warnings } : {}),
     ...(captureEvidence ? { captureEvidence } : {}),
@@ -453,6 +460,7 @@ export function writeEvidence(
         runType: "final",
         pageReason: SYNTHETIC_PAGE_REASON,
         ...(clusterCheck !== undefined ? { clusterCheck } : {}),
+        ...(profileOverrides ? { profileOverrides } : {}),
         ...(score.masks?.length ? { masks: score.masks } : {}),
         // Recorded from the project's config default, not score.maxMaskedAreaRatio (the
         // matcher's per-call capture option) -- contractToDoneGate compares against the same

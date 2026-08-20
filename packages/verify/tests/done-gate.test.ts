@@ -27,6 +27,10 @@ let n = 0;
 function scoreDir(
   baseline: BaselineSource = figmaBaseline,
   overrides: Record<string, unknown> = {},
+  // Defaults to `overrides` so every existing caller keeps mirroring the same
+  // profileOverrides into both files (matching report-projection.ts's real behavior);
+  // pass a distinct object to isolate the run-meta-only comparison in a test.
+  runMetaOverrides: Record<string, unknown> = overrides,
 ): string {
   const dir = path.join(tmp, `vp-${n++}`);
   fs.mkdirSync(dir, { recursive: true });
@@ -58,6 +62,11 @@ function scoreDir(
       profile: "component/strict",
       pageReason: null,
       runType: "final",
+      // Mirrors report-projection.ts, which persists the same profileOverrides into
+      // both run-meta.json and visual-score.json from a single matcher-time value.
+      ...("profileOverrides" in runMetaOverrides
+        ? { profileOverrides: runMetaOverrides.profileOverrides }
+        : {}),
     }),
   );
   fs.writeFileSync(
@@ -133,6 +142,46 @@ describe("done gate schema v4", () => {
     expect(gate(scoreDir(), figmaBaseline, { profile: "component/dev" }).done).toBe(false);
     expect(gate(scoreDir(), figmaBaseline, { selector: "[data-testid=other]" }).done).toBe(false);
     expect(gate(scoreDir(), { ...figmaBaseline, nodeId: "153:2364" }).done).toBe(false);
+  });
+
+  it("rejects evidence captured under different profileOverrides than the contract declares", () => {
+    // Regression guard: contractToDoneGate previously dropped contract.profileOverrides
+    // entirely, so evidence captured under any (or no) threshold overrides silently
+    // satisfied a contract that declared its own -- replayed verification could pass
+    // under looser thresholds than the original Playwright comparison actually used.
+    const contractOverride = { profileOverrides: { minMatch: 0.999 } };
+    expect(gate(scoreDir(), figmaBaseline, contractOverride).done).toBe(false);
+    expect(gate(scoreDir(figmaBaseline, contractOverride), figmaBaseline, {}).done).toBe(false);
+    expect(
+      gate(scoreDir(figmaBaseline, contractOverride), figmaBaseline, contractOverride).done,
+    ).toBe(true);
+  });
+
+  it("rejects run-meta profileOverrides that diverge from an otherwise-matching visual-score.json", () => {
+    // Regression guard: scoreDir mirrors profileOverrides into both files by default, so
+    // no prior test exercised the run-meta comparison in isolation -- a regression that
+    // broke only the runMetaReasons check (independent of the score-level check) could
+    // slip through unnoticed.
+    const contractOverride = { profileOverrides: { minMatch: 0.999 } };
+    const divergedRunMeta = { profileOverrides: { minMatch: 0.995 } };
+    const dir = scoreDir(figmaBaseline, contractOverride, divergedRunMeta);
+    const result = gate(dir, figmaBaseline, contractOverride);
+    expect(result.done).toBe(false);
+    const reasons = result.viewports[0]?.reasons ?? [];
+    expect(reasons).toContain("run-meta profileOverrides do not match contract.");
+    expect(reasons).not.toContain("profileOverrides do not match contract.");
+  });
+
+  it("rejects evidence with maxDiffPixels: null against a contract without that override", () => {
+    // Regression guard: sameProfileOverrides used to normalize `null` ("cap disabled")
+    // and `undefined` ("not overridden, profile's own finite cap applies") to the same
+    // "no value" via `?? undefined`, so evidence captured with the cap disabled silently
+    // satisfied a contract that never asked for that.
+    const nullCapOverride = { profileOverrides: { maxDiffPixels: null } };
+    expect(gate(scoreDir(figmaBaseline, nullCapOverride), figmaBaseline, {}).done).toBe(false);
+    expect(
+      gate(scoreDir(figmaBaseline, nullCapOverride), figmaBaseline, nullCapOverride).done,
+    ).toBe(true);
   });
 
   it("rejects copied, incomplete, tampered, and residual-blocked artifacts", () => {

@@ -1,6 +1,7 @@
-import type { BaselineSource, VisualMask, WebTarget } from "@framelia/contracts";
+import type { BaselineSource, ProfileOverrides, VisualMask, WebTarget } from "@framelia/contracts";
 
-import type { ExpectSize } from "../types.ts";
+import { getProfile } from "../profiles.ts";
+import type { ExpectSize, ProfileName } from "../types.ts";
 import { parseMaskEvidence, type ScoreFile } from "./schemas.ts";
 
 export function sameTarget(actual: WebTarget, expected: WebTarget): boolean {
@@ -36,6 +37,41 @@ export function sameMasks(
       (mask.maxMatches ?? 1) === (other.maxMatches ?? 1)
     );
   });
+}
+
+/** Absent (`undefined`) resolves to the profile's own default; an explicit value -- including
+ *  a deliberate `null` on the nullable maxDiffPixels field -- is never replaced by it. */
+function resolvedOverride<T>(value: T | undefined, fallback: T): T {
+  return value === undefined ? fallback : value;
+}
+
+/**
+ * Compares two profileOverrides at the *effective* threshold each resolves to against
+ * `profileName`, not at the literal declared-override shape. Without this, a page contract
+ * that explicitly writes `maxDiffPixels: null` (page's own default) would false-mismatch
+ * against evidence that simply omitted the override -- both apply the same no-cap
+ * threshold, only one states it as `undefined` and the other by name.
+ */
+export function sameProfileOverrides(
+  profileName: ProfileName,
+  actual: ProfileOverrides | null | undefined,
+  expected?: ProfileOverrides,
+): boolean {
+  const defaults = getProfile(profileName);
+  const a = actual ?? {};
+  const b = expected ?? {};
+  return (
+    resolvedOverride(a.minMatch, defaults.minMatch) ===
+      resolvedOverride(b.minMatch, defaults.minMatch) &&
+    resolvedOverride(a.maxDiffPixels, defaults.maxDiffPixels) ===
+      resolvedOverride(b.maxDiffPixels, defaults.maxDiffPixels) &&
+    resolvedOverride(a.minSSIM, defaults.minSSIM) ===
+      resolvedOverride(b.minSSIM, defaults.minSSIM) &&
+    resolvedOverride(a.maxAvgDeltaE, defaults.maxAvgDeltaE) ===
+      resolvedOverride(b.maxAvgDeltaE, defaults.maxAvgDeltaE) &&
+    resolvedOverride(a.maxAreaGapPercent, defaults.maxAreaGapPercent) ===
+      resolvedOverride(b.maxAreaGapPercent, defaults.maxAreaGapPercent)
+  );
 }
 
 export function isUrl(value: string): boolean {

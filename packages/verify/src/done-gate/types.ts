@@ -1,4 +1,4 @@
-import type { BaselineSource, VisualMask, WebTarget } from "@framelia/contracts";
+import type { BaselineSource, ProfileOverrides, VisualMask, WebTarget } from "@framelia/contracts";
 
 import type { ExpectSize, ProfileName } from "../types.ts";
 import type { SCHEMA_VERSION } from "../types.ts";
@@ -19,6 +19,8 @@ export interface DoneGateViewport {
   pageReason?: string;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
+  /** Per-contract threshold overrides the original Playwright comparison must have run with. */
+  profileOverrides?: ProfileOverrides;
 }
 
 export interface DoneGateOptions {

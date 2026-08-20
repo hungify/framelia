@@ -1,5 +1,5 @@
 import type { VisualMask } from "@framelia/contracts";
-import type { ExpectSize } from "@framelia/verify";
+import type { ExpectSize, ProfileOverrides } from "@framelia/verify";
 import { compare, FigmaBaselineProvider } from "@framelia/verify";
 import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
 import { test } from "@playwright/test";
@@ -25,6 +25,8 @@ export interface ToMatchFigmaOptions {
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
   profile?: "page" | "component/strict" | "component/dev";
+  /** Explicit per-contract threshold overrides, merged on top of the resolved profile's own defaults. */
+  profileOverrides?: ProfileOverrides;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
 }
@@ -114,6 +116,7 @@ export async function runToMatchFigma(
     const outcome = compare(baselineOutcome.baseline.evidence.path, actualPath, workDir, {
       profile,
       clusterCheck,
+      profileOverrides: options.profileOverrides,
     });
 
     await attachDiffTriplet(context.attach, baseName, {
@@ -128,6 +131,7 @@ export async function runToMatchFigma(
         attachmentBaseName: baseName,
         profile,
         clusterCheck,
+        profileOverrides: options.profileOverrides,
         scope: options.selector
           ? { kind: "region", selector: options.selector, expectedSize: options.expectSize }
           : { kind: "page", fullPage: options.fullPage ?? false },

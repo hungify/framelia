@@ -81,6 +81,23 @@ export const contractScopeSchema = z.discriminatedUnion("kind", [
 const BROAD_MASK_SELECTOR =
   /^(?:html|body|#root|#app|\[data-(?:testid|framelia)[^\]]*\b(?:app|shell)\b[^\]]*\]|\.[\w-]*\b(?:app|shell)\b[\w-]*)(?:\s|>|$)/i;
 
+/**
+ * Practically-overridable subset of verify's Profile: the fields consumed directly by
+ * compare()'s pass/fail computation and its early-exit size-gap check. `cluster` is
+ * deliberately excluded -- it's already a dedicated `clusterCheck` field on this same
+ * contract (see resolveFigmaCompareOptions), and `stabilityMaxDiffRatio` is excluded
+ * because nothing in the compare pipeline currently reads it.
+ */
+export const profileOverridesSchema = z
+  .object({
+    minMatch: z.number().min(0).max(1).optional(),
+    maxDiffPixels: z.number().int().nonnegative().nullable().optional(),
+    minSSIM: z.number().min(0).max(1).optional(),
+    maxAvgDeltaE: z.number().nonnegative().optional(),
+    maxAreaGapPercent: z.number().nonnegative().optional(),
+  })
+  .strict();
+
 export const visualMaskSchema = z
   .object({
     selector: nonEmptyTrimmed.refine((selector) => !BROAD_MASK_SELECTOR.test(selector.trim()), {
@@ -102,6 +119,8 @@ export const verificationContractSchema = z
     profile: componentProfileSchema.optional(),
     /** Resolved clusterCheck override compare() ran with -- see resolveFigmaCompareOptions. */
     clusterCheck: z.boolean().optional(),
+    /** Explicit per-contract threshold overrides, merged on top of the resolved profile's own defaults. */
+    profileOverrides: profileOverridesSchema.optional(),
     masks: z.array(visualMaskSchema).min(1).max(MAX_MASK_SELECTORS).optional(),
   })
   .strict()
@@ -123,3 +142,4 @@ export type VerificationContract = z.infer<typeof verificationContractSchema>;
 export type ContractScope = z.infer<typeof contractScopeSchema>;
 export type VisualMask = z.infer<typeof visualMaskSchema>;
 export type ExpectStyle = z.infer<typeof expectStyleSchema>;
+export type ProfileOverrides = z.infer<typeof profileOverridesSchema>;

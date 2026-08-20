@@ -1,7 +1,10 @@
 import type { Node, SolidPaint } from "@figma/rest-api-spec";
 
 export interface StyleSnapshot {
+  /** Text/foreground paint. Only meaningful for TEXT nodes on the Figma side. */
   color?: string;
+  /** Container/background paint -- a FRAME's (or other non-TEXT node's) fill. */
+  backgroundColor?: string;
   spacing?: { top: number; right: number; bottom: number; left: number };
   fontSize?: number;
   fontWeight?: number;
@@ -11,8 +14,14 @@ export interface StyleSnapshot {
 export function extractFigmaStyle(node: Node): StyleSnapshot {
   const snapshot: StyleSnapshot = {};
 
-  const color = extractColor(node);
-  if (color !== undefined) snapshot.color = color;
+  // A node's `fills` is a text paint on TEXT nodes but a background/container
+  // paint everywhere else -- comparing both against the code side's CSS
+  // `color` would conflate foreground and background paint. See PR #17 review.
+  const fillColor = extractColor(node);
+  if (fillColor !== undefined) {
+    if (node.type === "TEXT") snapshot.color = fillColor;
+    else snapshot.backgroundColor = fillColor;
+  }
 
   const spacing = extractSpacing(node);
   if (spacing !== undefined) snapshot.spacing = spacing;

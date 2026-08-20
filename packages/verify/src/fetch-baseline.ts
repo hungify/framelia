@@ -16,6 +16,8 @@ import {
   MS_PER_SECOND,
 } from "./constants.ts";
 import { resolveToken } from "./figma-api.ts";
+import { extractFigmaStyle } from "./figma-node-style.ts";
+import type { StyleSnapshot } from "./figma-node-style.ts";
 
 export interface FetchBaselineOptions {
   fileKey: string;
@@ -51,6 +53,8 @@ export type FetchBaselineOutcome =
       metaPath: string;
       meta: BaselineMeta;
       warnings: string[];
+      /** Extracted from the node document fetched alongside the image; {} when the response carried no document. */
+      figmaStyle: StyleSnapshot;
     }
   | { ok: true; fetched: false; errorClass: "retryable"; message: string; warnings: string[] }
   | { ok: false; fetched: false; errorClass: "auth" | "config"; message: string };
@@ -164,6 +168,9 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
         message: `nodeId not found in file; Figma returned no node for "${options.nodeId}" (not an auth problem).`,
       };
     }
+    // Real Figma responses always carry a document; test doubles and edge-case
+    // responses may not -- never let a missing document throw inside extraction.
+    const figmaStyle = nodeEntry.document ? extractFigmaStyle(nodeEntry.document) : {};
 
     const useAbsoluteBounds = options.useAbsoluteBounds ?? true;
     const imgRes = await call(
@@ -237,7 +244,15 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
     tempBaselinePath = undefined;
     tempMetaPath = undefined;
 
-    return { ok: true, fetched: true, baselinePath: options.outPath, metaPath, meta, warnings };
+    return {
+      ok: true,
+      fetched: true,
+      baselinePath: options.outPath,
+      metaPath,
+      meta,
+      warnings,
+      figmaStyle,
+    };
   } catch (err) {
     if (baselineCommitted) {
       if (previousBaseline) fs.writeFileSync(options.outPath, previousBaseline);

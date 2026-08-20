@@ -90,3 +90,4 @@ export {
 export type { NodeMetadata, ResolveNodeSpecOutcome } from "./figma-api.ts";
 export { extractFigmaStyle } from "./figma-node-style.ts";
 export type { StyleSnapshot } from "./figma-node-style.ts";
+export { compareStyles } from "./style-compare.ts";

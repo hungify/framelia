@@ -1,16 +1,9 @@
+import type { StyleSnapshot } from "@framelia/verify";
 import type { Page } from "@playwright/test";
-
-// TODO(#5/#6 merge): dedupe against @framelia/verify's StyleSnapshot export once ticket #5 lands.
-export interface StyleSnapshot {
-  color?: string;
-  spacing?: { top: number; right: number; bottom: number; left: number };
-  fontSize?: number;
-  fontWeight?: number;
-  cornerRadius?: number;
-}
 
 interface RawComputedStyle {
   color: string;
+  backgroundColor: string;
   paddingTop: string;
   paddingRight: string;
   paddingBottom: string;
@@ -88,6 +81,7 @@ export async function captureElementStyle(page: Page, selector: string): Promise
     const style = getComputedStyle(el);
     return {
       color: style.color,
+      backgroundColor: style.backgroundColor,
       paddingTop: style.paddingTop,
       paddingRight: style.paddingRight,
       paddingBottom: style.paddingBottom,
@@ -103,6 +97,7 @@ export async function captureElementStyle(page: Page, selector: string): Promise
 
   return {
     color: normalizeColor(raw.color),
+    backgroundColor: normalizeColor(raw.backgroundColor),
     spacing: {
       top: parsePx(raw.paddingTop),
       right: parsePx(raw.paddingRight),

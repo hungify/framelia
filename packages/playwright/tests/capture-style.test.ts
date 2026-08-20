@@ -40,6 +40,18 @@ describe("captureElementStyle", () => {
     expect(snapshot.color).toBe("#00000080");
   });
 
+  it("normalizes background-color independently of text color", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="color: rgb(37, 99, 235); background-color: rgb(0, 0, 0)">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.color).toBe("#2563ebff");
+    expect(snapshot.backgroundColor).toBe("#000000ff");
+  });
+
   it("parses padding into a numeric spacing box", async () => {
     const page = await context.newPage();
     await page.setContent(

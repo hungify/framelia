@@ -35,12 +35,22 @@ function textNode(overrides: Record<string, unknown> = {}): Node {
 }
 
 describe("extractFigmaStyle", () => {
-  it("extracts a normalized lowercase 8-digit hex color (opaque alpha) from the first visible SOLID fill", () => {
+  it("extracts a FRAME's fill as backgroundColor, not color", () => {
     const node = frameNode({ fills: [solidPaint(229 / 255, 229 / 255, 229 / 255)] });
 
     const snapshot = extractFigmaStyle(node);
 
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+    expect(snapshot.color).toBeUndefined();
+  });
+
+  it("extracts a TEXT node's fill as color, not backgroundColor", () => {
+    const node = textNode({ fills: [solidPaint(229 / 255, 229 / 255, 229 / 255)] });
+
+    const snapshot = extractFigmaStyle(node);
+
     expect(snapshot.color).toBe("#e5e5e5ff");
+    expect(snapshot.backgroundColor).toBeUndefined();
   });
 
   it("encodes a semi-transparent fill's opacity into the alpha byte", () => {
@@ -48,7 +58,7 @@ describe("extractFigmaStyle", () => {
 
     const snapshot = extractFigmaStyle(node);
 
-    expect(snapshot.color).toBe("#00000080");
+    expect(snapshot.backgroundColor).toBe("#00000080");
   });
 
   it("extracts auto-layout padding as spacing", () => {
@@ -106,7 +116,7 @@ describe("extractFigmaStyle", () => {
 
     const snapshot = extractFigmaStyle(node);
 
-    expect(snapshot.color).toBe("#e5e5e5ff");
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
   });
 
   it("skips invisible and non-solid fills to find the first visible SOLID fill", () => {
@@ -125,7 +135,7 @@ describe("extractFigmaStyle", () => {
 
     const snapshot = extractFigmaStyle(node);
 
-    expect(snapshot.color).toBe("#00ff00ff");
+    expect(snapshot.backgroundColor).toBe("#00ff00ff");
   });
 
   it("returns an empty snapshot without throwing for a node missing every optional style field", () => {
@@ -143,7 +153,7 @@ describe("extractFigmaStyle", () => {
 
     const snapshot = extractFigmaStyle(node);
 
-    expect(snapshot).toEqual({ color: "#e5e5e5ff", cornerRadius: 4 });
+    expect(snapshot).toEqual({ backgroundColor: "#e5e5e5ff", cornerRadius: 4 });
     expect(snapshot.spacing).toBeUndefined();
     expect(snapshot.fontSize).toBeUndefined();
     expect(snapshot.fontWeight).toBeUndefined();

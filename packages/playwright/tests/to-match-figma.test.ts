@@ -25,12 +25,20 @@ const NODE_ID = "1:2";
 const SIZE = { width: 100, height: 80 };
 
 /** Stubs global fetch to serve the Figma metadata/image-render/CDN-download sequence fetchGold makes. */
-function stubFigmaFetch(png: Buffer, options: { imageDelayMs?: number } = {}): void {
+function stubFigmaFetch(
+  png: Buffer,
+  options: { imageDelayMs?: number; document?: unknown } = {},
+): void {
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
     if (url.includes("/v1/files/")) {
       return new Response(
-        JSON.stringify({ lastModified: "2026-08-01T00:00:00Z", nodes: { [NODE_ID]: {} } }),
+        JSON.stringify({
+          lastModified: "2026-08-01T00:00:00Z",
+          nodes: {
+            [NODE_ID]: options.document !== undefined ? { document: options.document } : {},
+          },
+        }),
         { status: 200 },
       );
     }
@@ -188,6 +196,142 @@ describe("runToMatchFigma", () => {
       );
 
       expect(result.pass).toBe(true);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("adds a non-blocking style-color topIssue when the component's color diverges from Figma's fill, without affecting pass", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png, {
+      document: {
+        type: "FRAME",
+        fills: [{ type: "SOLID", visible: true, color: { r: 0, g: 0, b: 0 }, opacity: 1 }],
+      },
+    });
+    const app = await server(html.replace("<style>", "<style>body{color:rgb(255,0,0)}"));
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key", selector: "body" },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      expect(attachJsonCalls[0]?.data).toMatchObject({
+        pass: true,
+        topIssues: expect.arrayContaining([
+          expect.objectContaining({ kind: "style-color", blocking: false }),
+        ]),
+      });
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("adds no style topIssues when the component's rendered style exactly matches Figma's node", async () => {
+    const { html, png } = solidPagePng();
+    // solidPagePng's body background is rgb(100,150,200) -- match the FRAME's
+    // fill to it so this exercises a real backgroundColor match, not a false
+    // one via the (now-fixed) text/background paint conflation. See PR #17.
+    stubFigmaFetch(png, {
+      document: {
+        type: "FRAME",
+        fills: [
+          {
+            type: "SOLID",
+            visible: true,
+            color: { r: 100 / 255, g: 150 / 255, b: 200 / 255 },
+            opacity: 1,
+          },
+        ],
+      },
+    });
+    const app = await server(html);
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key", selector: "body" },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      const topIssues = (attachJsonCalls[0]?.data as { topIssues?: Array<{ kind: string }> })
+        ?.topIssues;
+      expect(topIssues?.some((issue) => issue.kind.startsWith("style-"))).toBe(false);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips style comparison entirely in page scope (no selector)", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png, {
+      document: {
+        type: "FRAME",
+        fills: [{ type: "SOLID", visible: true, color: { r: 255, g: 0, b: 0 }, opacity: 1 }],
+      },
+    });
+    const app = await server(html);
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key" },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      const topIssues = (attachJsonCalls[0]?.data as { topIssues?: Array<{ kind: string }> })
+        ?.topIssues;
+      expect(topIssues?.some((issue) => issue.kind.startsWith("style-"))).toBe(false);
     } finally {
       await context.close();
       await app.close();

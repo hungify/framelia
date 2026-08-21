@@ -265,7 +265,11 @@ export function deriveContract(
         ? {
             kind: "region",
             selector: scope.selector,
-            expectSize: regionExpectedSize ?? primary.actualSize,
+            // Only the author's declared options.expectSize counts here -- an omitted expectSize
+            // must stay absent so validate.ts's "gate-eligible component contract requires
+            // expectSize" check can actually catch it. Observed capture dimensions
+            // (regionExpectedSize) are for dashboard display only (see the capture region above).
+            ...(scope.expectedSize ? { expectSize: scope.expectedSize } : {}),
           }
         : { kind: "page", pageReason: SYNTHETIC_PAGE_REASON },
     ...(profile === "page" ? {} : { profile }),
@@ -273,6 +277,10 @@ export function deriveContract(
     // profileOverrides is an explicit author choice, not a computed default -- there is
     // nothing to re-derive it from, so it's read straight off the persisted score attachment.
     ...(primary.profileOverrides ? { profileOverrides: primary.profileOverrides } : {}),
+    // gateEligible is boolean, unlike profileOverrides -- `false` (the "deliberately not
+    // gate-eligible" case) is the value most worth preserving, so this must guard on
+    // `!== undefined`, not truthiness, same as clusterCheck above.
+    ...(primary.gateEligible !== undefined ? { gateEligible: primary.gateEligible } : {}),
     ...(primary.masks?.length ? { masks: primary.masks } : {}),
   };
 
@@ -402,10 +410,11 @@ export function writeEvidence(
   // profileOverrides is an explicit author choice with nothing to re-derive it from --
   // same reasoning as clusterCheck above, read straight off the persisted score.
   const profileOverrides = score.profileOverrides;
-  const expectedSize =
-    scope.kind === "region"
-      ? (scope.expectedSize ?? captureEvidence?.elementRect ?? score.actualSize)
-      : null;
+  const gateEligible = score.gateEligible;
+  // Only the author's declared options.expectSize counts here -- an omitted expectSize must
+  // stay absent (not backfilled from observed capture dimensions) so validate.ts's
+  // "gate-eligible component contract requires expectSize" check can actually catch it.
+  const expectedSize = scope.kind === "region" ? (scope.expectedSize ?? null) : null;
 
   // Validated against visualScoreArtifactSchema here (write time), not left to be
   // caught later by model.ts's readScore parsing it back (read time) -- drift from
@@ -440,6 +449,7 @@ export function writeEvidence(
     artifacts: { baseline: baselinePath, actual: actualPath, diff: diffPath ?? null },
     ...(clusterCheck !== undefined ? { clusterCheck } : {}),
     ...(profileOverrides ? { profileOverrides } : {}),
+    ...(gateEligible !== undefined ? { gateEligible } : {}),
     ...(score.topIssues?.length ? { topIssues: score.topIssues } : {}),
     ...(score.warnings?.length ? { warnings: score.warnings } : {}),
     ...(captureEvidence ? { captureEvidence } : {}),
@@ -462,6 +472,7 @@ export function writeEvidence(
         pageReason: SYNTHETIC_PAGE_REASON,
         ...(clusterCheck !== undefined ? { clusterCheck } : {}),
         ...(profileOverrides ? { profileOverrides } : {}),
+        ...(gateEligible !== undefined ? { gateEligible } : {}),
         ...(score.masks?.length ? { masks: score.masks } : {}),
         // Recorded from the project's config default, not score.maxMaskedAreaRatio (the
         // matcher's per-call capture option) -- contractToDoneGate compares against the same

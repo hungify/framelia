@@ -64,7 +64,7 @@ export const regionScopeSchema = z
   .object({
     kind: z.literal("region"),
     selector: nonEmptyTrimmed,
-    expectSize: expectSizeSchema,
+    expectSize: expectSizeSchema.optional(),
     expectStyle: expectStyleSchema.optional(),
   })
   .strict();
@@ -121,6 +121,11 @@ export const verificationContractSchema = z
     clusterCheck: z.boolean().optional(),
     /** Explicit per-contract threshold overrides, merged on top of the resolved profile's own defaults. */
     profileOverrides: profileOverridesSchema.optional(),
+    /** Explicit override of whether this contract's resolved threshold blocks the CI merge
+     *  gate; unset falls back to the resolved profile's own gateEligible default. Lets a
+     *  deliberately loose custom threshold opt out of gating without naming a "dev" preset,
+     *  and lets an explicitly-loose preset opt back in -- see done-gate/validate.ts. */
+    gateEligible: z.boolean().optional(),
     masks: z.array(visualMaskSchema).min(1).max(MAX_MASK_SELECTORS).optional(),
   })
   .strict()

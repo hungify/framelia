@@ -7,9 +7,10 @@ export interface FigmaCompareOptions {
 
 /**
  * Figma-baselined matches default to component/strict (not compare-pages's component/dev)
- * because they're eligible for done-gate, which forbids component/dev outright -- see
- * done-gate/validate.ts. The one place both toMatchFigma and the reporter's live-run
- * reconstruction of the same score apply this rule, so it can't drift between them.
+ * because component/strict is gate-eligible by default and component/dev is not -- see
+ * profiles.ts's Profile.gateEligible and done-gate/validate.ts. The one place both
+ * toMatchFigma and the reporter's live-run reconstruction of the same score apply this
+ * rule, so it can't drift between them.
  *
  * The default component comparison also forces the cluster check on, independent of
  * component/strict's own `cluster: false` setting -- a defect concentrated in one small

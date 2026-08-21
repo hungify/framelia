@@ -62,10 +62,13 @@ function scoreDir(
       profile: "component/strict",
       pageReason: null,
       runType: "final",
-      // Mirrors report-projection.ts, which persists the same profileOverrides into
-      // both run-meta.json and visual-score.json from a single matcher-time value.
+      // Mirrors report-projection.ts, which persists the same profileOverrides/gateEligible
+      // into both run-meta.json and visual-score.json from a single matcher-time value.
       ...("profileOverrides" in runMetaOverrides
         ? { profileOverrides: runMetaOverrides.profileOverrides }
+        : {}),
+      ...("gateEligible" in runMetaOverrides
+        ? { gateEligible: runMetaOverrides.gateEligible }
         : {}),
     }),
   );
@@ -182,6 +185,19 @@ describe("done gate schema v4", () => {
     expect(
       gate(scoreDir(figmaBaseline, nullCapOverride), figmaBaseline, nullCapOverride).done,
     ).toBe(true);
+  });
+
+  it("rejects evidence whose gateEligible flag diverges from the contract's (Issue #10)", () => {
+    // Evidence recorded as gate-eligible must match what the contract actually declares --
+    // same drift-protection reasoning as profileOverrides above, now for gateEligible.
+    // gateEligible: false always fails the gate on its own (that's the flag's whole job), so
+    // the "matches" case below uses an explicit `true` -- still redundant with component/strict's
+    // own default, but proves the drift check itself doesn't spuriously reject on agreement.
+    const notEligible = { gateEligible: false };
+    expect(gate(scoreDir(figmaBaseline, notEligible), figmaBaseline, {}).done).toBe(false);
+    expect(gate(scoreDir(), figmaBaseline, notEligible).done).toBe(false);
+    const eligible = { gateEligible: true };
+    expect(gate(scoreDir(figmaBaseline, eligible), figmaBaseline, eligible).done).toBe(true);
   });
 
   it("rejects copied, incomplete, tampered, and residual-blocked artifacts", () => {

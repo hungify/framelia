@@ -2,6 +2,7 @@
 import type { DashboardContractResult } from "@framelia/contracts";
 import { computed } from "vue";
 
+import { hasEvidenceNotes } from "../lib/contract-evidence";
 import { formatRatio } from "../lib/format";
 import StatusBadge from "./StatusBadge.vue";
 
@@ -164,13 +165,7 @@ const actionsSummary = computed(() => {
       </div>
     </div>
     <div
-      v-if="
-        contract.blockers.length ||
-        contract.diagnostics?.length ||
-        styleMismatches.length ||
-        contract.baseline?.provenance ||
-        contract.evidenceHash
-      "
+      v-if="hasEvidenceNotes(contract) || styleMismatches.length"
       class="flex flex-col gap-2.5 mx-3.5 mt-1 pt-3 border-t border-line-soft"
     >
       <div v-if="contract.blockers.length" class="min-w-0">
@@ -218,7 +213,7 @@ const actionsSummary = computed(() => {
         <span class="block text-muted text-xs"
           >Masks — {{ contract.maskEvidence.status }} ·
           {{ contract.maskEvidence.matchedCount }} region(s),
-          {{ (contract.maskEvidence.maskedAreaRatio * 100).toFixed(2) }}% area</span
+          {{ formatRatio(contract.maskEvidence.maskedAreaRatio) }} area</span
         >
         <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
           <li

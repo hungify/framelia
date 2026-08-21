@@ -47,6 +47,7 @@ export type {
   FidelityErrorCode,
   BaselineEvidence,
   FigmaBaselineEvidence,
+  MaskBounds,
   ProfileName,
   ProfileOverrides,
   RejectResult,

@@ -24,22 +24,45 @@ export function pixelCompare(
   actual: PNG,
   threshold = PIXEL_THRESHOLD,
   includeAA = false,
+  maskBitmap: Uint8Array | null = null,
 ): PixelResult {
   const { width, height } = baseline;
   const diff = new PNG({ width, height });
-  const diffPixels = pixelmatch(baseline.data, actual.data, diff.data, width, height, {
-    threshold,
-    includeAA,
-  });
-  const totalPixels = width * height;
-  const matchRatio = totalPixels === 0 ? 0 : 1 - diffPixels / totalPixels;
+  pixelmatch(baseline.data, actual.data, diff.data, width, height, { threshold, includeAA });
+  const maskedPixels = clearMaskedPixels(diff, maskBitmap);
+  // Recomputed from the diff buffer (not pixelmatch's own return value) so a
+  // masked region cleared above is never counted, and so the denominator below
+  // always matches what countRealDiffPixels sees.
+  const diffPixels = countRealDiffPixels(diff);
+  const totalPixels = width * height - maskedPixels;
+  // A fully masked comparison has nothing left to disagree on — treat the
+  // empty domain as a full match rather than failing every profile's
+  // minimum-match check.
+  const matchRatio = totalPixels === 0 ? 1 : 1 - diffPixels / totalPixels;
   return {
     matchRatio,
     diffPixels,
     totalPixels,
     diff,
-    worstCellMatchRatio: worstGridMatchRatio(diff),
+    worstCellMatchRatio: worstGridMatchRatio(diff, CLUSTER_GRID, maskBitmap),
   };
+}
+
+/** Zeroes masked pixels in the diff buffer so every downstream reader (bbox, cluster, residual) sees them as no-diff without needing its own mask awareness. */
+function clearMaskedPixels(diff: PNG, maskBitmap: Uint8Array | null): number {
+  if (!maskBitmap) return 0;
+  const { data } = diff;
+  let count = 0;
+  for (let i = 0; i < maskBitmap.length; i++) {
+    if (!maskBitmap[i]) continue;
+    count += 1;
+    const o = i << 2;
+    data[o] = 0;
+    data[o + 1] = 0;
+    data[o + 2] = 0;
+    data[o + 3] = 0;
+  }
+  return count;
 }
 
 function isRealDiffPixel(data: Buffer | Uint8Array, i: number): boolean {
@@ -51,7 +74,11 @@ function isRealDiffPixel(data: Buffer | Uint8Array, i: number): boolean {
   );
 }
 
-export function worstGridMatchRatio(diff: PNG, grid = CLUSTER_GRID): number {
+export function worstGridMatchRatio(
+  diff: PNG,
+  grid = CLUSTER_GRID,
+  maskBitmap: Uint8Array | null = null,
+): number {
   const { width, height, data } = diff;
   const cellW = Math.ceil(width / grid);
   const cellH = Math.ceil(height / grid);
@@ -67,11 +94,14 @@ export function worstGridMatchRatio(diff: PNG, grid = CLUSTER_GRID): number {
       let cellTotal = 0;
       for (let y = y0; y < y1; y++) {
         for (let x = x0; x < x1; x++) {
+          const idx = width * y + x;
+          if (maskBitmap?.[idx]) continue;
           cellTotal += 1;
-          const i = (width * y + x) << 2;
-          if (isRealDiffPixel(data, i)) cellDiff += 1;
+          if (isRealDiffPixel(data, idx << 2)) cellDiff += 1;
         }
       }
+      // Every pixel in this cell is masked — no signal to weigh in, skip it
+      // rather than let an empty cell register as a perfect (or worst) match.
       if (cellTotal === 0) continue;
       const cellMatch = 1 - cellDiff / cellTotal;
       if (cellMatch < worst) worst = cellMatch;

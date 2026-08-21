@@ -7,11 +7,12 @@ import {
   type Stability,
 } from "@framelia/contracts";
 
-import type { MaskEvidence } from "./capture/types.ts";
+import type { MaskBounds, MaskEvidence } from "./capture/types.ts";
 import type { StyleSnapshot } from "./figma-node-style.ts";
 
 export { SCHEMA_VERSION };
 export type { ContractDefaults, ProfileName, ProfileOverrides, RunType, Stability };
+export type { MaskBounds, MaskEvidence };
 
 export class AppError extends Error {
   readonly code: string;
@@ -128,6 +129,12 @@ export interface CompareOptions {
   clusterCheck?: boolean;
   /** Per-contract author override of specific threshold fields; unset fields keep the resolved profile's own value. */
   profileOverrides?: ProfileOverrides;
+  /**
+   * Pixel regions (in the aligned comparison canvas's coordinate space) excluded from
+   * matchRatio, SSIM, avgDeltaE, diffPixels, and the cluster-grid denominators.
+   * areaGap is computed from the raw baseline/actual sizes before masking and is unaffected.
+   */
+  maskBounds?: MaskBounds[];
 }
 
 export interface CompareOutcome {

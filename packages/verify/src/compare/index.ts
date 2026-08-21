@@ -17,6 +17,7 @@ import {
   sizeGapIssue,
   ssimIssue,
 } from "./issues.ts";
+import { buildMaskBitmap } from "./mask.ts";
 import {
   clusterFails,
   countRealDiffPixels,
@@ -137,14 +138,20 @@ export function compare(
   const baselineAligned = padTo(baseline, width, height, fillColor);
   const actualAligned = padTo(actual, width, height, fillColor);
 
-  const pixel = pixelCompare(baselineAligned, actualAligned, PIXEL_THRESHOLD, false);
+  const maskBitmap = options.maskBounds?.length
+    ? buildMaskBitmap(width, height, options.maskBounds)
+    : null;
+
+  const pixel = pixelCompare(baselineAligned, actualAligned, PIXEL_THRESHOLD, false, maskBitmap);
   const diffPath = path.join(outDir, RUN_ARTIFACT.diff);
   writePng(diffPath, pixel.diff);
 
-  const ssim = ssimCompare(baselineAligned, actualAligned);
+  const ssim = ssimCompare(baselineAligned, actualAligned, maskBitmap);
 
   const bbox = diffBoundingBox(pixel.diff);
-  const avgDeltaE = bbox ? avgDeltaE2000(baselineAligned, actualAligned, bbox) : 0;
+  const avgDeltaE = bbox
+    ? avgDeltaE2000(baselineAligned, actualAligned, bbox, undefined, maskBitmap)
+    : 0;
 
   const clusterOn = options.clusterCheck ?? profile.cluster;
   const clusterFail =

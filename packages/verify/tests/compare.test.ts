@@ -153,6 +153,30 @@ describe("compare pipeline", () => {
     expect(bad.topIssues.length).toBeGreaterThan(0);
   });
 
+  it("passes despite a broken region when that region is declared as a mask", () => {
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
+    const broken = withRect(
+      makeSolidPng(200, 100, [240, 240, 240, 255]),
+      { x: 20, y: 20, w: 100, h: 50 },
+      [200, 30, 30, 255],
+    );
+    const actual = write(broken, "actual");
+
+    const unmasked = compare(baseline, actual, outDir(), { profile: "component/strict" });
+    expect(unmasked.pass).toBe(false);
+
+    const masked = compare(baseline, actual, outDir(), {
+      profile: "component/strict",
+      maskBounds: [{ x: 20, y: 20, width: 100, height: 50 }],
+    });
+    expect(masked.pass).toBe(true);
+    expect(masked.matchRatio).toBe(1);
+    expect(masked.ssim).toBe(1);
+    expect(masked.avgDeltaE).toBe(0);
+    expect(masked.clusterFail).toBe(false);
+    expect(masked.topIssues).toHaveLength(0);
+  });
+
   it("flags color mismatch via deltaE on recolor", () => {
     const baseline = write(makeSolidPng(200, 100, [0, 120, 220, 255]), "baseline");
     const actual = write(makeSolidPng(200, 100, [50, 170, 120, 255]), "actual");

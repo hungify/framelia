@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { avgDeltaE2000 } from "../src/compare/delta-e.ts";
+import { buildMaskBitmap } from "../src/compare/mask.ts";
 import { makeSolidPng } from "../src/compare/png.ts";
 
 describe("avgDeltaE2000", () => {
@@ -28,6 +29,18 @@ describe("avgDeltaE2000", () => {
     }
     const result = avgDeltaE2000(baseline, actual, { x0: 0, y0: 0, x1: 10, y1: 10 }, 25);
     expect(result).toBe(0);
+  });
+
+  it("excludes masked pixels from the average within the bbox", () => {
+    const baseline = makeSolidPng(10, 10, [255, 0, 0, 255]);
+    const actual = makeSolidPng(10, 10, [0, 0, 255, 255]);
+    const bbox = { x0: 0, y0: 0, x1: 10, y1: 10 };
+    const unmasked = avgDeltaE2000(baseline, actual, bbox);
+    expect(unmasked).toBeGreaterThan(0);
+
+    const maskBitmap = buildMaskBitmap(10, 10, [{ x: 0, y: 0, width: 10, height: 10 }]);
+    const masked = avgDeltaE2000(baseline, actual, bbox, undefined, maskBitmap);
+    expect(masked).toBe(0);
   });
 
   it("rejects mismatched image dimensions", () => {

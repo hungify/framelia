@@ -7,7 +7,13 @@ export interface Bbox {
   y1: number;
 }
 
-export function avgDeltaE2000(baseline: PNG, actual: PNG, bbox: Bbox, maxPixels = 100_000): number {
+export function avgDeltaE2000(
+  baseline: PNG,
+  actual: PNG,
+  bbox: Bbox,
+  maxPixels = 100_000,
+  maskBitmap: Uint8Array | null = null,
+): number {
   if (baseline.width !== actual.width || baseline.height !== actual.height) {
     throw new Error(
       `avgDeltaE2000 requires equal dimensions: baseline ${baseline.width}x${baseline.height}, actual ${actual.width}x${actual.height}`,
@@ -21,6 +27,10 @@ export function avgDeltaE2000(baseline: PNG, actual: PNG, bbox: Bbox, maxPixels 
   let count = 0;
   for (let y = y0; y < y1; y += stride) {
     for (let x = x0; x < x1; x += stride) {
+      // The diff bbox is computed from the real (non-masked) diff pixels, but
+      // can still span across a masked region when a real diff exists on both
+      // sides of it — skip masked pixels here too, not just at the bbox edges.
+      if (maskBitmap?.[baseline.width * y + x]) continue;
       const i = (baseline.width * y + x) << 2;
       const lab1 = rgbToLab(
         baseline.data[i] as number,

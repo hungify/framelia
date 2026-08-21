@@ -250,6 +250,7 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
           },
         ],
     diagnostics,
+    topIssues: score?.topIssues ?? [],
     ...(evidenceHash ? { evidenceHash } : {}),
     finishedAt: createdAt,
   });

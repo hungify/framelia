@@ -4,6 +4,7 @@ import type {
   CaptureEvidenceArtifact,
   captureEvidenceSchema,
   captureMaskEvidenceSchema,
+  topIssueSchema,
   visualDiagnosticSchema,
 } from "./score.ts";
 
@@ -26,6 +27,9 @@ export interface DashboardImageEvidence {
 
 /** Same shape score.ts's visualDiagnosticSchema validates in visual-score.json's diagnostics. */
 export type DashboardDiagnostic = z.infer<typeof visualDiagnosticSchema>;
+
+/** Same shape score.ts's topIssueSchema validates in visual-score.json's topIssues. */
+export type DashboardTopIssue = z.infer<typeof topIssueSchema>;
 
 /** Same shape capture writes into visual-score.json's maskEvidence field. */
 export type DashboardMaskEvidence = z.infer<typeof captureMaskEvidenceSchema>;
@@ -77,6 +81,9 @@ export interface DashboardContractResult {
   blockers: Array<{ code: string; message: string }>;
   /** Evidence caveats; blocking diagnostics cannot be projected as passed. */
   diagnostics?: DashboardDiagnostic[];
+  /** Informational field-level mismatches vs. the Figma baseline's style (color, typography,
+   * spacing, corner radius) -- never affects `status`. See compareStyles() in @framelia/verify. */
+  topIssues?: DashboardTopIssue[];
   maskEvidence?: DashboardMaskEvidence;
   captureEvidence?: DashboardCaptureEvidence;
   evidenceHash?: string;
@@ -350,6 +357,7 @@ export interface ContractResultAssemblyInput {
   captureEvidence?: DashboardCaptureEvidence;
   blockers: Array<{ code: string; message: string }>;
   diagnostics: DashboardDiagnostic[];
+  topIssues: DashboardTopIssue[];
   evidenceHash?: string;
   finishedAt: string;
 }
@@ -380,6 +388,7 @@ export function assembleContractResult(
     ...(input.captureEvidence ? { captureEvidence: input.captureEvidence } : {}),
     blockers: input.blockers,
     ...(input.diagnostics.length ? { diagnostics: input.diagnostics } : {}),
+    ...(input.topIssues.length ? { topIssues: input.topIssues } : {}),
     ...(input.evidenceHash ? { evidenceHash: input.evidenceHash } : {}),
     finishedAt: input.finishedAt,
   };

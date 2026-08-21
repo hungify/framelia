@@ -234,6 +234,7 @@ export function deriveContract(
         ],
     ...(primary ? { comparison: deriveComparisonSummary(primary) } : {}),
     diagnostics,
+    topIssues: primary?.topIssues ?? [],
     ...(captureEvidence?.maskEvidence ? { maskEvidence: captureEvidence.maskEvidence } : {}),
     finishedAt: new Date().toISOString(),
   });
@@ -534,6 +535,11 @@ export function finalizeTestEnd(
 
   const primary = derivedContracts[0]!;
   const dashboardId = sanitizeTestId(test);
+  // The live dashboard collapses every matcher call in a test into this one row (unlike the
+  // durable artifact, which gets a separate contract per call -- see the id `-1`/`-2` suffixing
+  // above) -- a style issue from any matcher but the first would otherwise silently vanish from
+  // the live view even though it's still on disk.
+  const topIssues = derivedContracts.flatMap((derived) => derived.dashboardResult.topIssues ?? []);
 
   const artifacts: VerificationArtifact[] = [];
   for (const derived of derivedContracts) {
@@ -556,7 +562,11 @@ export function finalizeTestEnd(
 
   return {
     dashboardId,
-    dashboardResult: { ...primary.dashboardResult, id: dashboardId },
+    dashboardResult: {
+      ...primary.dashboardResult,
+      id: dashboardId,
+      ...(topIssues.length ? { topIssues } : {}),
+    },
     files,
     artifacts,
   };

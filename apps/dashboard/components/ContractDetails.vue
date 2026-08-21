@@ -42,6 +42,13 @@ const fontStatusLabel = computed(() => {
   return fonts.failed.length ? `${label} · ${fonts.failed.join(", ")}` : label;
 });
 
+const styleMismatches = computed(
+  () =>
+    props.contract.topIssues?.filter(
+      (issue) => issue.kind === "style-color" || issue.kind === "style-typography",
+    ) ?? [],
+);
+
 const actionsSummary = computed(() => {
   const actions = props.contract.captureEvidence?.actions ?? [];
   if (!actions.length) return "none";
@@ -160,6 +167,7 @@ const actionsSummary = computed(() => {
       v-if="
         contract.blockers.length ||
         contract.diagnostics?.length ||
+        styleMismatches.length ||
         contract.baseline?.provenance ||
         contract.evidenceHash
       "
@@ -188,6 +196,21 @@ const actionsSummary = computed(() => {
           >
             <code class="text-amber text-xs">{{ diagnostic.code }}</code>
             <span class="text-text-soft"> — {{ diagnostic.message }}</span>
+          </li>
+        </ul>
+      </div>
+      <div v-if="styleMismatches.length" class="min-w-0">
+        <span class="block text-muted text-xs"
+          >Style mismatches vs. Figma — informational, not blocking</span
+        >
+        <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
+          <li
+            v-for="(issue, index) in styleMismatches"
+            :key="`${issue.kind}-${index}`"
+            class="min-w-0 text-xs leading-snug"
+          >
+            <code class="text-amber text-xs">{{ issue.kind }}</code>
+            <span class="text-text-soft"> — {{ issue.message }}</span>
           </li>
         </ul>
       </div>

@@ -70,6 +70,16 @@ function scoreAttachment(
   };
 }
 
+function styleIssue(kind: "style-color" | "style-typography") {
+  return {
+    severity: "low" as const,
+    kind,
+    message: `style mismatch on ${kind}`,
+    repairCandidate: true,
+    blocking: false,
+  };
+}
+
 function captureEvidenceFixture() {
   const timestamp = new Date().toISOString();
   return {
@@ -354,6 +364,46 @@ describe("FrameliaReporter", () => {
       ).toBe(true);
   });
 
+  it("merges topIssues from every matcher call into the live row instead of only the first", async () => {
+    // The live dashboard collapses all of a test's matcher calls into one row (see
+    // "persists every Figma matcher score attachment separately" below for the durable
+    // per-call artifacts) -- a style issue from any matcher but the first must still
+    // surface live, not just once the run finalizes to disk.
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "two matcher calls");
+    const first = passedResultWithImages("call-a", imageDir, {
+      nodeId: "1:2",
+      topIssues: [styleIssue("style-color")],
+    });
+    const second = passedResultWithImages("call-b", imageDir, {
+      nodeId: "2:3",
+      topIssues: [styleIssue("style-typography")],
+    });
+    const result = {
+      status: "passed",
+      attachments: [...first.attachments, ...second.attachments],
+    } as unknown as TestResult;
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(testA, result);
+    const url = await reporter.dashboardUrl();
+    const run = await (await fetch(`${url}/api/run`)).json();
+
+    expect(run.contracts).toHaveLength(1);
+    expect(run.contracts[0]).toMatchObject({
+      id: "test-a",
+      topIssues: [
+        expect.objectContaining({ kind: "style-color" }),
+        expect.objectContaining({ kind: "style-typography" }),
+      ],
+    });
+
+    await reporter.onEnd({ status: "passed" } as any);
+  });
+
   it("records a toMatchPage/toMatchUrl (non-figma) result live but writes no VerificationArtifact (R9)", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const clientRoot = clientRootFixture();
@@ -377,6 +427,39 @@ describe("FrameliaReporter", () => {
       ".framelia/visual-verifications/test-a/visual-verification.json",
     );
     expect(fs.existsSync(artifactPath)).toBe(false);
+  });
+
+  it("surfaces a matcher's style-comparison topIssues on the live dashboard contract", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "homepage matches figma");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(
+      testA,
+      passedResult("test-a", {
+        topIssues: [
+          {
+            severity: "low",
+            kind: "style-color",
+            message: "style mismatch on color: expected #000000ff, actual #111111ff",
+            hint: "Check the rendered element's CSS against the Figma node's style.",
+            repairCandidate: true,
+            blocking: false,
+          },
+        ],
+      }),
+    );
+    const url = await reporter.dashboardUrl();
+    const run = await (await fetch(`${url}/api/run`)).json();
+    expect(run.contracts[0]).toMatchObject({
+      id: "test-a",
+      status: "passed",
+      topIssues: [expect.objectContaining({ kind: "style-color" })],
+    });
+
+    await reporter.onEnd({ status: "passed" } as any);
   });
 
   it("subscribers see order-independent live updates as tests complete out of order", async () => {

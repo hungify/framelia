@@ -424,6 +424,36 @@ describe("FrameliaReporter", () => {
     ).toBe(true);
   });
 
+  it("carries the resolved threshold onto the live DashboardContractResult (#8)", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "component matches figma");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(
+      testA,
+      passedResult("test-a", { profile: "component/strict", clusterCheck: true }),
+    );
+
+    const url = await reporter.dashboardUrl();
+    const run = await (await fetch(`${url}/api/run`)).json();
+    expect(run.contracts[0]).toMatchObject({
+      id: "test-a",
+      // component/strict's own numbers, with the resolved clusterCheck override applied.
+      resolvedThreshold: {
+        name: "component/strict",
+        minMatch: 0.995,
+        maxDiffPixels: 500,
+        minSSIM: 0.985,
+        maxAvgDeltaE: 3.0,
+        cluster: true,
+      },
+    });
+
+    await reporter.onEnd({ status: "passed" } as any);
+  });
+
   it("persists every Figma matcher score attachment separately", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");

@@ -54,3 +54,24 @@ export const PROFILES: Record<ProfileName, Profile> = {
 export function getProfile(name: ProfileName): Profile {
   return PROFILES[name];
 }
+
+/** Anything a resolved comparison could carry that overrides the named profile's own numbers. */
+export interface ThresholdOverrideSource {
+  profile?: ProfileName;
+  clusterCheck?: boolean;
+}
+
+/**
+ * The concrete threshold values a comparison actually ran against: the named profile's
+ * numbers with any per-call overrides layered on top. Takes the whole source object rather
+ * than positional (profile, clusterCheck) params so a caller's FrameliaScoreAttachment /
+ * VerificationContract can be passed straight through -- a future override field (e.g. a
+ * profileOverrides carrying per-field threshold tweaks) only needs one more spread line here,
+ * not a signature change at every call site.
+ */
+export function resolveDisplayThreshold(source: ThresholdOverrideSource): Profile {
+  return {
+    ...getProfile(source.profile ?? "page"),
+    ...(source.clusterCheck !== undefined ? { cluster: source.clusterCheck } : {}),
+  };
+}

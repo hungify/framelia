@@ -1,6 +1,7 @@
 import * as z from "zod";
 
 import { SCHEMA_VERSION } from "./constants.ts";
+import { profileSchema } from "./contract.ts";
 import { httpUrlSchema } from "./primitives.ts";
 
 const scoreSizeSchema = z
@@ -177,6 +178,11 @@ export const visualScoreArtifactSchema = z
     topIssues: z.array(topIssueSchema).optional(),
     captureEvidence: captureEvidenceSchema.optional().catch(undefined),
     baselineCaptureEvidence: captureEvidenceSchema.optional().catch(undefined),
+    /** The profile/clusterCheck the comparison actually resolved to and ran with (see #4's
+     * resolveFigmaCompareOptions) -- dashboard-server's model.ts reads these back to derive
+     * DashboardContractResult["resolvedThreshold"] without re-deriving the resolution logic. */
+    profile: profileSchema.optional().catch(undefined),
+    clusterCheck: z.boolean().optional().catch(undefined),
   })
   .loose();
 

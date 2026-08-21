@@ -21,6 +21,9 @@ export interface DoneGateViewport {
   maxMaskedAreaRatio?: number;
   /** Per-contract threshold overrides the original Playwright comparison must have run with. */
   profileOverrides?: ProfileOverrides;
+  /** Explicit override of gate eligibility; unset falls back to the resolved profile's own
+   *  default -- see done-gate/validate.ts and profiles.ts's Profile.gateEligible. */
+  gateEligible?: boolean;
 }
 
 export interface DoneGateOptions {

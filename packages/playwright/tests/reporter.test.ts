@@ -339,6 +339,91 @@ describe("FrameliaReporter", () => {
     expect(score).toMatchObject({ profileOverrides: { minMatch: 0.999, maxDiffPixels: 10 } });
   });
 
+  it("persists gateEligible: false into both the contract and the durable score (Issue #10: same reasoning as profileOverrides -- report-projection must not re-derive it)", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "component matches figma but is deliberately not gated");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(
+      testA,
+      passedResultWithImages("test-a", imageDir, {
+        profile: "component/strict",
+        gateEligible: false,
+        scope: { kind: "region", selector: ".card" },
+      }),
+    );
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const artifactPath = path.join(
+      projectRoot,
+      ".framelia/visual-verifications/test-a/visual-verification.json",
+    );
+    const artifact = verificationArtifactSchema.parse(
+      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
+    );
+    expect(artifact.request.contracts[0]).toMatchObject({ gateEligible: false });
+
+    const score = JSON.parse(
+      fs.readFileSync(
+        path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
+        "utf8",
+      ),
+    );
+    expect(score).toMatchObject({ gateEligible: false });
+
+    const runMeta = JSON.parse(
+      fs.readFileSync(
+        path.join(projectRoot, ".framelia/visual-verifications/test-a/run-meta.json"),
+        "utf8",
+      ),
+    );
+    expect(runMeta).toMatchObject({ gateEligible: false });
+  });
+
+  it("leaves expectSize absent (not backfilled from observed capture size) for a gate-eligible region that never declared options.expectSize, so validateContract's 'requires expectSize' check actually fires", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "component matches figma without an explicit expectSize");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(
+      testA,
+      passedResultWithImages("test-a", imageDir, {
+        profile: "component/strict",
+        actualSize: { width: 42, height: 24 },
+        scope: { kind: "region", selector: ".card" },
+      }),
+    );
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const artifactPath = path.join(
+      projectRoot,
+      ".framelia/visual-verifications/test-a/visual-verification.json",
+    );
+    const artifact = verificationArtifactSchema.parse(
+      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
+    );
+    expect(artifact.request.contracts[0]?.scope).not.toHaveProperty("expectSize");
+
+    const score = JSON.parse(
+      fs.readFileSync(
+        path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
+        "utf8",
+      ),
+    );
+    expect(score.expectSize).toBeNull();
+
+    const verdict = doneGateFromArtifact(artifact);
+    expect(
+      verdict.viewports[0]?.reasons.some((reason) => reason.includes("requires expectSize")),
+    ).toBe(true);
+  });
+
   it("persists every Figma matcher score attachment separately", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");

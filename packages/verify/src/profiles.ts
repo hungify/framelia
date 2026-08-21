@@ -9,6 +9,10 @@ export interface Profile {
   maxAreaGapPercent: number;
   cluster: boolean;
   stabilityMaxDiffRatio: number;
+  /** Whether this preset's own threshold is strict enough to block the CI merge gate by
+   *  default -- see done-gate/validate.ts. A contract's `gateEligible` override, when set,
+   *  takes precedence over this. */
+  gateEligible: boolean;
 }
 
 export const PROFILES: Record<ProfileName, Profile> = {
@@ -21,6 +25,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
     maxAreaGapPercent: 5,
     cluster: true,
     stabilityMaxDiffRatio: 0.002,
+    gateEligible: true,
   },
   "component/strict": {
     name: "component/strict",
@@ -31,6 +36,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
     maxAreaGapPercent: 2,
     cluster: false,
     stabilityMaxDiffRatio: 0.002,
+    gateEligible: true,
   },
   "component/dev": {
     name: "component/dev",
@@ -41,6 +47,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
     maxAreaGapPercent: 5,
     cluster: false,
     stabilityMaxDiffRatio: 0.002,
+    gateEligible: false,
   },
 };
 

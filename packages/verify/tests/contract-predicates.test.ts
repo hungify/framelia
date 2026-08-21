@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sameProfileOverrides } from "../src/done-gate/contract-predicates.ts";
+import { sameGateEligible, sameProfileOverrides } from "../src/done-gate/contract-predicates.ts";
 
 describe("sameProfileOverrides", () => {
   it("treats an explicit maxDiffPixels: null as matching an omitted override on the page profile", () => {
@@ -28,5 +28,23 @@ describe("sameProfileOverrides", () => {
   it("still rejects genuinely different thresholds", () => {
     expect(sameProfileOverrides("component/strict", {}, { minMatch: 0.999 })).toBe(false);
     expect(sameProfileOverrides("page", { maxDiffPixels: 10 }, { maxDiffPixels: 20 })).toBe(false);
+  });
+});
+
+describe("sameGateEligible", () => {
+  it("treats an explicit restatement of the profile's own default as matching an omitted flag", () => {
+    // component/strict's own default is gateEligible: true -- an explicit `true` and an
+    // omitted flag both resolve to the same effective eligibility.
+    expect(sameGateEligible("component/strict", undefined, true)).toBe(true);
+    expect(sameGateEligible("component/strict", true, undefined)).toBe(true);
+    // component/dev's own default is gateEligible: false -- same reasoning, opposite value.
+    expect(sameGateEligible("component/dev", undefined, false)).toBe(true);
+    expect(sameGateEligible("component/dev", false, undefined)).toBe(true);
+  });
+
+  it("rejects a genuine difference from the profile's default", () => {
+    expect(sameGateEligible("component/strict", undefined, false)).toBe(false);
+    expect(sameGateEligible("component/dev", undefined, true)).toBe(false);
+    expect(sameGateEligible("component/strict", true, false)).toBe(false);
   });
 });

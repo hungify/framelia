@@ -21,6 +21,8 @@ export interface FrameliaScoreAttachment {
   clusterCheck?: boolean;
   /** Explicit per-contract threshold overrides compare() actually ran with. */
   profileOverrides?: ProfileOverrides;
+  /** Explicit gateEligible override the matcher call was given, if any. */
+  gateEligible?: boolean;
   scope?: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
@@ -55,6 +57,7 @@ export interface ScoreAttachmentBase {
   profile: ProfileName;
   clusterCheck?: boolean;
   profileOverrides?: ProfileOverrides;
+  gateEligible?: boolean;
   scope: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;

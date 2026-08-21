@@ -46,6 +46,9 @@ export interface ToMatchFigmaOptions {
   profile?: "page" | "component/strict" | "component/dev";
   /** Explicit per-contract threshold overrides, merged on top of the resolved profile's own defaults. */
   profileOverrides?: ProfileOverrides;
+  /** Explicit override of whether this contract's resolved threshold blocks the CI merge
+   *  gate; unset falls back to the resolved profile's own gateEligible default. */
+  gateEligible?: boolean;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
 }
@@ -164,6 +167,7 @@ export async function runToMatchFigma(
         profile,
         clusterCheck,
         profileOverrides: options.profileOverrides,
+        gateEligible: options.gateEligible,
         scope: options.selector
           ? { kind: "region", selector: options.selector, expectedSize: options.expectSize }
           : { kind: "page", fullPage: options.fullPage ?? false },

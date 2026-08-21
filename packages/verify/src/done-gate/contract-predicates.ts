@@ -74,6 +74,18 @@ export function sameProfileOverrides(
   );
 }
 
+/** Compares two gateEligible flags at their *effective* value against `profileName`'s own
+ *  default, same reasoning as `sameProfileOverrides`: an explicit flag that merely restates
+ *  the resolved profile's own default must not false-mismatch against an omitted one. */
+export function sameGateEligible(
+  profileName: ProfileName,
+  actual: boolean | null | undefined,
+  expected?: boolean,
+): boolean {
+  const fallback = getProfile(profileName).gateEligible;
+  return resolvedOverride(actual ?? undefined, fallback) === resolvedOverride(expected, fallback);
+}
+
 export function isUrl(value: string): boolean {
   try {
     const parsed = new URL(value);

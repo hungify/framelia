@@ -1,5 +1,6 @@
 import type * as z from "zod";
 
+import type { ProfileName } from "./contract.ts";
 import type {
   CaptureEvidenceArtifact,
   captureEvidenceSchema,
@@ -23,6 +24,24 @@ export interface DashboardImageEvidence {
   hash?: string;
   width?: number;
   height?: number;
+}
+
+/**
+ * The concrete threshold values a comparison actually ran against -- structurally identical
+ * to @framelia/verify's Profile, duplicated here (not imported) because this package sits
+ * below @framelia/verify in the dependency graph (contracts has no workspace deps of its
+ * own). Callers on the verify/playwright/dashboard-server side pass a Profile value straight
+ * through; it satisfies this type structurally.
+ */
+export interface DashboardResolvedThreshold {
+  name: ProfileName;
+  minMatch: number;
+  maxDiffPixels: number | null;
+  minSSIM: number;
+  maxAvgDeltaE: number;
+  maxAreaGapPercent: number;
+  cluster: boolean;
+  stabilityMaxDiffRatio: number;
 }
 
 /** Same shape score.ts's visualDiagnosticSchema validates in visual-score.json's diagnostics. */
@@ -86,6 +105,8 @@ export interface DashboardContractResult {
   topIssues?: DashboardTopIssue[];
   maskEvidence?: DashboardMaskEvidence;
   captureEvidence?: DashboardCaptureEvidence;
+  /** Set whenever the comparison resolved a profile (i.e. a score attachment/artifact exists). */
+  resolvedThreshold?: DashboardResolvedThreshold;
   evidenceHash?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -355,6 +376,7 @@ export interface ContractResultAssemblyInput {
   comparison?: DashboardContractResult["comparison"];
   maskEvidence?: DashboardMaskEvidence;
   captureEvidence?: DashboardCaptureEvidence;
+  resolvedThreshold?: DashboardResolvedThreshold;
   blockers: Array<{ code: string; message: string }>;
   diagnostics: DashboardDiagnostic[];
   topIssues: DashboardTopIssue[];
@@ -386,6 +408,7 @@ export function assembleContractResult(
     ...(input.comparison ? { comparison: input.comparison } : {}),
     ...(input.maskEvidence ? { maskEvidence: input.maskEvidence } : {}),
     ...(input.captureEvidence ? { captureEvidence: input.captureEvidence } : {}),
+    ...(input.resolvedThreshold ? { resolvedThreshold: input.resolvedThreshold } : {}),
     blockers: input.blockers,
     ...(input.diagnostics.length ? { diagnostics: input.diagnostics } : {}),
     ...(input.topIssues.length ? { topIssues: input.topIssues } : {}),

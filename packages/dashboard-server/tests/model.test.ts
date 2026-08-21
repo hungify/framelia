@@ -155,6 +155,27 @@ describe("projectArtifact (relocated to @framelia/dashboard-server, U5)", () => 
     expect(projection.run.contracts[0]?.topIssues).toBeUndefined();
   });
 
+  it("derives resolvedThreshold from the persisted profile/clusterCheck (#8)", async () => {
+    const { artifact } = await fixture();
+    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
+    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
+    score.profile = "component/strict";
+    score.clusterCheck = true;
+    await fs.writeFile(scorePath, JSON.stringify(score));
+
+    const projection = await projectArtifact(artifact);
+    expect(projection.run.contracts[0]).toMatchObject({
+      resolvedThreshold: {
+        name: "component/strict",
+        minMatch: 0.995,
+        maxDiffPixels: 500,
+        minSSIM: 0.985,
+        maxAvgDeltaE: 3.0,
+        cluster: true,
+      },
+    });
+  });
+
   it("keeps masked-pass contracts out of the clean passed count", async () => {
     const { artifact } = await fixture();
     const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");

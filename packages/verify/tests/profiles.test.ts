@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getProfile } from "../src/profiles.ts";
+import { getProfile, resolveDisplayThreshold } from "../src/profiles.ts";
 
 describe("getProfile", () => {
   it("keeps component/strict's own numbers unchanged when explicitly requested by name", () => {
@@ -14,5 +14,32 @@ describe("getProfile", () => {
       maxAvgDeltaE: 3.0,
       cluster: false,
     });
+  });
+});
+
+describe("resolveDisplayThreshold", () => {
+  it("returns the named profile's own numbers unchanged when no clusterCheck override is present", () => {
+    expect(resolveDisplayThreshold({ profile: "component/dev" })).toStrictEqual(
+      getProfile("component/dev"),
+    );
+  });
+
+  it("overlays a clusterCheck override onto the resolved profile's cluster field", () => {
+    // component/strict defaults to cluster: false; a resolved clusterCheck: true override
+    // (e.g. Figma's default-component forcing, see figma-profile.ts) must win.
+    expect(resolveDisplayThreshold({ profile: "component/strict", clusterCheck: true })).toEqual({
+      ...getProfile("component/strict"),
+      cluster: true,
+    });
+  });
+
+  it("defaults to the page profile when no profile is given", () => {
+    expect(resolveDisplayThreshold({})).toStrictEqual(getProfile("page"));
+  });
+
+  it("ignores an explicit clusterCheck: undefined rather than overwriting cluster with undefined", () => {
+    expect(resolveDisplayThreshold({ profile: "page", clusterCheck: undefined })).toStrictEqual(
+      getProfile("page"),
+    );
   });
 });

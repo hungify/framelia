@@ -20,6 +20,7 @@ import {
 import {
   FIGMA_BASELINE_ARTIFACT,
   JSON_INDENT_SPACES,
+  resolveDisplayThreshold,
   RUN_ARTIFACT,
   SCHEMA_VERSION,
 } from "@framelia/verify";
@@ -233,6 +234,7 @@ export function deriveContract(
           },
         ],
     ...(primary ? { comparison: deriveComparisonSummary(primary) } : {}),
+    ...(primary ? { resolvedThreshold: resolveDisplayThreshold(primary) } : {}),
     diagnostics,
     topIssues: primary?.topIssues ?? [],
     ...(captureEvidence?.maskEvidence ? { maskEvidence: captureEvidence.maskEvidence } : {}),

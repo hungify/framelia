@@ -58,6 +58,20 @@ const actionsSummary = computed(() => {
   const attempts = actions.reduce((total, action) => total + action.attempts, 0);
   return `${passed} passed / ${failed} failed / ${attempts} attempts`;
 });
+
+const resolvedThresholdTooltip = computed(() => {
+  const threshold = props.contract.resolvedThreshold;
+  if (!threshold) return "";
+  return [
+    `profile: ${threshold.name}`,
+    `minMatch: ${threshold.minMatch}`,
+    `minSSIM: ${threshold.minSSIM}`,
+    `maxAvgDeltaE: ${threshold.maxAvgDeltaE}`,
+    `maxDiffPixels: ${threshold.maxDiffPixels ?? "unbounded"}`,
+    `maxAreaGapPercent: ${threshold.maxAreaGapPercent}`,
+    `cluster: ${threshold.cluster}`,
+  ].join("\n");
+});
 </script>
 
 <template>
@@ -118,6 +132,37 @@ const actionsSummary = computed(() => {
         </dd>
       </div>
     </dl>
+    <div
+      v-if="contract.resolvedThreshold"
+      class="mx-3.5 mb-3 border-t border-line-soft pt-3"
+      data-testid="resolved-threshold"
+    >
+      <span class="block text-muted text-xs"
+        >Resolved threshold — {{ contract.resolvedThreshold.name }}</span
+      >
+      <div class="mt-1.5 flex flex-wrap gap-1.5" :title="resolvedThresholdTooltip">
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >match ≥ {{ formatRatio(contract.resolvedThreshold.minMatch) }}</UBadge
+        >
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >SSIM ≥ {{ formatRatio(contract.resolvedThreshold.minSSIM) }}</UBadge
+        >
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >ΔE ≤ {{ contract.resolvedThreshold.maxAvgDeltaE.toFixed(2) }}</UBadge
+        >
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >px ≤
+          {{ contract.resolvedThreshold.maxDiffPixels?.toLocaleString() ?? "unbounded" }}</UBadge
+        >
+        <UBadge
+          variant="subtle"
+          :color="contract.resolvedThreshold.cluster ? 'info' : 'neutral'"
+          size="sm"
+          class="font-mono! text-xs!"
+          >cluster {{ contract.resolvedThreshold.cluster ? "on" : "off" }}</UBadge
+        >
+      </div>
+    </div>
     <div v-if="contract.capture.target" class="mx-3.5 mb-3 border-t border-line-soft pt-3">
       <span class="block text-muted text-xs">Region / selector evidence</span>
       <div class="mt-1.5 overflow-x-auto">

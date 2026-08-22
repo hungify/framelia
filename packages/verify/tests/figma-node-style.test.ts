@@ -1,7 +1,8 @@
 import type { Node, Paint } from "@figma/rest-api-spec";
+import type { ExpectStyle } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
-import { extractFigmaStyle } from "../src/figma-node-style.ts";
+import { expectStyleToSnapshot, extractFigmaStyle } from "../src/figma-node-style.ts";
 
 function solidPaint(r: number, g: number, b: number, overrides: Partial<Paint> = {}): Paint {
   return {
@@ -157,5 +158,69 @@ describe("extractFigmaStyle", () => {
     expect(snapshot.spacing).toBeUndefined();
     expect(snapshot.fontSize).toBeUndefined();
     expect(snapshot.fontWeight).toBeUndefined();
+  });
+});
+
+describe("expectStyleToSnapshot", () => {
+  it("returns an empty snapshot for an empty ExpectStyle", () => {
+    expect(expectStyleToSnapshot({})).toEqual({});
+  });
+
+  it("maps fontWeight straight through", () => {
+    expect(expectStyleToSnapshot({ fontWeight: 700 })).toEqual({ fontWeight: 700 });
+  });
+
+  it("maps fontSizePx to fontSize", () => {
+    expect(expectStyleToSnapshot({ fontSizePx: 16 })).toEqual({ fontSize: 16 });
+  });
+
+  it("maps a color with colorProperty 'color' to snapshot.color as lowercase hex", () => {
+    const expectStyle: ExpectStyle = {
+      color: { r: 0, g: 0, b: 0, a: 1 },
+      colorProperty: "color",
+    };
+
+    expect(expectStyleToSnapshot(expectStyle)).toEqual({ color: "#000000ff" });
+  });
+
+  it("maps a color with colorProperty 'backgroundColor' to snapshot.backgroundColor", () => {
+    const expectStyle: ExpectStyle = {
+      color: { r: 255, g: 255, b: 255, a: 0 },
+      colorProperty: "backgroundColor",
+    };
+
+    expect(expectStyleToSnapshot(expectStyle)).toEqual({ backgroundColor: "#ffffff00" });
+  });
+
+  it("omits color when colorProperty is absent (can't tell which field it belongs to)", () => {
+    const expectStyle: ExpectStyle = { color: { r: 0, g: 0, b: 0, a: 1 } };
+
+    expect(expectStyleToSnapshot(expectStyle)).toEqual({});
+  });
+
+  it("does not fabricate spacing or cornerRadius, which ExpectStyle never carries", () => {
+    const expectStyle: ExpectStyle = { fontWeight: 400, fontSizePx: 14 };
+
+    const snapshot = expectStyleToSnapshot(expectStyle);
+
+    expect(snapshot.spacing).toBeUndefined();
+    expect(snapshot.cornerRadius).toBeUndefined();
+  });
+
+  it("combines every mappable field in one call", () => {
+    const expectStyle: ExpectStyle = {
+      fontWeight: 600,
+      fontSizePx: 20,
+      lineHeightPx: 24,
+      letterSpacingPx: 0.5,
+      color: { r: 229, g: 229, b: 229, a: 1 },
+      colorProperty: "backgroundColor",
+    };
+
+    expect(expectStyleToSnapshot(expectStyle)).toEqual({
+      fontWeight: 600,
+      fontSize: 20,
+      backgroundColor: "#e5e5e5ff",
+    });
   });
 });

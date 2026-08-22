@@ -1,4 +1,5 @@
 import type { Node, SolidPaint } from "@figma/rest-api-spec";
+import type { ExpectStyle } from "@framelia/contracts";
 
 export interface StyleSnapshot {
   /** Text/foreground paint. Only meaningful for TEXT nodes on the Figma side. */
@@ -36,6 +37,34 @@ export function extractFigmaStyle(node: Node): StyleSnapshot {
   }
 
   return snapshot;
+}
+
+/**
+ * Bridges a contract's baked `ExpectStyle` (RGB 0-255 channels + separate 0-1 alpha,
+ * `fontSizePx`) into the `StyleSnapshot` shape `compareStyles` consumes -- the two
+ * schemas independently describe the same Figma-side style (see #6/#26), one for
+ * contract authoring, one for runtime comparison. `lineHeightPx`/`letterSpacingPx`
+ * have no `StyleSnapshot` counterpart and are dropped; `spacing`/`cornerRadius` are
+ * never baked into `ExpectStyle` and stay undefined here too.
+ */
+export function expectStyleToSnapshot(expectStyle: ExpectStyle): StyleSnapshot {
+  const snapshot: StyleSnapshot = {};
+
+  if (expectStyle.fontWeight !== undefined) snapshot.fontWeight = expectStyle.fontWeight;
+  if (expectStyle.fontSizePx !== undefined) snapshot.fontSize = expectStyle.fontSizePx;
+
+  // colorProperty says which DOM property the color belongs against; without it
+  // there's no way to tell color from backgroundColor, so the color is dropped
+  // rather than guessed (deriveExpectStyle always sets both together).
+  if (expectStyle.color && expectStyle.colorProperty) {
+    snapshot[expectStyle.colorProperty] = expectStyleColorToHex(expectStyle.color);
+  }
+
+  return snapshot;
+}
+
+function expectStyleColorToHex(color: { r: number; g: number; b: number; a: number }): string {
+  return `#${toHexChannel(color.r / 255)}${toHexChannel(color.g / 255)}${toHexChannel(color.b / 255)}${toHexChannel(color.a)}`;
 }
 
 function extractSpacing(node: Node): StyleSnapshot["spacing"] {

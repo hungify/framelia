@@ -1,4 +1,4 @@
-import type { VisualMask } from "@framelia/contracts";
+import type { StyleCheckPoint, VisualMask } from "@framelia/contracts";
 import type {
   ExpectSize,
   StyleSnapshot,
@@ -6,7 +6,12 @@ import type {
   ProfileOverrides,
   StyleToleranceOverrides,
 } from "@framelia/verify";
-import { compare, compareStyles, FigmaBaselineProvider } from "@framelia/verify";
+import {
+  compare,
+  compareStyles,
+  expectStyleToSnapshot,
+  FigmaBaselineProvider,
+} from "@framelia/verify";
 import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
 import { test } from "@playwright/test";
 
@@ -41,6 +46,39 @@ async function captureStyleIssues(
   }
 }
 
+/**
+ * Page-scope equivalent of the region-scope bake-in above: one style comparison per
+ * declared check-point, each against its own baked `expectStyle` (there's no live
+ * per-checkpoint Figma baseline to re-fetch at verify time -- see #26/#27). A
+ * check-point whose `expectStyle` never baked at authoring time is skipped rather
+ * than compared against nothing. Every resulting issue is tagged with the
+ * check-point's own selector so multiple check-points stay distinguishable in
+ * `topIssues` (see TopIssue.selector).
+ */
+async function captureCheckPointStyleIssues(
+  page: Page,
+  checkPoints: StyleCheckPoint[],
+  styleToleranceOverrides: StyleToleranceOverrides | undefined,
+): Promise<TopIssue[]> {
+  const perCheckPoint = await Promise.all(
+    checkPoints
+      .filter(
+        (checkPoint): checkPoint is StyleCheckPoint & { expectStyle: NonNullable<StyleCheckPoint["expectStyle"]> } =>
+          checkPoint.expectStyle !== undefined,
+      )
+      .map(async (checkPoint) => {
+        const issues = await captureStyleIssues(
+          page,
+          checkPoint.selector,
+          expectStyleToSnapshot(checkPoint.expectStyle),
+          styleToleranceOverrides,
+        );
+        return issues.map((issue) => Object.assign({}, issue, { selector: checkPoint.selector }));
+      }),
+  );
+  return perCheckPoint.flat();
+}
+
 export interface ToMatchFigmaOptions {
   /** Figma file key. Falls back to FRAMELIA_FIGMA_FILE_KEY when omitted. */
   fileKey?: string;
@@ -55,6 +93,9 @@ export interface ToMatchFigmaOptions {
   profileOverrides?: ProfileOverrides;
   /** Explicit per-contract style-comparison tolerance overrides, merged on top of compareStyles()'s own defaults. */
   styleToleranceOverrides?: StyleToleranceOverrides;
+  /** Page-scope only: one style comparison per declared check-point, each against its own
+   *  baked `expectStyle` (see #26). Ignored when `selector` is set (region scope). */
+  styleChecks?: StyleCheckPoint[];
   /** Explicit override of whether this contract's resolved threshold blocks the CI merge
    *  gate; unset falls back to the resolved profile's own gateEligible default. */
   gateEligible?: boolean;
@@ -154,6 +195,8 @@ export async function runToMatchFigma(
     // Component-scope only (selector set) -- style comparison needs a single
     // element to capture computed style from, and only applies when the Figma
     // baseline fetch was fresh enough to have extracted one (see ResolvedBaseline).
+    // Page-scope instead runs one comparison per declared check-point, each against
+    // its own baked expectStyle rather than the page's own Figma baseline (see #27).
     const styleIssues =
       options.selector && baselineOutcome.baseline.figmaStyle
         ? await captureStyleIssues(
@@ -162,7 +205,13 @@ export async function runToMatchFigma(
             baselineOutcome.baseline.figmaStyle,
             options.styleToleranceOverrides,
           )
-        : [];
+        : options.styleChecks
+          ? await captureCheckPointStyleIssues(
+              received,
+              options.styleChecks,
+              options.styleToleranceOverrides,
+            )
+          : [];
     // Style mismatches are informational-only (TopIssue.blocking: false) and
     // never affect `outcome.pass` -- merged in after compare() decided pass/fail.
     const outcomeWithStyle = styleIssues.length

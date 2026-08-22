@@ -431,6 +431,150 @@ describe("runToMatchFigma", () => {
     }
   });
 
+  it("runs one style comparison per page-scope check-point, tagging each issue with its own selector", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png);
+    // #a/#b sit off-canvas (position:absolute + negative offset) so their presence
+    // never perturbs the page-scope pixel comparison itself -- only their computed
+    // style, read via captureElementStyle, matters for this test.
+    const app = await server(
+      html.replace(
+        "</style>",
+        `#a,#b{position:absolute;top:-9999px;left:-9999px}#a{color:rgb(255,0,0)}#b{font-size:12px}</style><div id="a">a</div><div id="b">b</div>`,
+      ),
+    );
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        {
+          fileKey: "file-key",
+          styleChecks: [
+            {
+              selector: "#a",
+              nodeId: "1:3",
+              expectStyle: { color: { r: 0, g: 0, b: 0, a: 1 }, colorProperty: "color" },
+            },
+            {
+              selector: "#b",
+              nodeId: "1:4",
+              expectStyle: { fontSizePx: 20 },
+            },
+          ],
+        },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      const topIssues = (
+        attachJsonCalls[0]?.data as {
+          topIssues?: Array<{ kind: string; selector?: string }>;
+        }
+      )?.topIssues;
+      expect(topIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "style-color", selector: "#a" }),
+          expect.objectContaining({ kind: "style-typography", selector: "#b" }),
+        ]),
+      );
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("adds no issue for a check-point whose expectStyle failed to bake in at authoring time", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png);
+    const app = await server(
+      html.replace(
+        "</style>",
+        `#a{position:absolute;top:-9999px;left:-9999px}</style><div id="a">a</div>`,
+      ),
+    );
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        {
+          fileKey: "file-key",
+          styleChecks: [{ selector: "#a", nodeId: "1:3" }],
+        },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      const topIssues = (attachJsonCalls[0]?.data as { topIssues?: unknown[] })?.topIssues;
+      expect(topIssues ?? []).toHaveLength(0);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("adds no style topIssues when page-scope styleChecks is an empty array", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png);
+    const app = await server(html);
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key", styleChecks: [] },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      const topIssues = (attachJsonCalls[0]?.data as { topIssues?: unknown[] })?.topIssues;
+      expect(topIssues ?? []).toHaveLength(0);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails with a clear timeout message instead of hanging when the baseline fetch is slow", async () => {
     const { html, png } = solidPagePng();
     stubFigmaFetch(png, { imageDelayMs: 2_000 });

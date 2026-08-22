@@ -1,7 +1,7 @@
 import * as z from "zod";
 
 import { baselineSchema } from "./baseline.ts";
-import { CONTRACT_ID_PATTERN, MAX_MASK_SELECTORS } from "./constants.ts";
+import { CONTRACT_ID_PATTERN, FIGMA_NODE_ID, MAX_MASK_SELECTORS } from "./constants.ts";
 import { VISUAL_ARTIFACT_DIR_PATTERN, visualArtifactPath } from "./paths.ts";
 import { nonEmptyTrimmed } from "./primitives.ts";
 
@@ -53,10 +53,26 @@ export const expectStyleSchema = z
   })
   .strict();
 
+/**
+ * One page-scope style check-point: an element inside the page identified by a CSS
+ * selector, verified against its own Figma node (necessarily distinct from the page
+ * contract's own baseline node) -- see #27's per-checkpoint style comparison.
+ * `expectStyle` is best-effort baked in from that node at `framelia contract create`
+ * time, the same way region scope's single selector already bakes its own.
+ */
+export const styleCheckPointSchema = z
+  .object({
+    selector: nonEmptyTrimmed,
+    nodeId: z.string().regex(FIGMA_NODE_ID),
+    expectStyle: expectStyleSchema.optional(),
+  })
+  .strict();
+
 export const pageScopeSchema = z
   .object({
     kind: z.literal("page"),
     pageReason: nonEmptyTrimmed,
+    styleChecks: z.array(styleCheckPointSchema).min(1).optional(),
   })
   .strict();
 
@@ -167,5 +183,6 @@ export type VerificationContract = z.infer<typeof verificationContractSchema>;
 export type ContractScope = z.infer<typeof contractScopeSchema>;
 export type VisualMask = z.infer<typeof visualMaskSchema>;
 export type ExpectStyle = z.infer<typeof expectStyleSchema>;
+export type StyleCheckPoint = z.infer<typeof styleCheckPointSchema>;
 export type ProfileOverrides = z.infer<typeof profileOverridesSchema>;
 export type StyleToleranceOverrides = z.infer<typeof styleToleranceOverridesSchema>;

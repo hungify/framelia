@@ -6,6 +6,7 @@ import {
   verificationRequestSchema,
   visualArtifactPath,
   type ExpectStyle,
+  type StyleCheckPoint,
   type VerificationRequest,
 } from "@framelia/contracts";
 import { JSON_INDENT_SPACES } from "@framelia/verify";
@@ -16,7 +17,7 @@ export interface ContractAnswers {
   baseline: { kind: "figma"; fileKey: string; nodeId: string };
   viewport: { name: string; width: number; height: number };
   scope:
-    | { kind: "page"; pageReason: string }
+    | { kind: "page"; pageReason: string; styleChecks?: StyleCheckPoint[] }
     | {
         kind: "region";
         selector: string;

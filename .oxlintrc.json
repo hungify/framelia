@@ -31,7 +31,8 @@
         "packages/verify/src/capture/core.ts",
         "packages/verify/src/navigation.ts",
         "packages/cli/src/commands/doctor.ts",
-        "packages/cli/src/dashboard/report.ts"
+        "packages/cli/src/dashboard/report.ts",
+        "packages/cli/src/contract.ts"
       ],
       "rules": {
         "eslint/no-await-in-loop": "off"

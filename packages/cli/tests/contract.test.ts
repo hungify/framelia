@@ -66,6 +66,42 @@ describe("contract scaffold", () => {
     expect(() => writeContractRequest(outputPath, request, true)).not.toThrow();
   });
 
+  it("accepts a page contract with one or more style check-points", () => {
+    const request = createContractRequest({
+      targetUrl: "http://127.0.0.1:3000/home",
+      contractId: "home.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
+      viewport: { name: "desktop", width: 1440, height: 1024 },
+      scope: {
+        kind: "page",
+        pageReason: "Baseline node represents complete home page.",
+        styleChecks: [
+          { selector: "[data-testid=hero-heading]", nodeId: "200:10" },
+          { selector: "[data-testid=cta-button]", nodeId: "200:11" },
+        ],
+      },
+    });
+
+    expect(request.contracts[0]?.scope).toMatchObject({
+      styleChecks: [
+        { selector: "[data-testid=hero-heading]", nodeId: "200:10" },
+        { selector: "[data-testid=cta-button]", nodeId: "200:11" },
+      ],
+    });
+  });
+
+  it("accepts a page contract with no style check-points, unchanged from before styleChecks existed", () => {
+    const request = createContractRequest({
+      targetUrl: "http://127.0.0.1:3000/home",
+      contractId: "home.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
+      viewport: { name: "desktop", width: 1440, height: 1024 },
+      scope: { kind: "page", pageReason: "Baseline node represents complete home page." },
+    });
+
+    expect(request.contracts[0]?.scope).not.toHaveProperty("styleChecks");
+  });
+
   it("accepts a region contract with expectStyle baked in from Figma", () => {
     const request = createContractRequest({
       targetUrl: "http://127.0.0.1:3000/login",
@@ -178,6 +214,130 @@ describe("contract create --target-url and friends (non-interactive)", () => {
     ).toBe(false);
   });
 
+  it("builds one style check-point from flags on a page-scope contract, no prompt needed", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-create-"));
+    temporaryDirectories.push(directory);
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(packageRoot, "bin", "framelia.js"),
+        "contract",
+        "create",
+        "--project-root",
+        directory,
+        "--output",
+        ".framelia/visual-verifications/home/visual-contract.json",
+        "--target-url",
+        "http://localhost:8888/home",
+        "--contract-id",
+        "home.desktop",
+        "--file-key",
+        "abc123",
+        "--node-id",
+        "1037:71575",
+        "--viewport",
+        "desktop",
+        "--scope",
+        "page",
+        "--page-reason",
+        "Baseline node represents complete page.",
+        "--style-check-selector",
+        "[data-testid=hero-heading]",
+        "--style-check-node-id",
+        "200:10",
+      ],
+      { encoding: "utf8", env: { ...process.env, FIGMA_ACCESS_TOKEN: "" } },
+    );
+
+    expect(result.status).toBe(0);
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/home/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({
+      kind: "page",
+      styleChecks: [{ selector: "[data-testid=hero-heading]", nodeId: "200:10" }],
+    });
+  });
+
+  it("rejects a lone --style-check-selector without its paired --style-check-node-id", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(packageRoot, "bin", "framelia.js"),
+        "contract",
+        "create",
+        "--project-root",
+        os.tmpdir(),
+        "--target-url",
+        "http://localhost:8888/home",
+        "--contract-id",
+        "home.desktop",
+        "--file-key",
+        "abc123",
+        "--node-id",
+        "1037:71575",
+        "--viewport",
+        "desktop",
+        "--scope",
+        "page",
+        "--page-reason",
+        "Baseline node represents complete page.",
+        "--style-check-selector",
+        "[data-testid=hero-heading]",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain(
+      "--style-check-selector and --style-check-node-id must be supplied together.",
+    );
+  });
+
+  it("rejects style-check flags on a region-scope contract instead of silently dropping them", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(packageRoot, "bin", "framelia.js"),
+        "contract",
+        "create",
+        "--project-root",
+        os.tmpdir(),
+        "--target-url",
+        "http://localhost:8888/login",
+        "--contract-id",
+        "login.desktop",
+        "--file-key",
+        "abc123",
+        "--node-id",
+        "1037:71575",
+        "--viewport",
+        "desktop",
+        "--scope",
+        "region",
+        "--selector",
+        "[data-testid=card]",
+        "--region-width",
+        "320",
+        "--region-height",
+        "240",
+        "--style-check-selector",
+        "[data-testid=hero-heading]",
+        "--style-check-node-id",
+        "200:10",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("--style-check-selector");
+    expect(result.stderr + result.stdout).toContain("--scope page");
+  });
+
   it("rejects an invalid --target-url without launching an interactive prompt", () => {
     const result = spawnSync(
       process.execPath,
@@ -207,6 +367,20 @@ describe("contract create --target-url and friends (non-interactive)", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr + result.stdout).toContain("--target-url");
+  });
+});
+
+describe("schema --target contract", () => {
+  it("reflects the page scope's styleChecks shape", () => {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(packageRoot, "bin", "framelia.js"), "schema", "--target", "contract"],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(0);
+    const schema = JSON.parse(result.stdout);
+    expect(JSON.stringify(schema)).toContain("styleChecks");
   });
 });
 
@@ -302,6 +476,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
       "desktop", // viewport preset (only remaining prompt)
       "page", // capture scope
       "Baseline node represents complete page.", // page reason
+      "done", // style check-point loop: skip, page reason came from a prompt so the loop still runs
     ]);
 
     await runCreateContract(
@@ -326,5 +501,144 @@ describe("runCreateContract (scripted prompt adapter)", () => {
       viewport: { name: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page" },
     });
+    expect(written.contracts[0].scope).not.toHaveProperty("styleChecks");
+  });
+
+  it("still offers the style check-point loop when --page-reason is a flag but other fields are still prompted", async () => {
+    // Regression guard: gating the loop on --page-reason's own presence broke as soon as
+    // a *different* field (viewport here) was left interactive in the same run -- the loop
+    // must key off whether this session prompted for anything at all, not one flag.
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+    const { adapter } = scriptedPrompts([
+      "desktop", // viewport preset -- prompted, makes this an interactive session
+      "page", // capture scope
+      "done", // style check-point loop: still offered, user skips
+    ]);
+
+    await runCreateContract(
+      {
+        projectRoot: directory,
+        targetUrl: "http://127.0.0.1:3000/login",
+        contractId: "login.desktop",
+        fileKey: "abc123",
+        nodeId: "153:5181",
+        pageReason: "Baseline node represents complete page.",
+      },
+      adapter,
+    );
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/login/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({ kind: "page" });
+    expect(written.contracts[0].scope).not.toHaveProperty("styleChecks");
+  });
+
+  it("skips the style check-point loop only when the entire invocation is flag-driven", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+    // Nothing left to prompt for -- an empty queue proves zero prompts fire.
+    const { adapter } = scriptedPrompts([]);
+
+    await runCreateContract(
+      {
+        projectRoot: directory,
+        targetUrl: "http://127.0.0.1:3000/login",
+        contractId: "login.desktop",
+        fileKey: "abc123",
+        nodeId: "153:5181",
+        viewport: "desktop",
+        scope: "page",
+        pageReason: "Baseline node represents complete page.",
+      },
+      adapter,
+    );
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/login/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({ kind: "page" });
+    expect(written.contracts[0].scope).not.toHaveProperty("styleChecks");
+  });
+
+  it("collects a single page style check-point through the interactive loop", async () => {
+    vi.stubEnv("FIGMA_ACCESS_TOKEN", undefined);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+
+    const { adapter, warnings } = scriptedPrompts([
+      "http://127.0.0.1:3000/home",
+      "home.desktop",
+      "abc123",
+      "153:5181",
+      "desktop", // viewport preset
+      "page", // capture scope
+      "Baseline node represents complete home page.", // page reason
+      "add", // style check-point loop: add one
+      "[data-testid=hero-heading]", // check-point selector
+      "200:10", // check-point Figma node ID
+      "done", // style check-point loop: stop
+    ]);
+
+    await runCreateContract({ projectRoot: directory }, adapter);
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/home/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({
+      kind: "page",
+      styleChecks: [{ selector: "[data-testid=hero-heading]", nodeId: "200:10" }],
+    });
+    // No Figma token in this test env, so the per-check-point expectStyle bake-in is
+    // skipped, not attempted -- same never-blocks handling as the region-scope bake-in.
+    expect(warnings).toEqual([
+      "Skipping expected-style bake-in: contract create skipped: no Figma token to fetch the expected style for this check-point.",
+    ]);
+  });
+
+  it("collects multiple page style check-points through the interactive loop", async () => {
+    vi.stubEnv("FIGMA_ACCESS_TOKEN", undefined);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+
+    const { adapter } = scriptedPrompts([
+      "http://127.0.0.1:3000/home",
+      "home.desktop",
+      "abc123",
+      "153:5181",
+      "desktop",
+      "page",
+      "Baseline node represents complete home page.",
+      "add",
+      "[data-testid=hero-heading]",
+      "200:10",
+      "add", // loop back around for a second check-point
+      "[data-testid=cta-button]",
+      "200:11",
+      "done",
+    ]);
+
+    await runCreateContract({ projectRoot: directory }, adapter);
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/home/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope.styleChecks).toEqual([
+      { selector: "[data-testid=hero-heading]", nodeId: "200:10" },
+      { selector: "[data-testid=cta-button]", nodeId: "200:11" },
+    ]);
   });
 });

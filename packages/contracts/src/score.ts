@@ -132,6 +132,9 @@ export const topIssueSchema = z
     hint: z.string().optional(),
     repairCandidate: z.boolean(),
     blocking: z.boolean(),
+    /** Which page-scope check-point selector this issue came from; absent for
+     *  region-scope and non-style issues. */
+    selector: z.string().optional(),
   })
   .strict();
 

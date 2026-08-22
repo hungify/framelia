@@ -95,7 +95,14 @@ export async function runComparePages(
 
     const aPath = captureA.capturePaths[0]!;
     const bPath = captureB.capturePaths[0]!;
-    const outcome = compare(bPath, aPath, workDir, { profile });
+    // Both sides share the same selector/mask config, but each resolves its own
+    // bounds against its own page -- union them so either side's masked pixels
+    // are excluded from scoring, not just whichever side happened to match first.
+    const maskBounds = [
+      ...(captureA.maskEvidence?.bounds ?? []),
+      ...(captureB.maskEvidence?.bounds ?? []),
+    ];
+    const outcome = compare(bPath, aPath, workDir, { profile, maskBounds });
 
     await attachDiffTriplet(context.attach, baseName, {
       expected: bPath,

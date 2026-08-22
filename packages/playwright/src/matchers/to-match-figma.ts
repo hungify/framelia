@@ -139,6 +139,7 @@ export async function runToMatchFigma(
       profile,
       clusterCheck,
       profileOverrides: options.profileOverrides,
+      maskBounds: captureOutcome.maskEvidence?.bounds,
     });
 
     // Component-scope only (selector set) -- style comparison needs a single

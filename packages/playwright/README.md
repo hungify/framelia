@@ -74,6 +74,10 @@ creates a page in the received page's browser context and navigates that URL.
 
 Options support `selector`, `fullPage`, `masks`, `profile`, font policy, and animation policy.
 Figma region captures may provide `expectSize`; this becomes part of persisted contract evidence.
+Page-scope calls (no `selector`) may provide `styleChecks`, one style comparison per declared
+check-point against its own baked `expectStyle`; results are tagged with the check-point's
+selector and merged into `topIssues` the same non-blocking way region scope's own style
+comparison is.
 
 ## Reporter
 

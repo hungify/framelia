@@ -78,6 +78,9 @@ export interface TopIssue {
   kind: TopIssueKind;
   message: string;
   hint?: string;
+  /** Which page-scope check-point selector this issue came from; unset for region-scope
+   *  and non-style issues, which have exactly one origin per matcher call. */
+  selector?: string;
   /**
    * true: message names one concrete property/value an agent can set (an
    * expectSize/expectStyle mismatch with an explicit expected value).

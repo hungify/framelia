@@ -7,6 +7,7 @@ import {
   VISUAL_CONTRACT_FILE,
   visualArtifactPath,
   type ExpectStyle,
+  type StyleCheckPoint,
 } from "@framelia/contracts";
 import { deriveExpectStyle, resolveNodeSpec } from "@framelia/verify";
 
@@ -123,19 +124,107 @@ async function positiveIntegerText(
  */
 async function tryFetchExpectStyle(
   prompts: PromptAdapter,
-  baseline: BaselineAnswers,
+  fileKey: string,
+  nodeId: string,
+  purpose = "expected component style",
 ): Promise<ExpectStyle | undefined> {
   const resolved = await resolveNodeSpec({
-    fileKey: baseline.fileKey,
-    nodeId: baseline.nodeId,
+    fileKey,
+    nodeId,
     gateName: "contract create",
-    purpose: "expected component style",
+    purpose,
   });
   if (!resolved.ok) {
     prompts.warn(`Skipping expected-style bake-in: ${resolved.warning}`);
     return undefined;
   }
   return deriveExpectStyle(resolved.meta);
+}
+
+/**
+ * A single style check-point supplied entirely via flags: `--style-check-selector` and
+ * `--style-check-node-id` must arrive together. Its expectStyle is baked in the same way
+ * the interactive loop below bakes each of its own.
+ */
+async function buildFlagStyleCheck(
+  prompts: PromptAdapter,
+  fileKey: string,
+  options: Pick<CreateContractOptions, "styleCheckSelector" | "styleCheckNodeId">,
+): Promise<StyleCheckPoint | undefined> {
+  const { styleCheckSelector, styleCheckNodeId } = options;
+  if (styleCheckSelector === undefined && styleCheckNodeId === undefined) return undefined;
+  if (styleCheckSelector === undefined || styleCheckNodeId === undefined) {
+    throw new Error("--style-check-selector and --style-check-node-id must be supplied together.");
+  }
+  requireFlag("--style-check-selector", styleCheckSelector, required);
+  requireFlag("--style-check-node-id", styleCheckNodeId, validateNodeId);
+  const expectStyle = await tryFetchExpectStyle(
+    prompts,
+    fileKey,
+    styleCheckNodeId,
+    "expected style for this check-point",
+  );
+  return {
+    selector: styleCheckSelector,
+    nodeId: styleCheckNodeId,
+    ...(expectStyle ? { expectStyle } : {}),
+  };
+}
+
+/**
+ * Interactive loop offering to add page-scope style check-points one at a time --
+ * each is a CSS selector paired with its own Figma node (distinct from the page
+ * contract's own baseline node). Runs only when the surrounding page setup is itself
+ * interactive (see its call site); a fully flag-driven page contract skips it so a
+ * scripted invocation never blocks on an unscripted prompt.
+ */
+async function collectPageStyleChecks(
+  prompts: PromptAdapter,
+  fileKey: string,
+): Promise<StyleCheckPoint[] | undefined> {
+  const checkPoints: StyleCheckPoint[] = [];
+  for (;;) {
+    const action = await select<"add" | "done">(prompts, {
+      message:
+        checkPoints.length > 0 ? "Add another style check-point?" : "Add a style check-point?",
+      options: [
+        { value: "add", label: "Add a check-point" },
+        {
+          value: "done",
+          label: checkPoints.length > 0 ? "Done" : "Skip — no style check-points",
+        },
+      ],
+    });
+    if (!action) return undefined;
+    if (action === "done") break;
+
+    const selector = await text(prompts, {
+      message: "CSS selector for this style check-point",
+      placeholder: "[data-testid=hero-heading]",
+      validate: required,
+    });
+    if (!selector) return undefined;
+
+    const nodeId = await text(prompts, {
+      message: "Figma node ID for this style check-point",
+      placeholder: "153:5181",
+      validate: validateNodeId,
+    });
+    if (!nodeId) return undefined;
+
+    const expectStyle = await tryFetchExpectStyle(
+      prompts,
+      fileKey,
+      nodeId,
+      "expected style for this check-point",
+    );
+    checkPoints.push({
+      selector,
+      nodeId,
+      ...(expectStyle ? { expectStyle } : {}),
+    });
+  }
+  return checkPoints;
 }
 
 /** Single source of truth for the --viewport choices, shared by CreateContractOptions
@@ -162,6 +251,9 @@ export interface CreateContractOptions {
   viewportHeight?: number;
   scope?: ScopeKind;
   pageReason?: string;
+  /** Single style check-point via flags (with --scope page); selector and nodeId must arrive together. */
+  styleCheckSelector?: string;
+  styleCheckNodeId?: string;
   selector?: string;
   regionWidth?: number;
   regionHeight?: number;
@@ -179,8 +271,25 @@ function validateNodeId(value: string | undefined): string | undefined {
 
 export async function runCreateContract(
   options: CreateContractOptions,
-  prompts: PromptAdapter = realPromptAdapter,
+  promptsInput: PromptAdapter = realPromptAdapter,
 ): Promise<void> {
+  // Tracks whether any field so far was actually prompted for (as opposed to supplied by
+  // flag) -- the signal for whether this invocation is interactive at all. Gating the page
+  // style-check loop on one specific flag's presence (e.g. --page-reason) breaks as soon as
+  // a *different* field is left to prompt in the same run; this tracks the whole session.
+  let promptedAnyField = false;
+  const prompts: PromptAdapter = {
+    ...promptsInput,
+    text: (promptOptions) => {
+      promptedAnyField = true;
+      return promptsInput.text(promptOptions);
+    },
+    select: (promptOptions) => {
+      promptedAnyField = true;
+      return promptsInput.select(promptOptions);
+    },
+  };
+
   prompts.intro("Create Framelia visual contract");
 
   const targetUrl = await resolveField("--target-url", options.targetUrl, validateHttpUrl, () =>
@@ -264,6 +373,13 @@ export async function runCreateContract(
     }));
   if (!scopeKind) return;
 
+  if (
+    scopeKind !== "page" &&
+    (options.styleCheckSelector !== undefined || options.styleCheckNodeId !== undefined)
+  ) {
+    throw new Error("--style-check-selector and --style-check-node-id require --scope page.");
+  }
+
   let scope: ContractAnswers["scope"];
   if (scopeKind === "page") {
     const pageReason = await resolveField("--page-reason", options.pageReason, required, () =>
@@ -275,7 +391,24 @@ export async function runCreateContract(
       }),
     );
     if (!pageReason) return;
-    scope = { kind: "page", pageReason };
+
+    const flagStyleCheck = await buildFlagStyleCheck(prompts, fileKey, options);
+    const styleChecks = flagStyleCheck ? [flagStyleCheck] : [];
+    // Skip the interactive loop only when nothing at all has been prompted for yet --
+    // a fully flag-driven invocation. The moment any field along the way came from a
+    // real prompt, this session is interactive and the loop stays on offer, even if
+    // --page-reason itself happened to be a flag (add more via hand-editing otherwise).
+    if (promptedAnyField) {
+      const collected = await collectPageStyleChecks(prompts, fileKey);
+      if (collected === undefined) return;
+      styleChecks.push(...collected);
+    }
+
+    scope = {
+      kind: "page",
+      pageReason,
+      ...(styleChecks.length > 0 ? { styleChecks } : {}),
+    };
   } else {
     const selector = await resolveField("--selector", options.selector, required, () =>
       text(prompts, {
@@ -291,7 +424,7 @@ export async function runCreateContract(
     const height =
       options.regionHeight ?? (await positiveIntegerText(prompts, "Expected region height"));
     if (height === undefined) return;
-    const expectStyle = await tryFetchExpectStyle(prompts, baseline);
+    const expectStyle = await tryFetchExpectStyle(prompts, baseline.fileKey, baseline.nodeId);
     scope = {
       kind: "region",
       selector,

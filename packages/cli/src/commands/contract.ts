@@ -44,6 +44,14 @@ export function registerContractCommands(program: Command): void {
         "--page-reason <text>",
         "why the baseline represents the complete page (with --scope page)",
       )
+      .option(
+        "--style-check-selector <css>",
+        "CSS selector for one style check-point (with --scope page; pairs with --style-check-node-id)",
+      )
+      .option(
+        "--style-check-node-id <id>",
+        "Figma node id for the style check-point (with --style-check-selector)",
+      )
       .option("--selector <css>", "CSS selector for the captured region (with --scope region)")
       .option(
         "--region-width <n>",

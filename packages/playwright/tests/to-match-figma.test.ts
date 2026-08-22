@@ -203,6 +203,98 @@ describe("runToMatchFigma", () => {
     }
   });
 
+  it("masks a page-scope element so its real captured bounds are excluded from the score", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png);
+    // #glitch diverges from the Figma baseline's uniform color -- without a
+    // mask this would fail the page profile's 0.99 minMatch (a ~3.75% patch).
+    const app = await server(
+      html.replace(
+        "</style>",
+        '#glitch{position:absolute;top:10px;left:10px;width:20px;height:15px;background:red}</style><div id="glitch"></div>',
+      ),
+    );
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const unmasked = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key" },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async () => undefined,
+        },
+      );
+      expect(unmasked.pass).toBe(false);
+
+      const masked = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key", masks: [{ selector: "#glitch", reason: "dynamic content" }] },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async () => undefined,
+        },
+      );
+      expect(masked.pass).toBe(true);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("masks a region-scope element whose bounds are rebased onto the crop's own origin", async () => {
+    const png = PNG.sync.write(makeSolidPng(40, 30, [10, 20, 30, 255]));
+    stubFigmaFetch(png);
+    // #region sits away from the viewport origin so an unrebased mask bound
+    // would land outside the small cropped comparison canvas entirely.
+    const app = await server(`
+      <style>
+        html,body{margin:0}
+        #region{position:relative;margin:70px 0 0 40px;width:40px;height:30px;background:rgb(10,20,30)}
+        #secret{position:absolute;top:5px;left:5px;width:10px;height:10px;background:red}
+      </style>
+      <div id="region"><div id="secret"></div></div>
+    `);
+    const context = await browser.newContext({ viewport: { width: 400, height: 400 } });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const masked = await runToMatchFigma(
+        page,
+        NODE_ID,
+        {
+          fileKey: "file-key",
+          selector: "#region",
+          masks: [{ selector: "#secret", reason: "dynamic content" }],
+        },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async () => undefined,
+        },
+      );
+
+      expect(masked.pass).toBe(true);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("adds a non-blocking style-color topIssue when the component's color diverges from Figma's fill, without affecting pass", async () => {
     const { html, png } = solidPagePng();
     stubFigmaFetch(png, {

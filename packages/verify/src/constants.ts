@@ -77,6 +77,11 @@ export const LETTER_SPACING_TOLERANCE_PX = 0.1;
 export const COLOR_CHANNEL_TOLERANCE = 2;
 export const ALPHA_TOLERANCE = 0.01;
 
+// compareStyles()'s own defaults -- overridable per-contract via styleToleranceOverrides.
+// 2.3 is the commonly-cited CIEDE2000 "just noticeable difference" threshold.
+export const STYLE_COLOR_DELTA_E_TOLERANCE = 2.3;
+export const STYLE_SPACING_TOLERANCE_PX = 1;
+
 /**
  * Warning text shared between the producer (phases.ts, capture/core.ts) and
  * the consumer that classifies warnings into diagnostics (report.ts).

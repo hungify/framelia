@@ -5,13 +5,21 @@ import {
   type ProfileOverrides,
   type RunType,
   type Stability,
+  type StyleToleranceOverrides,
 } from "@framelia/contracts";
 
 import type { MaskBounds, MaskEvidence } from "./capture/types.ts";
 import type { StyleSnapshot } from "./figma-node-style.ts";
 
 export { SCHEMA_VERSION };
-export type { ContractDefaults, ProfileName, ProfileOverrides, RunType, Stability };
+export type {
+  ContractDefaults,
+  ProfileName,
+  ProfileOverrides,
+  RunType,
+  Stability,
+  StyleToleranceOverrides,
+};
 export type { MaskBounds, MaskEvidence };
 
 export class AppError extends Error {

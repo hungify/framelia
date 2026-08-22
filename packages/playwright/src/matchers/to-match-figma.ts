@@ -1,5 +1,11 @@
 import type { VisualMask } from "@framelia/contracts";
-import type { ExpectSize, StyleSnapshot, TopIssue, ProfileOverrides } from "@framelia/verify";
+import type {
+  ExpectSize,
+  StyleSnapshot,
+  TopIssue,
+  ProfileOverrides,
+  StyleToleranceOverrides,
+} from "@framelia/verify";
 import { compare, compareStyles, FigmaBaselineProvider } from "@framelia/verify";
 import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
 import { test } from "@playwright/test";
@@ -25,10 +31,11 @@ async function captureStyleIssues(
   page: Page,
   selector: string,
   figmaStyle: StyleSnapshot,
+  styleToleranceOverrides: StyleToleranceOverrides | undefined,
 ): Promise<TopIssue[]> {
   try {
     const actualStyle = await captureElementStyle(page, selector);
-    return compareStyles(figmaStyle, actualStyle);
+    return compareStyles(figmaStyle, actualStyle, styleToleranceOverrides);
   } catch {
     return [];
   }
@@ -46,6 +53,8 @@ export interface ToMatchFigmaOptions {
   profile?: "page" | "component/strict" | "component/dev";
   /** Explicit per-contract threshold overrides, merged on top of the resolved profile's own defaults. */
   profileOverrides?: ProfileOverrides;
+  /** Explicit per-contract style-comparison tolerance overrides, merged on top of compareStyles()'s own defaults. */
+  styleToleranceOverrides?: StyleToleranceOverrides;
   /** Explicit override of whether this contract's resolved threshold blocks the CI merge
    *  gate; unset falls back to the resolved profile's own gateEligible default. */
   gateEligible?: boolean;
@@ -147,7 +156,12 @@ export async function runToMatchFigma(
     // baseline fetch was fresh enough to have extracted one (see ResolvedBaseline).
     const styleIssues =
       options.selector && baselineOutcome.baseline.figmaStyle
-        ? await captureStyleIssues(received, options.selector, baselineOutcome.baseline.figmaStyle)
+        ? await captureStyleIssues(
+            received,
+            options.selector,
+            baselineOutcome.baseline.figmaStyle,
+            options.styleToleranceOverrides,
+          )
         : [];
     // Style mismatches are informational-only (TopIssue.blocking: false) and
     // never affect `outcome.pass` -- merged in after compare() decided pass/fail.

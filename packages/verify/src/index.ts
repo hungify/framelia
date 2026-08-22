@@ -80,6 +80,7 @@ export type {
   WebTarget,
   ContractScope,
   ExpectStyle,
+  StyleToleranceOverrides,
 } from "@framelia/contracts";
 export {
   clearNodeMetaCache,

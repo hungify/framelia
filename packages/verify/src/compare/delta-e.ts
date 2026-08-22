@@ -49,6 +49,27 @@ export function avgDeltaE2000(
   return count === 0 ? 0 : sum / count;
 }
 
+/**
+ * Perceptual (CIEDE2000) distance between two `#rrggbbaa` hex colors, as produced by
+ * StyleSnapshot / captureElementStyle -- the alpha channel is ignored since Lab distance
+ * is a color-only metric. Reuses the same rgbToLab/ciede2000 math as avgDeltaE2000's
+ * per-pixel image comparison, just fed a single parsed color pair instead of a bitmap.
+ */
+export function hexColorDeltaE(hexA: string, hexB: string): number {
+  const [r1, g1, b1] = parseHexRgb(hexA);
+  const [r2, g2, b2] = parseHexRgb(hexB);
+  return ciede2000(rgbToLab(r1, g1, b1), rgbToLab(r2, g2, b2));
+}
+
+function parseHexRgb(hex: string): [number, number, number] {
+  const value = hex.startsWith("#") ? hex.slice(1) : hex;
+  return [
+    Number.parseInt(value.slice(0, 2), 16),
+    Number.parseInt(value.slice(2, 4), 16),
+    Number.parseInt(value.slice(4, 6), 16),
+  ];
+}
+
 type Lab = [number, number, number];
 
 // Invariant across every pixel in a compare pass — hoisted out of ciede2000's

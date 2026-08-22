@@ -98,6 +98,24 @@ export const profileOverridesSchema = z
   })
   .strict();
 
+/**
+ * Practically-overridable tolerances compareStyles() applies when diffing a region
+ * contract's captured DOM style against its Figma-side StyleSnapshot -- mirrors
+ * profileOverridesSchema's pattern (git-committed, PR-reviewed, no dashboard UI).
+ * Style mismatches stay informational-only (TopIssue.blocking: false) regardless
+ * of this override -- see style-compare.ts.
+ */
+export const styleToleranceOverridesSchema = z
+  .object({
+    /** Perceptual (CIEDE2000) distance a color/backgroundColor pair may differ by before flagging. */
+    maxColorDeltaE: z.number().nonnegative().optional(),
+    /** Pixel epsilon a spacing side may differ by before flagging. */
+    maxSpacingDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon fontSize may differ by before flagging. */
+    maxFontSizeDeltaPx: z.number().nonnegative().optional(),
+  })
+  .strict();
+
 export const visualMaskSchema = z
   .object({
     selector: nonEmptyTrimmed.refine((selector) => !BROAD_MASK_SELECTOR.test(selector.trim()), {
@@ -121,6 +139,8 @@ export const verificationContractSchema = z
     clusterCheck: z.boolean().optional(),
     /** Explicit per-contract threshold overrides, merged on top of the resolved profile's own defaults. */
     profileOverrides: profileOverridesSchema.optional(),
+    /** Explicit per-contract style-comparison tolerance overrides, merged on top of compareStyles()'s own defaults. */
+    styleToleranceOverrides: styleToleranceOverridesSchema.optional(),
     /** Explicit override of whether this contract's resolved threshold blocks the CI merge
      *  gate; unset falls back to the resolved profile's own gateEligible default. Lets a
      *  deliberately loose custom threshold opt out of gating without naming a "dev" preset,
@@ -148,3 +168,4 @@ export type ContractScope = z.infer<typeof contractScopeSchema>;
 export type VisualMask = z.infer<typeof visualMaskSchema>;
 export type ExpectStyle = z.infer<typeof expectStyleSchema>;
 export type ProfileOverrides = z.infer<typeof profileOverridesSchema>;
+export type StyleToleranceOverrides = z.infer<typeof styleToleranceOverridesSchema>;

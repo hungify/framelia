@@ -71,6 +71,19 @@ export const BORDER_SAMPLE_STRIDE_DIVISOR = 50;
 export const WHITE_RGBA: [number, number, number, number] = [255, 255, 255, 255];
 export const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
 
+/** The minimum TopIssue.severity that blocks the done gate once a contract's resolved
+ *  styleGateEligible is true -- see done-gate/validate.ts. "low" (all style mismatches'
+ *  current severity) means any style mismatch blocks; raising this constant narrows
+ *  gating to more severe mismatches without touching call sites. */
+export const STYLE_GATE_MIN_SEVERITY: keyof typeof SEVERITY_RANK = "low";
+/** TopIssueKinds the style gate inspects -- includes "style-check-error" (see #35) so a
+ *  broken/unresolvable style check blocks rather than silently passing while gated. */
+export const STYLE_GATE_BLOCKING_KINDS = [
+  "style-color",
+  "style-typography",
+  "style-check-error",
+] as const;
+
 export const FONT_SIZE_TOLERANCE_PX = 0.5;
 export const LINE_HEIGHT_TOLERANCE_PX = 1;
 export const LETTER_SPACING_TOLERANCE_PX = 0.1;

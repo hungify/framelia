@@ -3,9 +3,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { baselineArtifacts, RUN_ARTIFACT, RUN_OUTPUTS } from "../artifacts.ts";
-import { CLOCK_SKEW_MS, FIGMA_NODE_ID, MS_PER_HOUR, MS_PER_MINUTE } from "../constants.ts";
+import {
+  CLOCK_SKEW_MS,
+  FIGMA_NODE_ID,
+  MS_PER_HOUR,
+  MS_PER_MINUTE,
+  SEVERITY_RANK,
+  STYLE_GATE_BLOCKING_KINDS,
+  STYLE_GATE_MIN_SEVERITY,
+} from "../constants.ts";
 import { resolveArtifactPath } from "../paths.ts";
-import { getProfile } from "../profiles.ts";
+import { getProfile, resolveStyleGateEligible } from "../profiles.ts";
 import { SCHEMA_VERSION } from "../types.ts";
 import {
   completeMaskEvidence,
@@ -15,6 +23,7 @@ import {
   sameMasks,
   sameProfileOverrides,
   sameSize,
+  sameStyleGateEligible,
   sameTarget,
 } from "./contract-predicates.ts";
 import { PunchListSchema, RunMetaSchema, type RunMeta, type ScoreFile } from "./schemas.ts";
@@ -26,6 +35,28 @@ import type { DoneGateViewport } from "./types.ts";
  */
 function resolveGateEligible(contract: DoneGateViewport): boolean {
   return contract.gateEligible ?? getProfile(contract.profile).gateEligible;
+}
+
+/** Whether `severity` meets or exceeds STYLE_GATE_MIN_SEVERITY (lower SEVERITY_RANK = more
+ *  severe); an unrecognized/missing severity is treated as the least severe ("low"). */
+function meetsStyleGateSeverity(severity: string | undefined): boolean {
+  const rank = SEVERITY_RANK[severity as keyof typeof SEVERITY_RANK] ?? SEVERITY_RANK.low;
+  return rank <= SEVERITY_RANK[STYLE_GATE_MIN_SEVERITY];
+}
+
+/**
+ * True when `score` carries a style-comparison issue (a real mismatch, or a
+ * "style-check-error" capture failure -- see #35) severe enough to block, for a contract
+ * whose resolved styleGateEligible is true. A capture failure counts as blocking so an opt-in
+ * style gate can't be silently defeated by a broken selector "passing" with no data.
+ */
+function hasBlockingStyleIssue(score: ScoreFile): boolean {
+  return (score.topIssues ?? []).some(
+    (issue) =>
+      STYLE_GATE_BLOCKING_KINDS.includes(
+        issue.kind as (typeof STYLE_GATE_BLOCKING_KINDS)[number],
+      ) && meetsStyleGateSeverity(issue.severity),
+  );
 }
 
 export function validateContract(contract: DoneGateViewport): string[] {
@@ -80,6 +111,8 @@ function validateIdentity(score: ScoreFile, contract: DoneGateViewport): string[
     reasons.push("profileOverrides do not match contract.");
   if (!sameGateEligible(contract.profile, score.gateEligible, contract.gateEligible))
     reasons.push("gateEligible does not match contract.");
+  if (!sameStyleGateEligible(contract.profile, score.styleGateEligible, contract.styleGateEligible))
+    reasons.push("styleGateEligible does not match contract.");
   if (score.profile === "page" && !score.pageReason?.trim())
     reasons.push("page score missing pageReason.");
   if (score.profile === "page" && score.pageReason !== contract.pageReason)
@@ -96,6 +129,15 @@ function validateIdentity(score: ScoreFile, contract: DoneGateViewport): string[
     )
   ) {
     reasons.push("blocking residual diff cluster remains.");
+  }
+  if (
+    resolveStyleGateEligible({
+      profile: contract.profile,
+      styleGateEligible: contract.styleGateEligible,
+    }) &&
+    hasBlockingStyleIssue(score)
+  ) {
+    reasons.push("blocking style mismatch remains (styleGateEligible).");
   }
   for (const diagnostic of score.diagnostics ?? []) {
     if (diagnostic.blocking)
@@ -210,6 +252,10 @@ function runMetaReasons(outDir: string, contract: DoneGateViewport): string[] {
       reasons.push("run-meta profileOverrides do not match contract.");
     if (!sameGateEligible(contract.profile, meta.gateEligible, contract.gateEligible))
       reasons.push("run-meta gateEligible does not match contract.");
+    if (
+      !sameStyleGateEligible(contract.profile, meta.styleGateEligible, contract.styleGateEligible)
+    )
+      reasons.push("run-meta styleGateEligible does not match contract.");
     if (meta.runType !== "final") reasons.push("run-meta runType must be final.");
     if (contract.profile === "page" && meta.pageReason !== contract.pageReason)
       reasons.push("run-meta pageReason mismatch.");

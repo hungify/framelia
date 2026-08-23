@@ -86,6 +86,17 @@ export function sameGateEligible(
   return resolvedOverride(actual ?? undefined, fallback) === resolvedOverride(expected, fallback);
 }
 
+/** Compares two styleGateEligible flags at their *effective* value against `profileName`'s
+ *  own default -- same reasoning as `sameGateEligible`. */
+export function sameStyleGateEligible(
+  profileName: ProfileName,
+  actual: boolean | null | undefined,
+  expected?: boolean,
+): boolean {
+  const fallback = getProfile(profileName).styleGateEligible;
+  return resolvedOverride(actual ?? undefined, fallback) === resolvedOverride(expected, fallback);
+}
+
 export function isUrl(value: string): boolean {
   try {
     const parsed = new URL(value);

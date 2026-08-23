@@ -100,9 +100,15 @@ export interface DashboardContractResult {
   blockers: Array<{ code: string; message: string }>;
   /** Evidence caveats; blocking diagnostics cannot be projected as passed. */
   diagnostics?: DashboardDiagnostic[];
-  /** Informational field-level mismatches vs. the Figma baseline's style (color, typography,
-   * spacing, corner radius) -- never affects `status`. See compareStyles() in @framelia/verify. */
+  /** Field-level mismatches vs. the Figma baseline's style (color, typography, spacing,
+   * corner radius) -- never affects `status` (the live dashboard verdict). May still block
+   * the separate CI done-gate when `styleGateEligible` is true. See compareStyles() in
+   * @framelia/verify. */
   topIssues?: DashboardTopIssue[];
+  /** This contract's resolved style-gate eligibility (explicit override or profile default,
+   * see @framelia/verify's resolveStyleGateEligible) -- lets the dashboard show whether style
+   * mismatches above are informational-only or enforced at the CI merge gate. */
+  styleGateEligible?: boolean;
   maskEvidence?: DashboardMaskEvidence;
   captureEvidence?: DashboardCaptureEvidence;
   /** Set whenever the comparison resolved a profile (i.e. a score attachment/artifact exists). */
@@ -380,6 +386,7 @@ export interface ContractResultAssemblyInput {
   blockers: Array<{ code: string; message: string }>;
   diagnostics: DashboardDiagnostic[];
   topIssues: DashboardTopIssue[];
+  styleGateEligible?: boolean;
   evidenceHash?: string;
   finishedAt: string;
 }
@@ -412,6 +419,9 @@ export function assembleContractResult(
     blockers: input.blockers,
     ...(input.diagnostics.length ? { diagnostics: input.diagnostics } : {}),
     ...(input.topIssues.length ? { topIssues: input.topIssues } : {}),
+    ...(input.styleGateEligible !== undefined
+      ? { styleGateEligible: input.styleGateEligible }
+      : {}),
     ...(input.evidenceHash ? { evidenceHash: input.evidenceHash } : {}),
     finishedAt: input.finishedAt,
   };

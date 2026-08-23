@@ -112,5 +112,6 @@ function contractToDoneGate(
     maxMaskedAreaRatio: defaults.maxMaskedAreaRatio,
     profileOverrides: contract.profileOverrides,
     gateEligible: contract.gateEligible,
+    styleGateEligible: contract.styleGateEligible,
   };
 }

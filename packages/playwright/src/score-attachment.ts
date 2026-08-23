@@ -23,6 +23,8 @@ export interface FrameliaScoreAttachment {
   profileOverrides?: ProfileOverrides;
   /** Explicit gateEligible override the matcher call was given, if any. */
   gateEligible?: boolean;
+  /** Explicit styleGateEligible override the matcher call was given, if any. */
+  styleGateEligible?: boolean;
   scope?: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
@@ -58,6 +60,7 @@ export interface ScoreAttachmentBase {
   clusterCheck?: boolean;
   profileOverrides?: ProfileOverrides;
   gateEligible?: boolean;
+  styleGateEligible?: boolean;
   scope: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;

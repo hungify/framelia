@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getProfile, resolveDisplayThreshold } from "../src/profiles.ts";
+import { getProfile, resolveDisplayThreshold, resolveStyleGateEligible } from "../src/profiles.ts";
 
 describe("getProfile", () => {
   it("keeps component/strict's own numbers unchanged when explicitly requested by name", () => {
@@ -40,6 +40,21 @@ describe("resolveDisplayThreshold", () => {
   it("ignores an explicit clusterCheck: undefined rather than overwriting cluster with undefined", () => {
     expect(resolveDisplayThreshold({ profile: "page", clusterCheck: undefined })).toStrictEqual(
       getProfile("page"),
+    );
+  });
+});
+
+describe("resolveStyleGateEligible", () => {
+  it("falls back to the resolved profile's own default (false everywhere) when unset", () => {
+    expect(resolveStyleGateEligible({ profile: "page" })).toBe(false);
+    expect(resolveStyleGateEligible({ profile: "component/strict" })).toBe(false);
+    expect(resolveStyleGateEligible({})).toBe(false);
+  });
+
+  it("lets an explicit override win over the profile default in both directions", () => {
+    expect(resolveStyleGateEligible({ profile: "page", styleGateEligible: true })).toBe(true);
+    expect(resolveStyleGateEligible({ profile: "component/dev", styleGateEligible: false })).toBe(
+      false,
     );
   });
 });

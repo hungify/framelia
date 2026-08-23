@@ -21,6 +21,7 @@ import {
   FIGMA_BASELINE_ARTIFACT,
   JSON_INDENT_SPACES,
   resolveDisplayThreshold,
+  resolveStyleGateEligible,
   RUN_ARTIFACT,
   SCHEMA_VERSION,
 } from "@framelia/verify";
@@ -235,6 +236,14 @@ export function deriveContract(
         ],
     ...(primary ? { comparison: deriveComparisonSummary(primary) } : {}),
     ...(primary ? { resolvedThreshold: resolveDisplayThreshold(primary) } : {}),
+    ...(primary
+      ? {
+          styleGateEligible: resolveStyleGateEligible({
+            profile: primary.profile,
+            styleGateEligible: primary.styleGateEligible,
+          }),
+        }
+      : {}),
     diagnostics,
     topIssues: primary?.topIssues ?? [],
     ...(captureEvidence?.maskEvidence ? { maskEvidence: captureEvidence.maskEvidence } : {}),
@@ -283,6 +292,9 @@ export function deriveContract(
     // gate-eligible" case) is the value most worth preserving, so this must guard on
     // `!== undefined`, not truthiness, same as clusterCheck above.
     ...(primary.gateEligible !== undefined ? { gateEligible: primary.gateEligible } : {}),
+    ...(primary.styleGateEligible !== undefined
+      ? { styleGateEligible: primary.styleGateEligible }
+      : {}),
     ...(primary.masks?.length ? { masks: primary.masks } : {}),
   };
 
@@ -413,6 +425,7 @@ export function writeEvidence(
   // same reasoning as clusterCheck above, read straight off the persisted score.
   const profileOverrides = score.profileOverrides;
   const gateEligible = score.gateEligible;
+  const styleGateEligible = score.styleGateEligible;
   // Only the author's declared options.expectSize counts here -- an omitted expectSize must
   // stay absent (not backfilled from observed capture dimensions) so validate.ts's
   // "gate-eligible component contract requires expectSize" check can actually catch it.
@@ -452,6 +465,7 @@ export function writeEvidence(
     ...(clusterCheck !== undefined ? { clusterCheck } : {}),
     ...(profileOverrides ? { profileOverrides } : {}),
     ...(gateEligible !== undefined ? { gateEligible } : {}),
+    ...(styleGateEligible !== undefined ? { styleGateEligible } : {}),
     ...(score.topIssues?.length ? { topIssues: score.topIssues } : {}),
     ...(score.warnings?.length ? { warnings: score.warnings } : {}),
     ...(captureEvidence ? { captureEvidence } : {}),
@@ -475,6 +489,7 @@ export function writeEvidence(
         ...(clusterCheck !== undefined ? { clusterCheck } : {}),
         ...(profileOverrides ? { profileOverrides } : {}),
         ...(gateEligible !== undefined ? { gateEligible } : {}),
+        ...(styleGateEligible !== undefined ? { styleGateEligible } : {}),
         ...(score.masks?.length ? { masks: score.masks } : {}),
         // Recorded from the project's config default, not score.maxMaskedAreaRatio (the
         // matcher's per-call capture option) -- contractToDoneGate compares against the same

@@ -1,7 +1,11 @@
 import type { DashboardContractResult, DashboardTopIssue } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
-import { groupStyleMismatches, hasEvidenceNotes } from "../lib/contract-evidence";
+import {
+  groupStyleMismatches,
+  hasEvidenceNotes,
+  styleMismatchGateLabel,
+} from "../lib/contract-evidence";
 
 type EvidenceInput = Pick<
   DashboardContractResult,
@@ -114,5 +118,25 @@ describe("groupStyleMismatches", () => {
       { selector: "header", issues: [headerIssue, secondHeaderIssue] },
       { selector: ".hero", issues: [heroIssue] },
     ]);
+  });
+});
+
+describe("styleMismatchGateLabel", () => {
+  it("reads as informational when styleGateEligible is unset (the default)", () => {
+    expect(styleMismatchGateLabel(undefined)).toBe(
+      "Style mismatches vs. Figma — informational, not blocking",
+    );
+  });
+
+  it("reads as informational when styleGateEligible is explicitly false", () => {
+    expect(styleMismatchGateLabel(false)).toBe(
+      "Style mismatches vs. Figma — informational, not blocking",
+    );
+  });
+
+  it("reads as blocking when styleGateEligible is true", () => {
+    expect(styleMismatchGateLabel(true)).toBe(
+      "Style mismatches vs. Figma — blocking the CI merge gate",
+    );
   });
 });

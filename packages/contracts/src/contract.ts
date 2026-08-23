@@ -166,6 +166,11 @@ export const verificationContractSchema = z
      *  deliberately loose custom threshold opt out of gating without naming a "dev" preset,
      *  and lets an explicitly-loose preset opt back in -- see done-gate/validate.ts. */
     gateEligible: z.boolean().optional(),
+    /** Explicit override of whether style mismatches (color/typography/etc.) block the CI
+     *  merge gate; unset falls back to the resolved profile's own styleGateEligible default
+     *  (false everywhere by default -- style stays informational-only unless opted in). See
+     *  done-gate/validate.ts. */
+    styleGateEligible: z.boolean().optional(),
     masks: z.array(visualMaskSchema).min(1).max(MAX_MASK_SELECTORS).optional(),
   })
   .strict()

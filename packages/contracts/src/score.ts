@@ -187,6 +187,9 @@ export const visualScoreArtifactSchema = z
      * DashboardContractResult["resolvedThreshold"] without re-deriving the resolution logic. */
     profile: profileSchema.optional().catch(undefined),
     clusterCheck: z.boolean().optional().catch(undefined),
+    /** Explicit styleGateEligible override the matcher call was given, if any -- read back by
+     *  dashboard-server's model.ts to resolve DashboardContractResult["styleGateEligible"]. */
+    styleGateEligible: z.boolean().optional().catch(undefined),
   })
   .loose();
 

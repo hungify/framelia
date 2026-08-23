@@ -148,6 +148,9 @@ export interface ToMatchFigmaOptions {
   /** Explicit override of whether this contract's resolved threshold blocks the CI merge
    *  gate; unset falls back to the resolved profile's own gateEligible default. */
   gateEligible?: boolean;
+  /** Explicit override of whether style mismatches block the CI merge gate; unset falls back
+   *  to the resolved profile's own styleGateEligible default (opt-in, default false). */
+  styleGateEligible?: boolean;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
 }
@@ -297,6 +300,7 @@ export async function runToMatchFigma(
         clusterCheck,
         profileOverrides: options.profileOverrides,
         gateEligible: options.gateEligible,
+        styleGateEligible: options.styleGateEligible,
         scope: options.selector
           ? { kind: "region", selector: options.selector, expectedSize: options.expectSize }
           : { kind: "page", fullPage: options.fullPage ?? false },

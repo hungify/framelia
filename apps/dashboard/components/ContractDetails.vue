@@ -2,7 +2,11 @@
 import type { DashboardContractResult } from "@framelia/contracts";
 import { computed } from "vue";
 
-import { groupStyleMismatches, hasEvidenceNotes } from "../lib/contract-evidence";
+import {
+  groupStyleMismatches,
+  hasEvidenceNotes,
+  styleMismatchGateLabel,
+} from "../lib/contract-evidence";
 import { formatRatio } from "../lib/format";
 import StatusBadge from "./StatusBadge.vue";
 
@@ -44,6 +48,8 @@ const fontStatusLabel = computed(() => {
 });
 
 const styleMismatchGroups = computed(() => groupStyleMismatches(props.contract.topIssues));
+
+const styleMismatchLabel = computed(() => styleMismatchGateLabel(props.contract.styleGateEligible));
 
 const actionsSummary = computed(() => {
   const actions = props.contract.captureEvidence?.actions ?? [];
@@ -235,9 +241,9 @@ const resolvedThresholdTooltip = computed(() => {
         </ul>
       </div>
       <div v-if="styleMismatchGroups.length" class="min-w-0" data-testid="style-mismatches">
-        <span class="block text-muted text-xs"
-          >Style mismatches vs. Figma — informational, not blocking</span
-        >
+        <span class="block text-muted text-xs" data-testid="style-mismatch-gate-label">{{
+          styleMismatchLabel
+        }}</span>
         <template
           v-for="group in styleMismatchGroups"
           :key="group.selector !== null ? `selector:${group.selector}` : 'unscoped'"

@@ -29,9 +29,23 @@ import { withTimeout } from "../timeout.ts";
 
 /**
  * Style comparison is best-effort and informational-only (see compareStyles):
- * a capture-style failure (stale selector, detached element) must never fail
- * the match itself, only skip the style issues for this run.
+ * a capture-style failure (stale selector, detached element, or a timeout --
+ * see withStyleCheckTimeout) must never fail the match itself. It still must
+ * not look identical to a clean pass, though -- a silently empty result is
+ * indistinguishable from "checked and found nothing wrong" -- so a failure
+ * reports itself as a single non-blocking diagnostic issue instead of
+ * skipping the style issues for this run.
  */
+function styleCheckErrorIssue(message: string): TopIssue {
+  return {
+    severity: "low",
+    kind: "style-check-error",
+    message,
+    repairCandidate: false,
+    blocking: false,
+  };
+}
+
 async function captureStyleIssues(
   page: Page,
   selector: string,
@@ -41,17 +55,24 @@ async function captureStyleIssues(
   try {
     const actualStyle = await captureElementStyle(page, selector);
     return compareStyles(figmaStyle, actualStyle, styleToleranceOverrides);
-  } catch {
-    return [];
+  } catch (error) {
+    return [
+      styleCheckErrorIssue(
+        `style check for "${selector}" could not run: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    ];
   }
 }
 
 /**
- * Bounds any style comparison (region's single selector or page's check-points) by the
- * matcher's own timeoutMs -- a stale or missing selector's page.$eval has no timeout of
- * its own and can otherwise hang past the matcher's configured timeout, delaying score
- * and image attachment. Style issues are always best-effort (see captureStyleIssues), so
- * a timeout here degrades to no issues rather than failing the match.
+ * Bounds one style comparison (region's single selector, or one page check-point --
+ * see captureCheckPointStyleIssues, which calls this per check-point rather than once
+ * for the whole batch, so a timeout on one check-point can't erase every other
+ * check-point's diagnostics) by the matcher's own timeoutMs -- a stale or missing
+ * selector's page.$eval has no timeout of its own and can otherwise hang past the
+ * matcher's configured timeout, delaying score and image attachment. A timeout here
+ * reports the same non-blocking style-check-error diagnostic as captureStyleIssues'
+ * own catch above -- see it for why an empty result isn't safe.
  */
 async function withStyleCheckTimeout(
   work: Promise<TopIssue[]>,
@@ -59,8 +80,8 @@ async function withStyleCheckTimeout(
 ): Promise<TopIssue[]> {
   try {
     return await withTimeout(work, timeoutMs, "toMatchFigma style check");
-  } catch {
-    return [];
+  } catch (error) {
+    return [styleCheckErrorIssue(error instanceof Error ? error.message : String(error))];
   }
 }
 
@@ -71,12 +92,16 @@ async function withStyleCheckTimeout(
  * check-point whose `expectStyle` never baked at authoring time is skipped rather
  * than compared against nothing. Every resulting issue is tagged with the
  * check-point's own selector so multiple check-points stay distinguishable in
- * `topIssues` (see TopIssue.selector).
+ * `topIssues` (see TopIssue.selector). The timeout is applied per check-point
+ * (not once for the whole batch) so one slow/stale selector's timeout diagnostic
+ * doesn't have to share a single deadline that could also starve its siblings --
+ * and so its own diagnostic still gets tagged with its own selector below.
  */
 async function captureCheckPointStyleIssues(
   page: Page,
   checkPoints: StyleCheckPoint[],
   styleToleranceOverrides: StyleToleranceOverrides | undefined,
+  timeoutMs: number,
 ): Promise<TopIssue[]> {
   const perCheckPoint = await Promise.all(
     checkPoints
@@ -88,11 +113,14 @@ async function captureCheckPointStyleIssues(
         } => checkPoint.expectStyle !== undefined,
       )
       .map(async (checkPoint) => {
-        const issues = await captureStyleIssues(
-          page,
-          checkPoint.selector,
-          expectStyleToSnapshot(checkPoint.expectStyle),
-          styleToleranceOverrides,
+        const issues = await withStyleCheckTimeout(
+          captureStyleIssues(
+            page,
+            checkPoint.selector,
+            expectStyleToSnapshot(checkPoint.expectStyle),
+            styleToleranceOverrides,
+          ),
+          timeoutMs,
         );
         return issues.map((issue) => Object.assign({}, issue, { selector: checkPoint.selector }));
       }),
@@ -242,12 +270,10 @@ export async function runToMatchFigma(
           )
         : []
       : options.styleChecks
-        ? await withStyleCheckTimeout(
-            captureCheckPointStyleIssues(
-              received,
-              options.styleChecks,
-              options.styleToleranceOverrides,
-            ),
+        ? await captureCheckPointStyleIssues(
+            received,
+            options.styleChecks,
+            options.styleToleranceOverrides,
             styleCheckTimeoutMs,
           )
         : [];

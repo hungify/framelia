@@ -30,16 +30,21 @@ export interface StyleMismatchGroup {
 }
 
 /**
- * Style-comparison topIssues (color/typography), grouped by their originating check-point
- * selector so a page-scope contract's multiple check-points render as distinct sections
- * instead of one undifferentiated list. A region-scope contract's single implicit origin
- * has no selector tag, so it collapses to one unlabeled group -- unchanged from today.
+ * Style-comparison topIssues (color/typography mismatches, plus style-check-error
+ * diagnostics for a check that couldn't run at all), grouped by their originating
+ * check-point selector so a page-scope contract's multiple check-points render as
+ * distinct sections instead of one undifferentiated list. A region-scope contract's
+ * single implicit origin has no selector tag, so it collapses to one unlabeled group
+ * -- unchanged from today.
  */
 export function groupStyleMismatches(
   topIssues: DashboardTopIssue[] | undefined,
 ): StyleMismatchGroup[] {
   const styleIssues = (topIssues ?? []).filter(
-    (issue) => issue.kind === "style-color" || issue.kind === "style-typography",
+    (issue) =>
+      issue.kind === "style-color" ||
+      issue.kind === "style-typography" ||
+      issue.kind === "style-check-error",
   );
   const groups = new Map<string | null, DashboardTopIssue[]>();
   for (const issue of styleIssues) {

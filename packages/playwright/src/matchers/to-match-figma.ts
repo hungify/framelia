@@ -1,4 +1,4 @@
-import type { VisualMask } from "@framelia/contracts";
+import type { StyleCheckPoint, VisualMask } from "@framelia/contracts";
 import type {
   ExpectSize,
   StyleSnapshot,
@@ -6,7 +6,12 @@ import type {
   ProfileOverrides,
   StyleToleranceOverrides,
 } from "@framelia/verify";
-import { compare, compareStyles, FigmaBaselineProvider } from "@framelia/verify";
+import {
+  compare,
+  compareStyles,
+  expectStyleToSnapshot,
+  FigmaBaselineProvider,
+} from "@framelia/verify";
 import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
 import { test } from "@playwright/test";
 
@@ -41,6 +46,60 @@ async function captureStyleIssues(
   }
 }
 
+/**
+ * Bounds any style comparison (region's single selector or page's check-points) by the
+ * matcher's own timeoutMs -- a stale or missing selector's page.$eval has no timeout of
+ * its own and can otherwise hang past the matcher's configured timeout, delaying score
+ * and image attachment. Style issues are always best-effort (see captureStyleIssues), so
+ * a timeout here degrades to no issues rather than failing the match.
+ */
+async function withStyleCheckTimeout(
+  work: Promise<TopIssue[]>,
+  timeoutMs: number,
+): Promise<TopIssue[]> {
+  try {
+    return await withTimeout(work, timeoutMs, "toMatchFigma style check");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Page-scope equivalent of the region-scope bake-in above: one style comparison per
+ * declared check-point, each against its own baked `expectStyle` (there's no live
+ * per-checkpoint Figma baseline to re-fetch at verify time -- see #26/#27). A
+ * check-point whose `expectStyle` never baked at authoring time is skipped rather
+ * than compared against nothing. Every resulting issue is tagged with the
+ * check-point's own selector so multiple check-points stay distinguishable in
+ * `topIssues` (see TopIssue.selector).
+ */
+async function captureCheckPointStyleIssues(
+  page: Page,
+  checkPoints: StyleCheckPoint[],
+  styleToleranceOverrides: StyleToleranceOverrides | undefined,
+): Promise<TopIssue[]> {
+  const perCheckPoint = await Promise.all(
+    checkPoints
+      .filter(
+        (
+          checkPoint,
+        ): checkPoint is StyleCheckPoint & {
+          expectStyle: NonNullable<StyleCheckPoint["expectStyle"]>;
+        } => checkPoint.expectStyle !== undefined,
+      )
+      .map(async (checkPoint) => {
+        const issues = await captureStyleIssues(
+          page,
+          checkPoint.selector,
+          expectStyleToSnapshot(checkPoint.expectStyle),
+          styleToleranceOverrides,
+        );
+        return issues.map((issue) => Object.assign({}, issue, { selector: checkPoint.selector }));
+      }),
+  );
+  return perCheckPoint.flat();
+}
+
 export interface ToMatchFigmaOptions {
   /** Figma file key. Falls back to FRAMELIA_FIGMA_FILE_KEY when omitted. */
   fileKey?: string;
@@ -55,6 +114,9 @@ export interface ToMatchFigmaOptions {
   profileOverrides?: ProfileOverrides;
   /** Explicit per-contract style-comparison tolerance overrides, merged on top of compareStyles()'s own defaults. */
   styleToleranceOverrides?: StyleToleranceOverrides;
+  /** Page-scope only: one style comparison per declared check-point, each against its own
+   *  baked `expectStyle` (see #26). Ignored when `selector` is set (region scope). */
+  styleChecks?: StyleCheckPoint[];
   /** Explicit override of whether this contract's resolved threshold blocks the CI merge
    *  gate; unset falls back to the resolved profile's own gateEligible default. */
   gateEligible?: boolean;
@@ -101,6 +163,7 @@ export async function runToMatchFigma(
     options.profile,
     Boolean(options.selector),
   );
+  const startedAt = Date.now();
 
   try {
     const [baselineOutcome, captureOutcome] = await withTimeout(
@@ -151,16 +214,41 @@ export async function runToMatchFigma(
       maskBounds: captureOutcome.maskEvidence?.bounds,
     });
 
-    // Component-scope only (selector set) -- style comparison needs a single
-    // element to capture computed style from, and only applies when the Figma
-    // baseline fetch was fresh enough to have extracted one (see ResolvedBaseline).
-    const styleIssues =
-      options.selector && baselineOutcome.baseline.figmaStyle
-        ? await captureStyleIssues(
-            received,
-            options.selector,
-            baselineOutcome.baseline.figmaStyle,
-            options.styleToleranceOverrides,
+    // Region scope (selector set) -- style comparison needs a single element to
+    // capture computed style from, and only applies when the Figma baseline fetch
+    // was fresh enough to have extracted one (see ResolvedBaseline). Page scope
+    // (no selector) instead runs one comparison per declared check-point, each
+    // against its own baked expectStyle rather than the page's own Figma baseline
+    // (see #27) -- gated on `!options.selector` so a region call whose baseline
+    // fetch didn't yield a figmaStyle can never fall through into check-point
+    // diagnostics that don't belong to it.
+    //
+    // Bounded by what's left of timeoutMs after the baseline+capture race above,
+    // not a fresh timeoutMs window -- reusing the full budget here would let the
+    // matcher run up to 2x its configured timeout before returning, which could
+    // blow past Playwright's own enforced test/expect timeout instead of failing
+    // gracefully with our own message (see review on #32).
+    const styleCheckTimeoutMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
+    const styleIssues = options.selector
+      ? baselineOutcome.baseline.figmaStyle
+        ? await withStyleCheckTimeout(
+            captureStyleIssues(
+              received,
+              options.selector,
+              baselineOutcome.baseline.figmaStyle,
+              options.styleToleranceOverrides,
+            ),
+            styleCheckTimeoutMs,
+          )
+        : []
+      : options.styleChecks
+        ? await withStyleCheckTimeout(
+            captureCheckPointStyleIssues(
+              received,
+              options.styleChecks,
+              options.styleToleranceOverrides,
+            ),
+            styleCheckTimeoutMs,
           )
         : [];
     // Style mismatches are informational-only (TopIssue.blocking: false) and

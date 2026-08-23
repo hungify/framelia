@@ -238,7 +238,10 @@ const resolvedThresholdTooltip = computed(() => {
         <span class="block text-muted text-xs"
           >Style mismatches vs. Figma — informational, not blocking</span
         >
-        <template v-for="group in styleMismatchGroups" :key="group.selector ?? 'unscoped'">
+        <template
+          v-for="group in styleMismatchGroups"
+          :key="group.selector !== null ? `selector:${group.selector}` : 'unscoped'"
+        >
           <code
             v-if="group.selector"
             class="block mt-1.5 text-amber text-xs font-mono"

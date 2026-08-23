@@ -1,7 +1,7 @@
-import type { DashboardContractResult } from "@framelia/contracts";
+import type { DashboardContractResult, DashboardTopIssue } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
-import { hasEvidenceNotes } from "../lib/contract-evidence";
+import { groupStyleMismatches, hasEvidenceNotes } from "../lib/contract-evidence";
 
 type EvidenceInput = Pick<
   DashboardContractResult,
@@ -55,5 +55,46 @@ describe("hasEvidenceNotes", () => {
 
   it("is true when only evidenceHash is present", () => {
     expect(hasEvidenceNotes({ ...empty, evidenceHash: "abc123" })).toBe(true);
+  });
+});
+
+function styleIssue(overrides: Partial<DashboardTopIssue> = {}): DashboardTopIssue {
+  return {
+    severity: "low",
+    kind: "style-color",
+    message: "style mismatch on color: expected #000000ff, actual #111111ff",
+    repairCandidate: true,
+    blocking: false,
+    ...overrides,
+  };
+}
+
+describe("groupStyleMismatches", () => {
+  it("returns no groups when there are no style issues (unchanged: renders no section)", () => {
+    expect(groupStyleMismatches(undefined)).toEqual([]);
+    expect(groupStyleMismatches([])).toEqual([]);
+  });
+
+  it("ignores non-style topIssues", () => {
+    const issues: DashboardTopIssue[] = [
+      { severity: "high", kind: "pixel", message: "pixel mismatch", repairCandidate: false, blocking: true },
+    ];
+    expect(groupStyleMismatches(issues)).toEqual([]);
+  });
+
+  it("collapses a region-scope contract's selector-less issues into one unlabeled group", () => {
+    const issues = [styleIssue(), styleIssue({ kind: "style-typography" })];
+    expect(groupStyleMismatches(issues)).toEqual([{ selector: null, issues }]);
+  });
+
+  it("groups a page-scope contract's issues into distinct groups by check-point selector", () => {
+    const headerIssue = styleIssue({ selector: "header" });
+    const heroIssue = styleIssue({ kind: "style-typography", selector: ".hero" });
+    const secondHeaderIssue = styleIssue({ message: "another color mismatch", selector: "header" });
+
+    expect(groupStyleMismatches([headerIssue, heroIssue, secondHeaderIssue])).toEqual([
+      { selector: "header", issues: [headerIssue, secondHeaderIssue] },
+      { selector: ".hero", issues: [heroIssue] },
+    ]);
   });
 });

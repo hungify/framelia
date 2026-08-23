@@ -2,7 +2,7 @@
 import type { DashboardContractResult } from "@framelia/contracts";
 import { computed } from "vue";
 
-import { hasEvidenceNotes } from "../lib/contract-evidence";
+import { groupStyleMismatches, hasEvidenceNotes } from "../lib/contract-evidence";
 import { formatRatio } from "../lib/format";
 import StatusBadge from "./StatusBadge.vue";
 
@@ -43,12 +43,7 @@ const fontStatusLabel = computed(() => {
   return fonts.failed.length ? `${label} · ${fonts.failed.join(", ")}` : label;
 });
 
-const styleMismatches = computed(
-  () =>
-    props.contract.topIssues?.filter(
-      (issue) => issue.kind === "style-color" || issue.kind === "style-typography",
-    ) ?? [],
-);
+const styleMismatchGroups = computed(() => groupStyleMismatches(props.contract.topIssues));
 
 const actionsSummary = computed(() => {
   const actions = props.contract.captureEvidence?.actions ?? [];
@@ -210,7 +205,7 @@ const resolvedThresholdTooltip = computed(() => {
       </div>
     </div>
     <div
-      v-if="hasEvidenceNotes(contract) || styleMismatches.length"
+      v-if="hasEvidenceNotes(contract) || styleMismatchGroups.length"
       class="flex flex-col gap-2.5 mx-3.5 mt-1 pt-3 border-t border-line-soft"
     >
       <div v-if="contract.blockers.length" class="min-w-0">
@@ -239,20 +234,28 @@ const resolvedThresholdTooltip = computed(() => {
           </li>
         </ul>
       </div>
-      <div v-if="styleMismatches.length" class="min-w-0">
+      <div v-if="styleMismatchGroups.length" class="min-w-0" data-testid="style-mismatches">
         <span class="block text-muted text-xs"
           >Style mismatches vs. Figma — informational, not blocking</span
         >
-        <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
-          <li
-            v-for="(issue, index) in styleMismatches"
-            :key="`${issue.kind}-${index}`"
-            class="min-w-0 text-xs leading-snug"
+        <template v-for="group in styleMismatchGroups" :key="group.selector ?? 'unscoped'">
+          <code
+            v-if="group.selector"
+            class="block mt-1.5 text-amber text-xs font-mono"
+            data-testid="style-mismatch-group-selector"
+            >{{ group.selector }}</code
           >
-            <code class="text-amber text-xs">{{ issue.kind }}</code>
-            <span class="text-text-soft"> — {{ issue.message }}</span>
-          </li>
-        </ul>
+          <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
+            <li
+              v-for="(issue, index) in group.issues"
+              :key="`${issue.kind}-${index}`"
+              class="min-w-0 text-xs leading-snug"
+            >
+              <code class="text-amber text-xs">{{ issue.kind }}</code>
+              <span class="text-text-soft"> — {{ issue.message }}</span>
+            </li>
+          </ul>
+        </template>
       </div>
       <div v-if="contract.maskEvidence" class="min-w-0">
         <span class="block text-muted text-xs"

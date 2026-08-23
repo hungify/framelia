@@ -14,7 +14,9 @@ describe("compareStyles", () => {
       color: "#e5e5e5ff",
       fontSize: 16,
       fontWeight: 700,
-      cornerRadius: 8,
+      lineHeightPx: 24,
+      letterSpacingPx: 0.5,
+      cornerRadius: { topLeft: 8, topRight: 8, bottomRight: 8, bottomLeft: 8 },
       spacing: { top: 8, right: 16, bottom: 8, left: 16 },
     };
 
@@ -69,10 +71,63 @@ describe("compareStyles", () => {
     expect(issues[0]?.message).toContain("fontWeight");
   });
 
-  it("flags a cornerRadius mismatch", () => {
-    const issues = compareStyles({ cornerRadius: 8 }, { cornerRadius: 4 });
+  it("flags a mismatched corner independently, tagged with its own corner name", () => {
+    const issues = compareStyles(
+      { cornerRadius: { topLeft: 8, topRight: 8, bottomRight: 8, bottomLeft: 8 } },
+      { cornerRadius: { topLeft: 4, topRight: 8, bottomRight: 8, bottomLeft: 8 } },
+    );
 
-    expect(issues[0]?.message).toContain("cornerRadius");
+    expect(issues).toEqual([
+      expect.objectContaining({
+        kind: "style-typography",
+        message: expect.stringContaining("cornerRadius.topLeft"),
+      }),
+    ]);
+  });
+
+  it("flags every mismatched corner independently, not just the first", () => {
+    const issues = compareStyles(
+      { cornerRadius: { topLeft: 8, topRight: 8, bottomRight: 8, bottomLeft: 8 } },
+      { cornerRadius: { topLeft: 4, topRight: 8, bottomRight: 2, bottomLeft: 8 } },
+    );
+
+    expect(issues.map((issue) => issue.message)).toEqual([
+      expect.stringContaining("cornerRadius.topLeft"),
+      expect.stringContaining("cornerRadius.bottomRight"),
+    ]);
+  });
+
+  it("does not compare cornerRadius at all when only one side has it", () => {
+    const issues = compareStyles(
+      { cornerRadius: { topLeft: 8, topRight: 8, bottomRight: 8, bottomLeft: 8 } },
+      {},
+    );
+
+    expect(issues).toEqual([]);
+  });
+
+  it("flags a lineHeightPx mismatch as a non-blocking style-typography issue", () => {
+    const issues = compareStyles({ lineHeightPx: 24 }, { lineHeightPx: 18 });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        kind: "style-typography",
+        blocking: false,
+        message: expect.stringContaining("lineHeightPx"),
+      }),
+    ]);
+  });
+
+  it("flags a letterSpacingPx mismatch as a non-blocking style-typography issue", () => {
+    const issues = compareStyles({ letterSpacingPx: 0 }, { letterSpacingPx: 2 });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        kind: "style-typography",
+        blocking: false,
+        message: expect.stringContaining("letterSpacingPx"),
+      }),
+    ]);
   });
 
   it("flags each mismatched spacing side independently", () => {
@@ -142,6 +197,18 @@ describe("compareStyles", () => {
       expect(issues).toEqual([]);
     });
 
+    it("does not flag a lineHeightPx within the default numeric tolerance", () => {
+      const issues = compareStyles({ lineHeightPx: 24 }, { lineHeightPx: 24.5 });
+
+      expect(issues).toEqual([]);
+    });
+
+    it("does not flag a letterSpacingPx within the default numeric tolerance", () => {
+      const issues = compareStyles({ letterSpacingPx: 0.5 }, { letterSpacingPx: 0.55 });
+
+      expect(issues).toEqual([]);
+    });
+
     it("applies a widened maxColorDeltaE override to pass a color that would otherwise flag", () => {
       const issues = compareStyles(
         { color: "#ffffffff" },
@@ -168,6 +235,26 @@ describe("compareStyles", () => {
       expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
     });
 
+    it("applies a tightened maxLineHeightDeltaPx override to flag a lineHeightPx that would otherwise pass", () => {
+      const issues = compareStyles(
+        { lineHeightPx: 24 },
+        { lineHeightPx: 24.5 },
+        { maxLineHeightDeltaPx: 0 },
+      );
+
+      expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
+    });
+
+    it("applies a tightened maxLetterSpacingDeltaPx override to flag a letterSpacingPx that would otherwise pass", () => {
+      const issues = compareStyles(
+        { letterSpacingPx: 0.5 },
+        { letterSpacingPx: 0.55 },
+        { maxLetterSpacingDeltaPx: 0 },
+      );
+
+      expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
+    });
+
     it("leaves unspecified override fields at their default tolerance", () => {
       const issues = compareStyles({ fontSize: 16 }, { fontSize: 16.2 }, { maxColorDeltaE: 1000 });
 
@@ -182,6 +269,8 @@ describe("styleToleranceOverridesSchema", () => {
       maxColorDeltaE: 5,
       maxSpacingDeltaPx: 2,
       maxFontSizeDeltaPx: 1,
+      maxLineHeightDeltaPx: 1,
+      maxLetterSpacingDeltaPx: 0.1,
     });
 
     expect(result.success).toBe(true);

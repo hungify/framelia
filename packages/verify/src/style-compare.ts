@@ -1,6 +1,8 @@
 import { hexColorDeltaE } from "./compare/delta-e.ts";
 import {
   FONT_SIZE_TOLERANCE_PX,
+  LETTER_SPACING_TOLERANCE_PX,
+  LINE_HEIGHT_TOLERANCE_PX,
   STYLE_COLOR_DELTA_E_TOLERANCE,
   STYLE_SPACING_TOLERANCE_PX,
 } from "./constants.ts";
@@ -8,17 +10,22 @@ import type { StyleSnapshot } from "./figma-node-style.ts";
 import type { StyleToleranceOverrides, TopIssue, TopIssueKind } from "./types.ts";
 
 const SPACING_SIDES = ["top", "right", "bottom", "left"] as const;
+const CORNERS = ["topLeft", "topRight", "bottomRight", "bottomLeft"] as const;
 
 interface StyleTolerance {
   maxColorDeltaE: number;
   maxSpacingDeltaPx: number;
   maxFontSizeDeltaPx: number;
+  maxLineHeightDeltaPx: number;
+  maxLetterSpacingDeltaPx: number;
 }
 
 const DEFAULT_STYLE_TOLERANCE: StyleTolerance = {
   maxColorDeltaE: STYLE_COLOR_DELTA_E_TOLERANCE,
   maxSpacingDeltaPx: STYLE_SPACING_TOLERANCE_PX,
   maxFontSizeDeltaPx: FONT_SIZE_TOLERANCE_PX,
+  maxLineHeightDeltaPx: LINE_HEIGHT_TOLERANCE_PX,
+  maxLetterSpacingDeltaPx: LETTER_SPACING_TOLERANCE_PX,
 };
 
 /**
@@ -77,13 +84,34 @@ export function compareStyles(
     actual.fontWeight,
     "style-typography",
   );
-  pushIfExactMismatch(
+  pushIfNumericMismatch(
     issues,
-    "cornerRadius",
-    expected.cornerRadius,
-    actual.cornerRadius,
+    "lineHeightPx",
+    expected.lineHeightPx,
+    actual.lineHeightPx,
+    tolerance.maxLineHeightDeltaPx,
     "style-typography",
   );
+  pushIfNumericMismatch(
+    issues,
+    "letterSpacingPx",
+    expected.letterSpacingPx,
+    actual.letterSpacingPx,
+    tolerance.maxLetterSpacingDeltaPx,
+    "style-typography",
+  );
+
+  if (expected.cornerRadius && actual.cornerRadius) {
+    for (const corner of CORNERS) {
+      pushIfExactMismatch(
+        issues,
+        `cornerRadius.${corner}`,
+        expected.cornerRadius[corner],
+        actual.cornerRadius[corner],
+        "style-typography",
+      );
+    }
+  }
 
   if (expected.spacing && actual.spacing) {
     for (const side of SPACING_SIDES) {

@@ -98,12 +98,39 @@ describe("extractFigmaStyle", () => {
     expect(snapshot.fontWeight).toBe(700);
   });
 
-  it("extracts a uniform cornerRadius", () => {
+  it("expands a uniform cornerRadius to all four corners", () => {
     const node = frameNode({ cornerRadius: 8 });
 
     const snapshot = extractFigmaStyle(node);
 
-    expect(snapshot.cornerRadius).toBe(8);
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 8,
+      topRight: 8,
+      bottomRight: 8,
+      bottomLeft: 8,
+    });
+  });
+
+  it("prefers per-corner rectangleCornerRadii over a uniform cornerRadius when both are present", () => {
+    const node = frameNode({ cornerRadius: 8, rectangleCornerRadii: [8, 4, 8, 2] });
+
+    const snapshot = extractFigmaStyle(node);
+
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 8,
+      topRight: 4,
+      bottomRight: 8,
+      bottomLeft: 2,
+    });
+  });
+
+  it("extracts lineHeightPx and letterSpacing from a TEXT node's style", () => {
+    const node = textNode({ style: { lineHeightPx: 24, letterSpacing: 0.5 } });
+
+    const snapshot = extractFigmaStyle(node);
+
+    expect(snapshot.lineHeightPx).toBe(24);
+    expect(snapshot.letterSpacingPx).toBe(0.5);
   });
 
   it("still returns the resolved literal color when the fill is bound to a Figma variable", () => {
@@ -154,7 +181,10 @@ describe("extractFigmaStyle", () => {
 
     const snapshot = extractFigmaStyle(node);
 
-    expect(snapshot).toEqual({ backgroundColor: "#e5e5e5ff", cornerRadius: 4 });
+    expect(snapshot).toEqual({
+      backgroundColor: "#e5e5e5ff",
+      cornerRadius: { topLeft: 4, topRight: 4, bottomRight: 4, bottomLeft: 4 },
+    });
     expect(snapshot.spacing).toBeUndefined();
     expect(snapshot.fontSize).toBeUndefined();
     expect(snapshot.fontWeight).toBeUndefined();
@@ -220,7 +250,16 @@ describe("expectStyleToSnapshot", () => {
     expect(expectStyleToSnapshot(expectStyle)).toEqual({
       fontWeight: 600,
       fontSize: 20,
+      lineHeightPx: 24,
+      letterSpacingPx: 0.5,
       backgroundColor: "#e5e5e5ff",
+    });
+  });
+
+  it("maps lineHeightPx and letterSpacingPx straight through", () => {
+    expect(expectStyleToSnapshot({ lineHeightPx: 24, letterSpacingPx: 0.5 })).toEqual({
+      lineHeightPx: 24,
+      letterSpacingPx: 0.5,
     });
   });
 });

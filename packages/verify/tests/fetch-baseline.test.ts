@@ -104,7 +104,10 @@ describe("fetchBaseline figmaStyle", () => {
     expect(result).toMatchObject({
       ok: true,
       fetched: true,
-      figmaStyle: { cornerRadius: 8, backgroundColor: "#000000ff" },
+      figmaStyle: {
+        cornerRadius: { topLeft: 8, topRight: 8, bottomRight: 8, bottomLeft: 8 },
+        backgroundColor: "#000000ff",
+      },
     });
   });
 

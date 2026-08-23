@@ -1,7 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { GetFileNodesResponse, GetImagesResponse } from "@figma/rest-api-spec";
+import type {
+  GetFileNodesResponse,
+  GetImagesResponse,
+  GetLocalVariablesResponse,
+} from "@figma/rest-api-spec";
 
 import { FIGMA_BASELINE_ARTIFACT } from "./artifacts.ts";
 import { compositeOnCanvas, parsePng, writePng } from "./compare/png.ts";
@@ -16,8 +20,8 @@ import {
   MS_PER_SECOND,
 } from "./constants.ts";
 import { resolveToken } from "./figma-api.ts";
-import { extractFigmaStyle } from "./figma-node-style.ts";
-import type { StyleSnapshot } from "./figma-node-style.ts";
+import { boundColorVariableId, extractFigmaStyle } from "./figma-node-style.ts";
+import type { FigmaVariablesData, StyleSnapshot } from "./figma-node-style.ts";
 
 export interface FetchBaselineOptions {
   fileKey: string;
@@ -168,9 +172,34 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
         message: `nodeId not found in file; Figma returned no node for "${options.nodeId}" (not an auth problem).`,
       };
     }
+    // Only pay for the (Enterprise-plan-gated) variables/local call when the node's fill is
+    // actually bound to a variable -- the common case never touches this endpoint.
+    const variableId = nodeEntry.document ? boundColorVariableId(nodeEntry.document) : undefined;
+    let variablesData: FigmaVariablesData | undefined;
+    if (variableId) {
+      const varsRes = await call(
+        `/v1/files/${encodeURIComponent(options.fileKey)}/variables/local`,
+      );
+      if (varsRes.ok) {
+        const varsJson = (await varsRes.json()) as GetLocalVariablesResponse;
+        variablesData = {
+          variables: varsJson.meta.variables,
+          variableCollections: varsJson.meta.variableCollections,
+        };
+      } else {
+        // Non-fatal: the style snapshot falls back to the fill's literal color, same as
+        // when a node has no bound variable at all.
+        warnings.push(
+          `could not resolve bound color variable (Figma Variables API returned HTTP ${varsRes.status}); using the fill's literal color instead.`,
+        );
+      }
+    }
+
     // Real Figma responses always carry a document; test doubles and edge-case
     // responses may not -- never let a missing document throw inside extraction.
-    const figmaStyle = nodeEntry.document ? extractFigmaStyle(nodeEntry.document) : {};
+    const figmaStyle = nodeEntry.document
+      ? extractFigmaStyle(nodeEntry.document, variablesData)
+      : {};
 
     const useAbsoluteBounds = options.useAbsoluteBounds ?? true;
     const imgRes = await call(

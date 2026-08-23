@@ -1,6 +1,13 @@
 import type { Node, SolidPaint } from "@figma/rest-api-spec";
 import type { ExpectStyle } from "@framelia/contracts";
 
+export interface CornerRadius {
+  topLeft: number;
+  topRight: number;
+  bottomRight: number;
+  bottomLeft: number;
+}
+
 export interface StyleSnapshot {
   /** Text/foreground paint. Only meaningful for TEXT nodes on the Figma side. */
   color?: string;
@@ -9,7 +16,9 @@ export interface StyleSnapshot {
   spacing?: { top: number; right: number; bottom: number; left: number };
   fontSize?: number;
   fontWeight?: number;
-  cornerRadius?: number;
+  lineHeightPx?: number;
+  letterSpacingPx?: number;
+  cornerRadius?: CornerRadius;
 }
 
 export function extractFigmaStyle(node: Node): StyleSnapshot {
@@ -30,28 +39,56 @@ export function extractFigmaStyle(node: Node): StyleSnapshot {
   if (node.type === "TEXT") {
     if (node.style.fontSize !== undefined) snapshot.fontSize = node.style.fontSize;
     if (node.style.fontWeight !== undefined) snapshot.fontWeight = node.style.fontWeight;
+    if (node.style.lineHeightPx !== undefined) snapshot.lineHeightPx = node.style.lineHeightPx;
+    if (node.style.letterSpacing !== undefined) snapshot.letterSpacingPx = node.style.letterSpacing;
   }
 
-  if ("cornerRadius" in node && node.cornerRadius !== undefined) {
-    snapshot.cornerRadius = node.cornerRadius;
-  }
+  const cornerRadius = extractCornerRadius(node);
+  if (cornerRadius !== undefined) snapshot.cornerRadius = cornerRadius;
 
   return snapshot;
+}
+
+/**
+ * `rectangleCornerRadii` (per-corner, top-left/top-right/bottom-right/bottom-left) takes
+ * priority when present -- a uniform `cornerRadius` is only a fallback, and expanding it to
+ * all four corners keeps the DOM-side comparison in style-compare.ts uniform regardless of
+ * which form the node used.
+ */
+function extractCornerRadius(node: Node): CornerRadius | undefined {
+  if ("rectangleCornerRadii" in node && Array.isArray(node.rectangleCornerRadii)) {
+    const [topLeft, topRight, bottomRight, bottomLeft] = node.rectangleCornerRadii;
+    if (
+      topLeft !== undefined &&
+      topRight !== undefined &&
+      bottomRight !== undefined &&
+      bottomLeft !== undefined
+    ) {
+      return { topLeft, topRight, bottomRight, bottomLeft };
+    }
+  }
+  if ("cornerRadius" in node && node.cornerRadius !== undefined) {
+    const radius = node.cornerRadius;
+    return { topLeft: radius, topRight: radius, bottomRight: radius, bottomLeft: radius };
+  }
+  return undefined;
 }
 
 /**
  * Bridges a contract's baked `ExpectStyle` (RGB 0-255 channels + separate 0-1 alpha,
  * `fontSizePx`) into the `StyleSnapshot` shape `compareStyles` consumes -- the two
  * schemas independently describe the same Figma-side style (see #6/#26), one for
- * contract authoring, one for runtime comparison. `lineHeightPx`/`letterSpacingPx`
- * have no `StyleSnapshot` counterpart and are dropped; `spacing`/`cornerRadius` are
- * never baked into `ExpectStyle` and stay undefined here too.
+ * contract authoring, one for runtime comparison. `spacing`/`cornerRadius` are never
+ * baked into `ExpectStyle` and stay undefined here too.
  */
 export function expectStyleToSnapshot(expectStyle: ExpectStyle): StyleSnapshot {
   const snapshot: StyleSnapshot = {};
 
   if (expectStyle.fontWeight !== undefined) snapshot.fontWeight = expectStyle.fontWeight;
   if (expectStyle.fontSizePx !== undefined) snapshot.fontSize = expectStyle.fontSizePx;
+  if (expectStyle.lineHeightPx !== undefined) snapshot.lineHeightPx = expectStyle.lineHeightPx;
+  if (expectStyle.letterSpacingPx !== undefined)
+    snapshot.letterSpacingPx = expectStyle.letterSpacingPx;
 
   // colorProperty says which DOM property the color belongs against; without it
   // there's no way to tell color from backgroundColor, so the color is dropped

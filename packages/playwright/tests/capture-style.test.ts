@@ -90,31 +90,149 @@ describe("captureElementStyle", () => {
     expect(snapshot.fontWeight).toBe(700);
   });
 
-  it("sets cornerRadius when all four corners are equal", async () => {
+  it("sets cornerRadius per-corner when all four corners are equal", async () => {
     const page = await context.newPage();
     await page.setContent(`<div id="target" style="border-radius:12px">x</div>`);
 
     const snapshot = await captureElementStyle(page, "#target");
 
-    expect(snapshot.cornerRadius).toBe(12);
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 12,
+      topRight: 12,
+      bottomRight: 12,
+      bottomLeft: 12,
+    });
   });
 
-  it("leaves cornerRadius undefined when corners differ", async () => {
+  it("reports each corner's own radius when corners differ, instead of dropping to undefined", async () => {
     const page = await context.newPage();
-    await page.setContent(`<div id="target" style="border-radius:12px 4px 12px 12px">x</div>`);
+    // CSS border-radius shorthand order: top-left, top-right, bottom-right, bottom-left.
+    await page.setContent(`<div id="target" style="border-radius:12px 4px 6px 2px">x</div>`);
 
     const snapshot = await captureElementStyle(page, "#target");
 
-    expect(snapshot.cornerRadius).toBeUndefined();
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 12,
+      topRight: 4,
+      bottomRight: 6,
+      bottomLeft: 2,
+    });
   });
 
-  it("leaves cornerRadius undefined when corners are elliptical (horizontal/vertical radii differ)", async () => {
+  it("reports an elliptical corner's horizontal radius (horizontal/vertical radii differ)", async () => {
     const page = await context.newPage();
     await page.setContent(`<div id="target" style="border-radius:12px / 8px">x</div>`);
 
     const snapshot = await captureElementStyle(page, "#target");
 
-    expect(snapshot.cornerRadius).toBeUndefined();
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 12,
+      topRight: 12,
+      bottomRight: 12,
+      bottomLeft: 12,
+    });
+  });
+
+  it("resolves a percentage border-radius against the element's border-box width, not the raw percentage number", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="width:200px;height:100px;border-radius:50%">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 100,
+      topRight: 100,
+      bottomRight: 100,
+      bottomLeft: 100,
+    });
+  });
+
+  it("resolves a percentage border-radius against the untransformed layout width, not the CSS-transformed rendered width", async () => {
+    const page = await context.newPage();
+    // getBoundingClientRect() would report 400px here (200px scaled 2x); the
+    // percentage must still resolve against the untransformed 200px layout width.
+    await page.setContent(
+      `<div id="target" style="width:200px;height:100px;border-radius:50%;transform:scaleX(2)">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 100,
+      topRight: 100,
+      bottomRight: 100,
+      bottomLeft: 100,
+    });
+  });
+
+  it("resolves an asymmetric percentage border-radius per corner", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="width:200px;height:100px;border-radius:50% 10% 50% 10%">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 100,
+      topRight: 20,
+      bottomRight: 100,
+      bottomLeft: 20,
+    });
+  });
+
+  it("resolves a percentage border-radius against a fractional border-box width without rounding it", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="width:200.5px;height:100px;border-radius:50%">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.cornerRadius).toEqual({
+      topLeft: 100.25,
+      topRight: 100.25,
+      bottomRight: 100.25,
+      bottomLeft: 100.25,
+    });
+  });
+
+  it("parses line-height into a number", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="line-height:24px;font-size:16px">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.lineHeightPx).toBe(24);
+  });
+
+  it("leaves lineHeightPx undefined for the 'normal' keyword (no fixed px value)", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="line-height:normal">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.lineHeightPx).toBeUndefined();
+  });
+
+  it("parses letter-spacing into a number", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="letter-spacing:0.5px">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.letterSpacingPx).toBe(0.5);
+  });
+
+  it("normalizes 'normal' letter-spacing to 0, not undefined", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="letter-spacing:normal">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.letterSpacingPx).toBe(0);
   });
 });
 

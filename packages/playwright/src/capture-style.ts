@@ -1,4 +1,4 @@
-import type { StyleSnapshot } from "@framelia/verify";
+import type { CornerRadius, StyleSnapshot } from "@framelia/verify";
 import type { Page } from "@playwright/test";
 
 interface RawComputedStyle {
@@ -10,10 +10,15 @@ interface RawComputedStyle {
   paddingLeft: string;
   fontSize: string;
   fontWeight: string;
+  lineHeight: string;
+  letterSpacing: string;
   borderTopLeftRadius: string;
   borderTopRightRadius: string;
   borderBottomRightRadius: string;
   borderBottomLeftRadius: string;
+  /** Untransformed layout border-box width a percentage-valued corner radius resolves
+   *  against -- see extractCornerRadius. */
+  borderBoxWidth: number;
 }
 
 function parsePx(value: string): number {
@@ -31,32 +36,45 @@ export function normalizeFontWeight(value: string): number | undefined {
   return FONT_WEIGHT_KEYWORDS[value.toLowerCase()];
 }
 
-// A single computed corner property can itself be elliptical (e.g.
-// "12px 8px" for horizontal/vertical radius), which parsePx's naive
-// "strip the first px" would silently collapse to just the horizontal
-// value — losing real shape information. Parse both axes explicitly.
-function parseCornerRadius(value: string): { horizontal: number; vertical: number } {
-  const [horizontalRaw, verticalRaw = horizontalRaw] = value.split(" ");
-  return { horizontal: parsePx(horizontalRaw ?? ""), vertical: parsePx(verticalRaw ?? "") };
+// getComputedStyle() reports a percentage border-radius as-authored (e.g. "50%"), not
+// resolved to px -- naively stripping "px" would silently treat the raw percentage
+// number as pixels. Percentages resolve against the border-box width (CSSOM), so the
+// caller passes that through from the browser context, where alone it's available. A
+// computed corner value can also itself be elliptical (e.g. "12px 8px" for
+// horizontal/vertical radius, space-separated); only the first (horizontal) component
+// maps to Figma's per-corner model, so that's the only one parsed.
+function parseCornerRadiusHorizontal(value: string, borderBoxWidth: number): number {
+  const horizontalRaw = value.split(" ")[0] ?? "";
+  if (horizontalRaw.endsWith("%")) {
+    return (Number.parseFloat(horizontalRaw) / 100) * borderBoxWidth;
+  }
+  return parsePx(horizontalRaw);
 }
 
-// The shared shape carries one scalar radius, so per-corner values only
-// collapse to a value when every corner is circular (horizontal === vertical)
-// and all four corners agree with each other — otherwise a single number
-// would misrepresent an asymmetric or elliptical shape.
-function normalizeCornerRadius(raw: RawComputedStyle): number | undefined {
-  const corners = [
-    raw.borderTopLeftRadius,
-    raw.borderTopRightRadius,
-    raw.borderBottomRightRadius,
-    raw.borderBottomLeftRadius,
-  ].map(parseCornerRadius);
-  const isCircular = corners.every((corner) => corner.horizontal === corner.vertical);
-  if (!isCircular) return undefined;
-  const [first, ...rest] = corners;
-  if (first === undefined || rest.some((corner) => corner.horizontal !== first.horizontal))
-    return undefined;
-  return first.horizontal;
+// Reports every corner independently, matching Figma's own rectangleCornerRadii model
+// (see figma-node-style.ts) — an asymmetric shape must never collapse to "undefined"
+// just because the corners disagree.
+function extractCornerRadius(raw: RawComputedStyle): CornerRadius {
+  return {
+    topLeft: parseCornerRadiusHorizontal(raw.borderTopLeftRadius, raw.borderBoxWidth),
+    topRight: parseCornerRadiusHorizontal(raw.borderTopRightRadius, raw.borderBoxWidth),
+    bottomRight: parseCornerRadiusHorizontal(raw.borderBottomRightRadius, raw.borderBoxWidth),
+    bottomLeft: parseCornerRadiusHorizontal(raw.borderBottomLeftRadius, raw.borderBoxWidth),
+  };
+}
+
+// "normal" letter-spacing means no adjustment — equivalent to a real 0 rather than an
+// absent value, so it doesn't fabricate a false "field only present on one side" skip
+// in compareStyles.
+function parseLetterSpacing(value: string): number {
+  return value === "normal" ? 0 : parsePx(value);
+}
+
+// "normal" line-height has no fixed px value without font metrics unlike letter-spacing's
+// 0 — fabricating a number here would risk a false mismatch against a real Figma value,
+// so it's left undefined and simply skipped by compareStyles like any other absent field.
+function parseLineHeight(value: string): number | undefined {
+  return value === "normal" ? undefined : parsePx(value);
 }
 
 function toHexChannel(value: number): string {
@@ -79,6 +97,15 @@ function normalizeColor(color: string): string | undefined {
 export async function captureElementStyle(page: Page, selector: string): Promise<StyleSnapshot> {
   const raw = await page.$eval(selector, (el): RawComputedStyle => {
     const style = getComputedStyle(el);
+    const contentWidth = Number.parseFloat(style.width);
+    const borderBoxWidth =
+      style.boxSizing === "border-box"
+        ? contentWidth
+        : contentWidth +
+          Number.parseFloat(style.paddingLeft) +
+          Number.parseFloat(style.paddingRight) +
+          Number.parseFloat(style.borderLeftWidth) +
+          Number.parseFloat(style.borderRightWidth);
     return {
       color: style.color,
       backgroundColor: style.backgroundColor,
@@ -88,10 +115,17 @@ export async function captureElementStyle(page: Page, selector: string): Promise
       paddingLeft: style.paddingLeft,
       fontSize: style.fontSize,
       fontWeight: style.fontWeight,
+      lineHeight: style.lineHeight,
+      letterSpacing: style.letterSpacing,
       borderTopLeftRadius: style.borderTopLeftRadius,
       borderTopRightRadius: style.borderTopRightRadius,
       borderBottomRightRadius: style.borderBottomRightRadius,
       borderBottomLeftRadius: style.borderBottomLeftRadius,
+      // Derived from getComputedStyle, not getBoundingClientRect().width/offsetWidth --
+      // the former reflects any CSS transform (e.g. scaleX) and the latter rounds to an
+      // integer, while a percentage border-radius resolves against the untransformed,
+      // fractional layout border-box width (CSS Backgrounds and Borders spec).
+      borderBoxWidth,
     };
   });
 
@@ -106,6 +140,8 @@ export async function captureElementStyle(page: Page, selector: string): Promise
     },
     fontSize: parsePx(raw.fontSize),
     fontWeight: normalizeFontWeight(raw.fontWeight),
-    cornerRadius: normalizeCornerRadius(raw),
+    lineHeightPx: parseLineHeight(raw.lineHeight),
+    letterSpacingPx: parseLetterSpacing(raw.letterSpacing),
+    cornerRadius: extractCornerRadius(raw),
   };
 }

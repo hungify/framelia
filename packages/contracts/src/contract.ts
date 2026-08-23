@@ -129,6 +129,10 @@ export const styleToleranceOverridesSchema = z
     maxSpacingDeltaPx: z.number().nonnegative().optional(),
     /** Pixel epsilon fontSize may differ by before flagging. */
     maxFontSizeDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon lineHeightPx may differ by before flagging. */
+    maxLineHeightDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon letterSpacingPx may differ by before flagging. */
+    maxLetterSpacingDeltaPx: z.number().nonnegative().optional(),
   })
   .strict();
 

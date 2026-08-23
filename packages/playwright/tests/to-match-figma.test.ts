@@ -447,6 +447,63 @@ describe("runToMatchFigma", () => {
     }
   });
 
+  it("reports a non-blocking style-check-error instead of silently skipping when region-scope style capture times out", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png, {
+      document: {
+        type: "FRAME",
+        fills: [
+          {
+            type: "SOLID",
+            visible: true,
+            color: { r: 100 / 255, g: 150 / 255, b: 200 / 255 },
+            opacity: 1,
+          },
+        ],
+      },
+    });
+    const app = await server(html);
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      // Never resolves -- the style check's own timeout races it out well before
+      // this test's own timeout would, leaving the rest of the matcher (baseline
+      // fetch + screenshot capture, neither of which calls $eval) unaffected.
+      vi.spyOn(page, "$eval").mockImplementation(() => new Promise(() => undefined));
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key", selector: "body" },
+        {
+          timeoutMs: 1500,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      const topIssues = (
+        attachJsonCalls[0]?.data as { topIssues?: Array<{ kind: string; blocking: boolean }> }
+      )?.topIssues;
+      expect(topIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "style-check-error", blocking: false }),
+        ]),
+      );
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("skips style comparison entirely in page scope (no selector)", async () => {
     const { html, png } = solidPagePng();
     stubFigmaFetch(png, {
@@ -602,6 +659,79 @@ describe("runToMatchFigma", () => {
             selector: "#missing",
             blocking: false,
           }),
+        ]),
+      );
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("tags a page-scope style-check-error with its own selector on timeout, without erasing a sibling check-point's real result", async () => {
+    const { html, png } = solidPagePng();
+    // #b sits off-canvas so its computed style, read via captureElementStyle,
+    // never perturbs the page-scope pixel comparison itself.
+    stubFigmaFetch(png);
+    const app = await server(
+      html.replace(
+        "</style>",
+        `#b{position:absolute;top:-9999px;left:-9999px;color:rgb(255,0,0)}</style><div id="b">b</div>`,
+      ),
+    );
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const real$eval = page.$eval.bind(page);
+      // Only #a's own capture hangs -- #b resolves through the real implementation,
+      // proving the timeout is scoped per check-point rather than shared across the batch.
+      vi.spyOn(page, "$eval").mockImplementation(((selector: string, ...rest: unknown[]) =>
+        selector === "#a"
+          ? new Promise(() => undefined)
+          : // @ts-expect-error -- forwarding the real $eval's variadic args through the mock.
+            real$eval(selector, ...rest)) as typeof page.$eval);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        {
+          fileKey: "file-key",
+          styleChecks: [
+            {
+              selector: "#a",
+              nodeId: "1:3",
+              expectStyle: { color: { r: 0, g: 0, b: 0, a: 1 }, colorProperty: "color" },
+            },
+            {
+              selector: "#b",
+              nodeId: "1:4",
+              expectStyle: { color: { r: 0, g: 0, b: 0, a: 1 }, colorProperty: "color" },
+            },
+          ],
+        },
+        {
+          timeoutMs: 1500,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(true);
+      const topIssues = (
+        attachJsonCalls[0]?.data as {
+          topIssues?: Array<{ kind: string; selector?: string; blocking: boolean }>;
+        }
+      )?.topIssues;
+      expect(topIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "style-check-error", selector: "#a", blocking: false }),
+          expect.objectContaining({ kind: "style-color", selector: "#b" }),
         ]),
       );
     } finally {

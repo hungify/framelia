@@ -24,6 +24,9 @@ export interface DoneGateViewport {
   /** Explicit override of gate eligibility; unset falls back to the resolved profile's own
    *  default -- see done-gate/validate.ts and profiles.ts's Profile.gateEligible. */
   gateEligible?: boolean;
+  /** Explicit override of style-gate eligibility; unset falls back to the resolved profile's
+   *  own default -- see done-gate/validate.ts and profiles.ts's Profile.styleGateEligible. */
+  styleGateEligible?: boolean;
 }
 
 export interface DoneGateOptions {

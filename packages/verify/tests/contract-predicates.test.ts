@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { sameGateEligible, sameProfileOverrides } from "../src/done-gate/contract-predicates.ts";
+import {
+  sameGateEligible,
+  sameProfileOverrides,
+  sameStyleGateEligible,
+} from "../src/done-gate/contract-predicates.ts";
 
 describe("sameProfileOverrides", () => {
   it("treats an explicit maxDiffPixels: null as matching an omitted override on the page profile", () => {
@@ -46,5 +50,19 @@ describe("sameGateEligible", () => {
     expect(sameGateEligible("component/strict", undefined, false)).toBe(false);
     expect(sameGateEligible("component/dev", undefined, true)).toBe(false);
     expect(sameGateEligible("component/strict", true, false)).toBe(false);
+  });
+});
+
+describe("sameStyleGateEligible", () => {
+  it("treats an explicit restatement of the profile's own default (false everywhere) as matching an omitted flag", () => {
+    expect(sameStyleGateEligible("page", undefined, false)).toBe(true);
+    expect(sameStyleGateEligible("page", false, undefined)).toBe(true);
+    expect(sameStyleGateEligible("component/strict", undefined, false)).toBe(true);
+  });
+
+  it("rejects a genuine difference from the profile's default", () => {
+    expect(sameStyleGateEligible("page", undefined, true)).toBe(false);
+    expect(sameStyleGateEligible("page", true, undefined)).toBe(false);
+    expect(sameStyleGateEligible("component/strict", true, false)).toBe(false);
   });
 });

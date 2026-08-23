@@ -84,6 +84,7 @@ export const ScoreFileSchema = z.looseObject({
   }),
   profileOverrides: profileOverridesSchema.optional(),
   gateEligible: z.boolean().optional(),
+  styleGateEligible: z.boolean().optional(),
   topIssues: z.array(TopIssueSchema).optional(),
   diagnostics: z
     .array(
@@ -113,6 +114,7 @@ export const RunMetaSchema = z.looseObject({
   maxMaskedAreaRatio: z.number().nullable().optional(),
   profileOverrides: profileOverridesSchema.optional(),
   gateEligible: z.boolean().optional(),
+  styleGateEligible: z.boolean().optional(),
   captureEvidence: CaptureEvidenceSchema.optional(),
   baselineCaptureEvidence: CaptureEvidenceSchema.optional(),
   viewportSize: z.strictObject({ width: z.number().positive(), height: z.number().positive() }),

@@ -23,6 +23,7 @@ import {
 import {
   FIGMA_BASELINE_ARTIFACT,
   resolveDisplayThreshold,
+  resolveStyleGateEligible,
   RUN_ARTIFACT,
   type ContractDefaults,
 } from "@framelia/verify";
@@ -245,6 +246,14 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
     }),
     ...(score ? { comparison: deriveComparisonSummary(score) } : {}),
     ...(score ? { resolvedThreshold: resolveDisplayThreshold(score) } : {}),
+    ...(score
+      ? {
+          styleGateEligible: resolveStyleGateEligible({
+            profile: score.profile,
+            styleGateEligible: score.styleGateEligible,
+          }),
+        }
+      : {}),
     ...(maskEvidence ? { maskEvidence } : {}),
     ...(projectedCaptureEvidence ? { captureEvidence: projectedCaptureEvidence } : {}),
     blockers: result.ok

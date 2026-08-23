@@ -25,8 +25,13 @@ export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";
 export { checkBaselineStaleness, DEFAULT_MAX_BASELINE_AGE_DAYS } from "./staleness.ts";
 export type { StalenessOptions } from "./staleness.ts";
-export { getProfile, PROFILES, resolveDisplayThreshold } from "./profiles.ts";
-export type { Profile, ThresholdOverrideSource } from "./profiles.ts";
+export {
+  getProfile,
+  PROFILES,
+  resolveDisplayThreshold,
+  resolveStyleGateEligible,
+} from "./profiles.ts";
+export type { Profile, ThresholdOverrideSource, StyleGateEligibleSource } from "./profiles.ts";
 export { doneGateFromArtifact, writeVerificationArtifact } from "./verify.ts";
 export { SCHEMA_VERSION, AppError } from "./types.ts";
 export { RUN_ARTIFACT, FIGMA_BASELINE_ARTIFACT, WEB_BASELINE_ARTIFACT } from "./artifacts.ts";

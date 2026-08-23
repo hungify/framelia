@@ -55,3 +55,14 @@ export function groupStyleMismatches(
   }
   return [...groups.entries()].map(([selector, issues]) => ({ selector, issues }));
 }
+
+/**
+ * The style-mismatch section's header text -- reflects whether this contract's resolved
+ * styleGateEligible (see @framelia/verify's resolveStyleGateEligible) actually blocks the CI
+ * merge gate on these mismatches, or leaves them purely informational (the default).
+ */
+export function styleMismatchGateLabel(styleGateEligible: boolean | undefined): string {
+  return styleGateEligible
+    ? "Style mismatches vs. Figma — blocking the CI merge gate"
+    : "Style mismatches vs. Figma — informational, not blocking";
+}

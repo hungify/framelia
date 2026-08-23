@@ -70,6 +70,9 @@ function scoreDir(
       ...("gateEligible" in runMetaOverrides
         ? { gateEligible: runMetaOverrides.gateEligible }
         : {}),
+      ...("styleGateEligible" in runMetaOverrides
+        ? { styleGateEligible: runMetaOverrides.styleGateEligible }
+        : {}),
     }),
   );
   fs.writeFileSync(
@@ -198,6 +201,69 @@ describe("done gate schema v4", () => {
     expect(gate(scoreDir(), figmaBaseline, notEligible).done).toBe(false);
     const eligible = { gateEligible: true };
     expect(gate(scoreDir(figmaBaseline, eligible), figmaBaseline, eligible).done).toBe(true);
+  });
+
+  it("leaves style mismatches informational-only when styleGateEligible is unset (issue #39 default)", () => {
+    // Default behavior (flag unset) must stay unchanged -- a style-color mismatch never
+    // blocked the gate before this feature, and must not start blocking implicitly.
+    expect(
+      gate(
+        scoreDir(figmaBaseline, {
+          topIssues: [{ kind: "style-color", severity: "low", message: "color mismatch" }],
+        }),
+      ).done,
+    ).toBe(true);
+  });
+
+  it("blocks the gate on a style mismatch once styleGateEligible is enabled (issue #39)", () => {
+    const eligible = { styleGateEligible: true };
+    const withMismatch = {
+      ...eligible,
+      topIssues: [{ kind: "style-color", severity: "low", message: "color mismatch" }],
+    };
+    const result = gate(scoreDir(figmaBaseline, withMismatch), figmaBaseline, eligible);
+    expect(result.done).toBe(false);
+    expect(result.viewports[0]?.reasons).toContain(
+      "blocking style mismatch remains (styleGateEligible).",
+    );
+    // Same evidence, gate disabled -- must still pass (opt-in, not a global behavior change).
+    expect(gate(scoreDir(figmaBaseline, { topIssues: withMismatch.topIssues })).done).toBe(true);
+  });
+
+  it("blocks the gate on a style-check-error capture failure once styleGateEligible is enabled (issue #39, depends on #35)", () => {
+    // A broken/unresolvable style check (see #35's style-check-error diagnostic) must count
+    // as blocking too, or an opt-in style gate could be silently defeated by a selector that
+    // never produces comparable data in the first place.
+    const eligible = { styleGateEligible: true };
+    const withCaptureFailure = {
+      ...eligible,
+      topIssues: [
+        { kind: "style-check-error", severity: "low", message: "style check could not run" },
+      ],
+    };
+    const result = gate(scoreDir(figmaBaseline, withCaptureFailure), figmaBaseline, eligible);
+    expect(result.done).toBe(false);
+    expect(result.viewports[0]?.reasons).toContain(
+      "blocking style mismatch remains (styleGateEligible).",
+    );
+  });
+
+  it("rejects evidence whose styleGateEligible flag diverges from the contract's", () => {
+    const notEligible = { styleGateEligible: false };
+    const eligible = { styleGateEligible: true };
+    expect(gate(scoreDir(figmaBaseline, eligible), figmaBaseline, notEligible).done).toBe(false);
+    expect(gate(scoreDir(figmaBaseline, notEligible), figmaBaseline, eligible).done).toBe(false);
+  });
+
+  it("rejects run-meta styleGateEligible that diverges from an otherwise-matching visual-score.json", () => {
+    const eligible = { styleGateEligible: true };
+    const divergedRunMeta = { styleGateEligible: false };
+    const dir = scoreDir(figmaBaseline, eligible, divergedRunMeta);
+    const result = gate(dir, figmaBaseline, eligible);
+    expect(result.done).toBe(false);
+    const reasons = result.viewports[0]?.reasons ?? [];
+    expect(reasons).toContain("run-meta styleGateEligible does not match contract.");
+    expect(reasons).not.toContain("styleGateEligible does not match contract.");
   });
 
   it("rejects copied, incomplete, tampered, and residual-blocked artifacts", () => {

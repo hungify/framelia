@@ -77,7 +77,13 @@ describe("groupStyleMismatches", () => {
 
   it("ignores non-style topIssues", () => {
     const issues: DashboardTopIssue[] = [
-      { severity: "high", kind: "pixel", message: "pixel mismatch", repairCandidate: false, blocking: true },
+      {
+        severity: "high",
+        kind: "pixel",
+        message: "pixel mismatch",
+        repairCandidate: false,
+        blocking: true,
+      },
     ];
     expect(groupStyleMismatches(issues)).toEqual([]);
   });

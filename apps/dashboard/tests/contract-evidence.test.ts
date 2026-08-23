@@ -93,6 +93,18 @@ describe("groupStyleMismatches", () => {
     expect(groupStyleMismatches(issues)).toEqual([{ selector: null, issues }]);
   });
 
+  it("includes style-check-error diagnostics alongside real mismatches", () => {
+    const errorIssue = styleIssue({
+      kind: "style-check-error",
+      message: 'style check for "#missing" could not run: element not found',
+      repairCandidate: false,
+      selector: "#missing",
+    });
+    expect(groupStyleMismatches([errorIssue])).toEqual([
+      { selector: "#missing", issues: [errorIssue] },
+    ]);
+  });
+
   it("groups a page-scope contract's issues into distinct groups by check-point selector", () => {
     const headerIssue = styleIssue({ selector: "header" });
     const heroIssue = styleIssue({ kind: "style-typography", selector: ".hero" });

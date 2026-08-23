@@ -124,6 +124,7 @@ export const topIssueSchema = z
       "cluster",
       "style-typography",
       "style-color",
+      "style-check-error",
       "baseline-stability",
       "capture-stability",
       "residual",

@@ -30,7 +30,10 @@ import { withTimeout } from "../timeout.ts";
 /**
  * Style comparison is best-effort and informational-only (see compareStyles):
  * a capture-style failure (stale selector, detached element) must never fail
- * the match itself, only skip the style issues for this run.
+ * the match itself. It still must not look identical to a clean pass, though --
+ * a silently empty result is indistinguishable from "checked and found nothing
+ * wrong" -- so a failure reports itself as a single non-blocking diagnostic
+ * issue instead of skipping the style issues for this run.
  */
 async function captureStyleIssues(
   page: Page,
@@ -41,8 +44,16 @@ async function captureStyleIssues(
   try {
     const actualStyle = await captureElementStyle(page, selector);
     return compareStyles(figmaStyle, actualStyle, styleToleranceOverrides);
-  } catch {
-    return [];
+  } catch (error) {
+    return [
+      {
+        severity: "low",
+        kind: "style-check-error",
+        message: `style check for "${selector}" could not run: ${error instanceof Error ? error.message : String(error)}`,
+        repairCandidate: false,
+        blocking: false,
+      },
+    ];
   }
 }
 

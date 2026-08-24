@@ -1,8 +1,12 @@
 import { hexColorDeltaE } from "./compare/delta-e.ts";
 import {
+  BORDER_WIDTH_TOLERANCE_PX,
+  BOX_SHADOW_TOLERANCE_PX,
   FONT_SIZE_TOLERANCE_PX,
+  GAP_TOLERANCE_PX,
   LETTER_SPACING_TOLERANCE_PX,
   LINE_HEIGHT_TOLERANCE_PX,
+  OPACITY_TOLERANCE,
   STYLE_COLOR_DELTA_E_TOLERANCE,
   STYLE_SPACING_TOLERANCE_PX,
 } from "./constants.ts";
@@ -18,6 +22,10 @@ interface StyleTolerance {
   maxFontSizeDeltaPx: number;
   maxLineHeightDeltaPx: number;
   maxLetterSpacingDeltaPx: number;
+  maxBorderWidthDeltaPx: number;
+  maxGapDeltaPx: number;
+  maxOpacityDelta: number;
+  maxBoxShadowDeltaPx: number;
 }
 
 const DEFAULT_STYLE_TOLERANCE: StyleTolerance = {
@@ -26,6 +34,10 @@ const DEFAULT_STYLE_TOLERANCE: StyleTolerance = {
   maxFontSizeDeltaPx: FONT_SIZE_TOLERANCE_PX,
   maxLineHeightDeltaPx: LINE_HEIGHT_TOLERANCE_PX,
   maxLetterSpacingDeltaPx: LETTER_SPACING_TOLERANCE_PX,
+  maxBorderWidthDeltaPx: BORDER_WIDTH_TOLERANCE_PX,
+  maxGapDeltaPx: GAP_TOLERANCE_PX,
+  maxOpacityDelta: OPACITY_TOLERANCE,
+  maxBoxShadowDeltaPx: BOX_SHADOW_TOLERANCE_PX,
 };
 
 /**
@@ -126,14 +138,88 @@ export function compareStyles(
     }
   }
 
+  pushIfNumericMismatch(
+    issues,
+    "borderWidth",
+    expected.borderWidth,
+    actual.borderWidth,
+    tolerance.maxBorderWidthDeltaPx,
+    "style-typography",
+  );
+  pushIfNumericMismatch(
+    issues,
+    "gap",
+    expected.gap,
+    actual.gap,
+    tolerance.maxGapDeltaPx,
+    "style-typography",
+  );
+  pushIfNumericMismatch(
+    issues,
+    "opacity",
+    expected.opacity,
+    actual.opacity,
+    tolerance.maxOpacityDelta,
+    "style-typography",
+  );
+
+  if (expected.boxShadow && actual.boxShadow) {
+    pushIfNumericMismatch(
+      issues,
+      "boxShadow.offsetX",
+      expected.boxShadow.offsetX,
+      actual.boxShadow.offsetX,
+      tolerance.maxBoxShadowDeltaPx,
+      "style-typography",
+    );
+    pushIfNumericMismatch(
+      issues,
+      "boxShadow.offsetY",
+      expected.boxShadow.offsetY,
+      actual.boxShadow.offsetY,
+      tolerance.maxBoxShadowDeltaPx,
+      "style-typography",
+    );
+    pushIfNumericMismatch(
+      issues,
+      "boxShadow.blurRadius",
+      expected.boxShadow.blurRadius,
+      actual.boxShadow.blurRadius,
+      tolerance.maxBoxShadowDeltaPx,
+      "style-typography",
+    );
+    pushIfNumericMismatch(
+      issues,
+      "boxShadow.spreadRadius",
+      expected.boxShadow.spreadRadius,
+      actual.boxShadow.spreadRadius,
+      tolerance.maxBoxShadowDeltaPx,
+      "style-typography",
+    );
+    pushIfColorMismatch(
+      issues,
+      "boxShadow.color",
+      expected.boxShadow.color,
+      actual.boxShadow.color,
+      tolerance.maxColorDeltaE,
+    );
+    pushIfExactMismatch(
+      issues,
+      "boxShadow.inset",
+      expected.boxShadow.inset,
+      actual.boxShadow.inset,
+      "style-typography",
+    );
+  }
+
   return issues;
 }
 
 function pushMismatchIssue(
   issues: TopIssue[],
   field: string,
-  expected: string | number,
-  actual: string | number,
+  expected: string | number | boolean,
+  actual: string | number | boolean,
   kind: TopIssueKind,
 ): void {
   issues.push({
@@ -149,8 +235,8 @@ function pushMismatchIssue(
 function pushIfExactMismatch(
   issues: TopIssue[],
   field: string,
-  expected: string | number | undefined,
-  actual: string | number | undefined,
+  expected: string | number | boolean | undefined,
+  actual: string | number | boolean | undefined,
   kind: TopIssueKind,
 ): void {
   if (expected === undefined || actual === undefined || expected === actual) return;

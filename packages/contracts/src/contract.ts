@@ -133,6 +133,15 @@ export const styleToleranceOverridesSchema = z
     maxLineHeightDeltaPx: z.number().nonnegative().optional(),
     /** Pixel epsilon letterSpacingPx may differ by before flagging. */
     maxLetterSpacingDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon borderWidth may differ by before flagging. */
+    maxBorderWidthDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon gap (flex/grid) may differ by before flagging. */
+    maxGapDeltaPx: z.number().nonnegative().optional(),
+    /** Epsilon opacity (0-1) may differ by before flagging. */
+    maxOpacityDelta: z.number().nonnegative().optional(),
+    /** Shared pixel epsilon for box-shadow's offsetX/offsetY/blurRadius/spreadRadius before
+     *  flagging; its color component uses maxColorDeltaE like every other color field. */
+    maxBoxShadowDeltaPx: z.number().nonnegative().optional(),
   })
   .strict();
 

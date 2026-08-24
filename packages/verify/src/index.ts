@@ -96,5 +96,5 @@ export {
 } from "./figma-api.ts";
 export type { NodeMetadata, ResolveNodeSpecOutcome } from "./figma-api.ts";
 export { extractFigmaStyle, expectStyleToSnapshot } from "./figma-node-style.ts";
-export type { CornerRadius, StyleSnapshot } from "./figma-node-style.ts";
+export type { BoxShadow, CornerRadius, StyleSnapshot } from "./figma-node-style.ts";
 export { compareStyles } from "./style-compare.ts";

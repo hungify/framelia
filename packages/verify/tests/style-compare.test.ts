@@ -130,6 +130,121 @@ describe("compareStyles", () => {
     ]);
   });
 
+  it("flags a borderWidth mismatch as a non-blocking style-typography issue", () => {
+    const issues = compareStyles({ borderWidth: 1 }, { borderWidth: 3 });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        kind: "style-typography",
+        blocking: false,
+        message: expect.stringContaining("borderWidth"),
+      }),
+    ]);
+  });
+
+  it("flags a gap mismatch as a non-blocking style-typography issue", () => {
+    const issues = compareStyles({ gap: 8 }, { gap: 16 });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        kind: "style-typography",
+        blocking: false,
+        message: expect.stringContaining("gap"),
+      }),
+    ]);
+  });
+
+  it("flags an opacity mismatch as a non-blocking style-typography issue", () => {
+    const issues = compareStyles({ opacity: 1 }, { opacity: 0.5 });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        kind: "style-typography",
+        blocking: false,
+        message: expect.stringContaining("opacity"),
+      }),
+    ]);
+  });
+
+  it("does not fabricate a borderWidth/gap/opacity mismatch when present on only one side", () => {
+    const issues = compareStyles({ borderWidth: 1, gap: 8, opacity: 1 }, {});
+
+    expect(issues).toEqual([]);
+  });
+
+  describe("boxShadow", () => {
+    const shadow = {
+      offsetX: 0,
+      offsetY: 4,
+      blurRadius: 8,
+      spreadRadius: 0,
+      color: "#000000ff",
+      inset: false,
+    };
+
+    it("returns no issue when both box shadows match", () => {
+      expect(compareStyles({ boxShadow: shadow }, { boxShadow: { ...shadow } })).toEqual([]);
+    });
+
+    it("flags a mismatched offsetY independently, tagged with its own sub-field name", () => {
+      const issues = compareStyles(
+        { boxShadow: shadow },
+        { boxShadow: { ...shadow, offsetY: 12 } },
+      );
+
+      expect(issues).toEqual([
+        expect.objectContaining({
+          kind: "style-typography",
+          message: expect.stringContaining("boxShadow.offsetY"),
+        }),
+      ]);
+    });
+
+    it("flags a mismatched blurRadius and spreadRadius independently", () => {
+      const issues = compareStyles(
+        { boxShadow: shadow },
+        { boxShadow: { ...shadow, blurRadius: 20, spreadRadius: 4 } },
+      );
+
+      expect(issues.map((issue) => issue.message)).toEqual([
+        expect.stringContaining("boxShadow.blurRadius"),
+        expect.stringContaining("boxShadow.spreadRadius"),
+      ]);
+    });
+
+    it("flags a mismatched shadow color as a style-color issue", () => {
+      const issues = compareStyles(
+        { boxShadow: shadow },
+        { boxShadow: { ...shadow, color: "#ffffffff" } },
+      );
+
+      expect(issues).toEqual([
+        expect.objectContaining({
+          kind: "style-color",
+          message: expect.stringContaining("boxShadow.color"),
+        }),
+      ]);
+    });
+
+    it("does not compare boxShadow at all when only one side has it", () => {
+      expect(compareStyles({ boxShadow: shadow }, {})).toEqual([]);
+    });
+
+    it("flags an inner-vs-outer shadow mismatch even when geometry and color are identical", () => {
+      const issues = compareStyles(
+        { boxShadow: shadow },
+        { boxShadow: { ...shadow, inset: true } },
+      );
+
+      expect(issues).toEqual([
+        expect.objectContaining({
+          kind: "style-typography",
+          message: expect.stringContaining("boxShadow.inset"),
+        }),
+      ]);
+    });
+  });
+
   it("flags each mismatched spacing side independently", () => {
     const issues = compareStyles(
       { spacing: { top: 8, right: 16, bottom: 8, left: 16 } },
@@ -209,6 +324,33 @@ describe("compareStyles", () => {
       expect(issues).toEqual([]);
     });
 
+    it("does not flag a borderWidth within the default numeric tolerance", () => {
+      expect(compareStyles({ borderWidth: 1 }, { borderWidth: 1.2 })).toEqual([]);
+    });
+
+    it("does not flag a gap within the default numeric tolerance", () => {
+      expect(compareStyles({ gap: 8 }, { gap: 8.5 })).toEqual([]);
+    });
+
+    it("does not flag an opacity within the default numeric tolerance", () => {
+      expect(compareStyles({ opacity: 1 }, { opacity: 0.995 })).toEqual([]);
+    });
+
+    it("does not flag box-shadow numeric sub-fields within the default tolerance", () => {
+      const shadow = {
+        offsetX: 0,
+        offsetY: 4,
+        blurRadius: 8,
+        spreadRadius: 0,
+        color: "#000000ff",
+        inset: false,
+      };
+
+      expect(
+        compareStyles({ boxShadow: shadow }, { boxShadow: { ...shadow, offsetY: 4.5 } }),
+      ).toEqual([]);
+    });
+
     it("applies a widened maxColorDeltaE override to pass a color that would otherwise flag", () => {
       const issues = compareStyles(
         { color: "#ffffffff" },
@@ -255,6 +397,46 @@ describe("compareStyles", () => {
       expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
     });
 
+    it("applies a tightened maxBorderWidthDeltaPx override to flag a borderWidth that would otherwise pass", () => {
+      const issues = compareStyles(
+        { borderWidth: 1 },
+        { borderWidth: 1.2 },
+        { maxBorderWidthDeltaPx: 0 },
+      );
+
+      expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
+    });
+
+    it("applies a tightened maxGapDeltaPx override to flag a gap that would otherwise pass", () => {
+      const issues = compareStyles({ gap: 8 }, { gap: 8.5 }, { maxGapDeltaPx: 0 });
+
+      expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
+    });
+
+    it("applies a tightened maxOpacityDelta override to flag an opacity that would otherwise pass", () => {
+      const issues = compareStyles({ opacity: 1 }, { opacity: 0.995 }, { maxOpacityDelta: 0 });
+
+      expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
+    });
+
+    it("applies a tightened maxBoxShadowDeltaPx override to flag a box-shadow that would otherwise pass", () => {
+      const shadow = {
+        offsetX: 0,
+        offsetY: 4,
+        blurRadius: 8,
+        spreadRadius: 0,
+        color: "#000000ff",
+        inset: false,
+      };
+      const issues = compareStyles(
+        { boxShadow: shadow },
+        { boxShadow: { ...shadow, offsetY: 4.5 } },
+        { maxBoxShadowDeltaPx: 0 },
+      );
+
+      expect(issues).toEqual([expect.objectContaining({ kind: "style-typography" })]);
+    });
+
     it("leaves unspecified override fields at their default tolerance", () => {
       const issues = compareStyles({ fontSize: 16 }, { fontSize: 16.2 }, { maxColorDeltaE: 1000 });
 
@@ -271,6 +453,10 @@ describe("styleToleranceOverridesSchema", () => {
       maxFontSizeDeltaPx: 1,
       maxLineHeightDeltaPx: 1,
       maxLetterSpacingDeltaPx: 0.1,
+      maxBorderWidthDeltaPx: 0.5,
+      maxGapDeltaPx: 1,
+      maxOpacityDelta: 0.01,
+      maxBoxShadowDeltaPx: 1,
     });
 
     expect(result.success).toBe(true);

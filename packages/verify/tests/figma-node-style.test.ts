@@ -137,6 +137,124 @@ describe("extractFigmaStyle", () => {
     expect(snapshot.spacing).toBeUndefined();
   });
 
+  it("extracts strokeWeight as borderWidth", () => {
+    const node = frameNode({ strokeWeight: 2 });
+
+    expect(extractFigmaStyle(node).borderWidth).toBe(2);
+  });
+
+  it("leaves borderWidth undefined when strokeWeight is absent", () => {
+    expect(extractFigmaStyle(frameNode()).borderWidth).toBeUndefined();
+  });
+
+  it("extracts itemSpacing as gap", () => {
+    const node = frameNode({ layoutMode: "VERTICAL", itemSpacing: 12 });
+
+    expect(extractFigmaStyle(node).gap).toBe(12);
+  });
+
+  it("extracts opacity directly", () => {
+    const node = frameNode({ opacity: 0.6 });
+
+    expect(extractFigmaStyle(node).opacity).toBe(0.6);
+  });
+
+  it("extracts a visible DROP_SHADOW effect into boxShadow", () => {
+    const node = frameNode({
+      effects: [
+        {
+          type: "DROP_SHADOW",
+          visible: true,
+          blendMode: "NORMAL",
+          showShadowBehindNode: false,
+          offset: { x: 0, y: 4 },
+          radius: 8,
+          spread: 2,
+          color: { r: 0, g: 0, b: 0, a: 0.25 },
+        },
+      ],
+    });
+
+    expect(extractFigmaStyle(node).boxShadow).toEqual({
+      offsetX: 0,
+      offsetY: 4,
+      blurRadius: 8,
+      spreadRadius: 2,
+      color: "#00000040",
+      inset: false,
+    });
+  });
+
+  it("extracts a visible INNER_SHADOW effect into boxShadow", () => {
+    const node = frameNode({
+      effects: [
+        {
+          type: "INNER_SHADOW",
+          visible: true,
+          blendMode: "NORMAL",
+          offset: { x: 1, y: 1 },
+          radius: 2,
+          color: { r: 1, g: 1, b: 1, a: 1 },
+        },
+      ],
+    });
+
+    expect(extractFigmaStyle(node).boxShadow).toEqual({
+      offsetX: 1,
+      offsetY: 1,
+      blurRadius: 2,
+      spreadRadius: 0,
+      color: "#ffffffff",
+      inset: true,
+    });
+  });
+
+  it("skips an invisible shadow effect to find the next visible one", () => {
+    const node = frameNode({
+      effects: [
+        {
+          type: "DROP_SHADOW",
+          visible: false,
+          blendMode: "NORMAL",
+          showShadowBehindNode: false,
+          offset: { x: 0, y: 4 },
+          radius: 8,
+          color: { r: 0, g: 0, b: 0, a: 1 },
+        },
+        {
+          type: "DROP_SHADOW",
+          visible: true,
+          blendMode: "NORMAL",
+          showShadowBehindNode: false,
+          offset: { x: 0, y: 2 },
+          radius: 4,
+          color: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+
+    expect(extractFigmaStyle(node).boxShadow).toEqual({
+      offsetX: 0,
+      offsetY: 2,
+      blurRadius: 4,
+      spreadRadius: 0,
+      color: "#000000ff",
+      inset: false,
+    });
+  });
+
+  it("ignores a blur effect -- no DROP_SHADOW/INNER_SHADOW present", () => {
+    const node = frameNode({
+      effects: [{ type: "LAYER_BLUR", visible: true, radius: 4 }],
+    });
+
+    expect(extractFigmaStyle(node).boxShadow).toBeUndefined();
+  });
+
+  it("leaves boxShadow undefined when the node has no effects", () => {
+    expect(extractFigmaStyle(frameNode()).boxShadow).toBeUndefined();
+  });
+
   it("extracts fontSize and fontWeight from a TEXT node's style", () => {
     const node = textNode({ style: { fontSize: 16, fontWeight: 700, fontFamily: "Inter" } });
 

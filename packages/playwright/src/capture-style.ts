@@ -1,4 +1,4 @@
-import type { CornerRadius, StyleSnapshot } from "@framelia/verify";
+import type { BoxShadow, CornerRadius, StyleSnapshot } from "@framelia/verify";
 import type { Page } from "@playwright/test";
 
 interface RawComputedStyle {
@@ -16,6 +16,13 @@ interface RawComputedStyle {
   borderTopRightRadius: string;
   borderBottomRightRadius: string;
   borderBottomLeftRadius: string;
+  borderTopWidth: string;
+  boxShadow: string;
+  opacity: string;
+  rowGap: string;
+  columnGap: string;
+  display: string;
+  flexDirection: string;
   /** Untransformed layout border-box width a percentage-valued corner radius resolves
    *  against -- see extractCornerRadius. */
   borderBoxWidth: number;
@@ -77,6 +84,62 @@ function parseLineHeight(value: string): number | undefined {
   return value === "normal" ? undefined : parsePx(value);
 }
 
+// Figma's itemSpacing measures only the auto-layout frame's primary-axis spacing, which
+// row-gap and column-gap don't uniformly map to: for `flex-direction: row` the primary axis
+// is horizontal (column-gap sits between side-by-side items), for `column` it's vertical
+// (row-gap). When both are equal there's no ambiguity either way. When they differ and the
+// element isn't itself a flex container (e.g. CSS grid, or a gap set on some other display),
+// there's no well-defined single-axis equivalent to Figma's itemSpacing, so it's left
+// unmatched rather than guessed. An unset gap computes to "normal", equivalent to a real 0
+// rather than an absent value (same reasoning as parseLetterSpacing's "normal").
+function parseGap(raw: RawComputedStyle): number | undefined {
+  const rowGap = raw.rowGap === "normal" ? 0 : parsePx(raw.rowGap);
+  const columnGap = raw.columnGap === "normal" ? 0 : parsePx(raw.columnGap);
+  if (rowGap === columnGap) return rowGap;
+  if (raw.display !== "flex" && raw.display !== "inline-flex") return undefined;
+  return raw.flexDirection.startsWith("row") ? columnGap : rowGap;
+}
+
+// Matches the leading `<color> <offsetX>px <offsetY>px <blurRadius>px <spreadRadius>px` of
+// Chromium's serialized box-shadow -- e.g. "rgba(0, 0, 0, 0.25) 0px 4px 8px 0px". Only the
+// first shadow in a stacked list is captured: the pattern stops consuming after the fourth
+// length, so a second comma-separated shadow never gets pulled into the match.
+const BOX_SHADOW_PATTERN =
+  /(rgba?\([^)]+\))\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px/;
+
+function parseBoxShadow(value: string): BoxShadow | undefined {
+  if (value === "none") return undefined;
+  const match = BOX_SHADOW_PATTERN.exec(value);
+  const [, color, offsetX, offsetY, blurRadius, spreadRadius] = match ?? [];
+  if (
+    match === null ||
+    color === undefined ||
+    offsetX === undefined ||
+    offsetY === undefined ||
+    blurRadius === undefined ||
+    spreadRadius === undefined
+  ) {
+    return undefined;
+  }
+  const normalizedColor = normalizeColor(color);
+  if (normalizedColor === undefined) return undefined;
+  // The "inset" keyword can appear before the color or after the lengths depending on
+  // authoring order, and Chromium's serialization isn't relied on to normalize it to one
+  // position -- so the whole first shadow (everything up to the next top-level comma, which
+  // never falls inside the matched color function) is searched instead of a fixed offset.
+  const nextCommaIndex = value.indexOf(",", match.index + match[0].length);
+  const firstShadowText = nextCommaIndex === -1 ? value : value.slice(0, nextCommaIndex);
+  const inset = /\binset\b/.test(firstShadowText);
+  return {
+    offsetX: Number.parseFloat(offsetX),
+    offsetY: Number.parseFloat(offsetY),
+    blurRadius: Number.parseFloat(blurRadius),
+    spreadRadius: Number.parseFloat(spreadRadius),
+    color: normalizedColor,
+    inset,
+  };
+}
+
 function toHexChannel(value: number): string {
   return Math.round(value).toString(16).padStart(2, "0");
 }
@@ -121,6 +184,13 @@ export async function captureElementStyle(page: Page, selector: string): Promise
       borderTopRightRadius: style.borderTopRightRadius,
       borderBottomRightRadius: style.borderBottomRightRadius,
       borderBottomLeftRadius: style.borderBottomLeftRadius,
+      borderTopWidth: style.borderTopWidth,
+      boxShadow: style.boxShadow,
+      opacity: style.opacity,
+      rowGap: style.rowGap,
+      columnGap: style.columnGap,
+      display: style.display,
+      flexDirection: style.flexDirection,
       // Derived from getComputedStyle, not getBoundingClientRect().width/offsetWidth --
       // the former reflects any CSS transform (e.g. scaleX) and the latter rounds to an
       // integer, while a percentage border-radius resolves against the untransformed,
@@ -143,5 +213,9 @@ export async function captureElementStyle(page: Page, selector: string): Promise
     lineHeightPx: parseLineHeight(raw.lineHeight),
     letterSpacingPx: parseLetterSpacing(raw.letterSpacing),
     cornerRadius: extractCornerRadius(raw),
+    borderWidth: parsePx(raw.borderTopWidth),
+    boxShadow: parseBoxShadow(raw.boxShadow),
+    opacity: Number.parseFloat(raw.opacity),
+    gap: parseGap(raw),
   };
 }

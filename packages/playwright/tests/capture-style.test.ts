@@ -234,6 +234,138 @@ describe("captureElementStyle", () => {
 
     expect(snapshot.letterSpacingPx).toBe(0);
   });
+
+  it("parses border-top-width into a number", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="border-style:solid;border-width:3px">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.borderWidth).toBe(3);
+  });
+
+  it("parses opacity into a number", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="opacity:0.5">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.opacity).toBe(0.5);
+  });
+
+  it("parses a symmetric flex gap into a number", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="display:flex;gap:12px">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.gap).toBe(12);
+  });
+
+  it("normalizes an unset gap ('normal') to 0, not undefined", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="display:flex">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.gap).toBe(0);
+  });
+
+  it("uses column-gap (not row-gap) as the primary-axis gap for flex-direction: row", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="display:flex;flex-direction:row;row-gap:4px;column-gap:12px">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.gap).toBe(12);
+  });
+
+  it("uses row-gap (not column-gap) as the primary-axis gap for flex-direction: column", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="display:flex;flex-direction:column;row-gap:4px;column-gap:12px">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.gap).toBe(4);
+  });
+
+  it("leaves gap undefined when row/column gaps differ on a non-flex element (e.g. grid)", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="display:grid;row-gap:4px;column-gap:12px">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.gap).toBeUndefined();
+  });
+
+  it("parses a single box-shadow into its structural components", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="box-shadow: 0px 4px 8px 0px rgba(0, 0, 0, 0.25)">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.boxShadow).toEqual({
+      offsetX: 0,
+      offsetY: 4,
+      blurRadius: 8,
+      spreadRadius: 0,
+      color: "#00000040",
+      inset: false,
+    });
+  });
+
+  it("parses an inset box-shadow, distinguishing it from an outer shadow with the same geometry", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="box-shadow: inset 0px 4px 8px 0px rgba(0, 0, 0, 0.25)">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.boxShadow).toEqual({
+      offsetX: 0,
+      offsetY: 4,
+      blurRadius: 8,
+      spreadRadius: 0,
+      color: "#00000040",
+      inset: true,
+    });
+  });
+
+  it("leaves boxShadow undefined when box-shadow is 'none'", async () => {
+    const page = await context.newPage();
+    await page.setContent(`<div id="target" style="box-shadow:none">x</div>`);
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.boxShadow).toBeUndefined();
+  });
+
+  it("captures only the first shadow when multiple are stacked", async () => {
+    const page = await context.newPage();
+    await page.setContent(
+      `<div id="target" style="box-shadow: 0px 1px 2px 0px rgb(0, 0, 0), 0px 8px 16px 0px rgb(255, 0, 0)">x</div>`,
+    );
+
+    const snapshot = await captureElementStyle(page, "#target");
+
+    expect(snapshot.boxShadow).toEqual({
+      offsetX: 0,
+      offsetY: 1,
+      blurRadius: 2,
+      spreadRadius: 0,
+      color: "#000000ff",
+      inset: false,
+    });
+  });
 });
 
 describe("normalizeFontWeight", () => {

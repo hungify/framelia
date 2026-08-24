@@ -1,4 +1,7 @@
 import type {
+  DropShadowEffect,
+  Effect,
+  InnerShadowEffect,
   LocalVariable,
   LocalVariableCollection,
   Node,
@@ -12,6 +15,24 @@ export interface CornerRadius {
   topRight: number;
   bottomRight: number;
   bottomLeft: number;
+}
+
+/**
+ * The first visible shadow effect, structurally comparable to a parsed DOM `box-shadow`
+ * (see capture-style.ts's parseBoxShadow). Only one shadow is captured on either side even
+ * when a node/element stacks several -- there's no reliable ordering guarantee between a
+ * Figma effects list and a CSS box-shadow list to pair up the rest.
+ */
+export interface BoxShadow {
+  offsetX: number;
+  offsetY: number;
+  blurRadius: number;
+  spreadRadius: number;
+  color: string;
+  /** true for a Figma INNER_SHADOW / CSS `inset` shadow, false for a drop/outer shadow --
+   *  compared as an exact field so an inner and outer shadow with identical geometry and
+   *  color still flag as a mismatch. */
+  inset: boolean;
 }
 
 /**
@@ -37,6 +58,13 @@ export interface StyleSnapshot {
   lineHeightPx?: number;
   letterSpacingPx?: number;
   cornerRadius?: CornerRadius;
+  /** Uniform stroke weight -- only the frame-wide value, mirroring extractSpacing's
+   *  all-or-nothing approach; per-side individualStrokeWeights aren't compared. */
+  borderWidth?: number;
+  boxShadow?: BoxShadow;
+  opacity?: number;
+  /** Auto-layout's itemSpacing (primary-axis gap between children). */
+  gap?: number;
 }
 
 export function extractFigmaStyle(node: Node, variables?: FigmaVariablesData): StyleSnapshot {
@@ -64,7 +92,45 @@ export function extractFigmaStyle(node: Node, variables?: FigmaVariablesData): S
   const cornerRadius = extractCornerRadius(node);
   if (cornerRadius !== undefined) snapshot.cornerRadius = cornerRadius;
 
+  if ("strokeWeight" in node && typeof node.strokeWeight === "number") {
+    snapshot.borderWidth = node.strokeWeight;
+  }
+
+  if ("itemSpacing" in node && typeof node.itemSpacing === "number") {
+    snapshot.gap = node.itemSpacing;
+  }
+
+  if ("opacity" in node && typeof node.opacity === "number") {
+    snapshot.opacity = node.opacity;
+  }
+
+  const boxShadow = extractBoxShadow(node);
+  if (boxShadow !== undefined) snapshot.boxShadow = boxShadow;
+
   return snapshot;
+}
+
+/**
+ * The first visible drop/inner shadow among a node's effects, converted to the same shape
+ * capture-style.ts's parseBoxShadow parses a DOM `box-shadow` into. Blur/texture/noise
+ * effects have no CSS box-shadow equivalent, so only DROP_SHADOW/INNER_SHADOW are looked at.
+ */
+function extractBoxShadow(node: Node): BoxShadow | undefined {
+  if (!("effects" in node) || !Array.isArray(node.effects)) return undefined;
+  const shadow = node.effects.find(isVisibleShadowEffect);
+  if (!shadow) return undefined;
+  return {
+    offsetX: shadow.offset.x,
+    offsetY: shadow.offset.y,
+    blurRadius: shadow.radius,
+    spreadRadius: shadow.spread ?? 0,
+    color: toHexColor(shadow.color, shadow.color.a),
+    inset: shadow.type === "INNER_SHADOW",
+  };
+}
+
+function isVisibleShadowEffect(effect: Effect): effect is DropShadowEffect | InnerShadowEffect {
+  return (effect.type === "DROP_SHADOW" || effect.type === "INNER_SHADOW") && effect.visible;
 }
 
 /**

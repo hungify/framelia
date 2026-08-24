@@ -94,6 +94,12 @@ export const ALPHA_TOLERANCE = 0.01;
 // 2.3 is the commonly-cited CIEDE2000 "just noticeable difference" threshold.
 export const STYLE_COLOR_DELTA_E_TOLERANCE = 2.3;
 export const STYLE_SPACING_TOLERANCE_PX = 1;
+export const BORDER_WIDTH_TOLERANCE_PX = 0.5;
+export const GAP_TOLERANCE_PX = 1;
+export const OPACITY_TOLERANCE = 0.01;
+/** Shared px epsilon for box-shadow's offsetX/offsetY/blurRadius/spreadRadius -- its color
+ *  component still uses STYLE_COLOR_DELTA_E_TOLERANCE, like every other color comparison. */
+export const BOX_SHADOW_TOLERANCE_PX = 1;
 
 /**
  * Warning text shared between the producer (phases.ts, capture/core.ts) and

@@ -12,6 +12,8 @@ export { avgDeltaE2000 } from "./compare/delta-e.ts";
 export {
   countRealDiffPixels,
   diffBoundingBox,
+  diffClusters,
+  largestCluster,
   largestRealDiffCluster,
   pixelCompare,
 } from "./compare/pixel.ts";

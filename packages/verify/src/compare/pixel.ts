@@ -136,10 +136,13 @@ export interface DiffCluster {
   bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 
-export function largestRealDiffCluster(diff: PNG): DiffCluster | null {
+/** Every 4-connected component of real-diff pixels, not just the largest -- see
+ *  largestRealDiffCluster for the single-cluster case this generalizes, and
+ *  attribution.ts for the caller that needs every region, not one winner. */
+export function diffClusters(diff: PNG): DiffCluster[] {
   const { width, height, data } = diff;
   const seen = new Uint8Array(width * height);
-  let largest: DiffCluster | null = null;
+  const clusters: DiffCluster[] = [];
 
   for (let start = 0; start < seen.length; start++) {
     if (seen[start] || !isRealDiffPixel(data, start << 2)) continue;
@@ -171,11 +174,24 @@ export function largestRealDiffCluster(diff: PNG): DiffCluster | null {
       if (y > 0) visit(current - width);
       if (y + 1 < height) visit(current + width);
     }
-    if (!largest || pixels > largest.pixels) {
-      largest = { pixels, bbox: { x0, y0, x1, y1 } };
-    }
+    clusters.push({ pixels, bbox: { x0, y0, x1, y1 } });
   }
-  return largest;
+  return clusters;
+}
+
+/** Picks the biggest cluster out of an already-computed list -- split out from
+ *  largestRealDiffCluster so a caller that already has `clusters` (e.g. compare/index.ts,
+ *  which needs every region for attribution *and* the largest for residualSignal) doesn't
+ *  have to re-run the flood fill a second time just to find the winner. */
+export function largestCluster(clusters: DiffCluster[]): DiffCluster | null {
+  if (clusters.length === 0) return null;
+  return clusters.reduce((largest, cluster) =>
+    cluster.pixels > largest.pixels ? cluster : largest,
+  );
+}
+
+export function largestRealDiffCluster(diff: PNG): DiffCluster | null {
+  return largestCluster(diffClusters(diff));
 }
 
 export function diffBoundingBox(

@@ -1,4 +1,4 @@
-import type { BoxShadow, CornerRadius, StyleSnapshot } from "@framelia/verify";
+import type { BoxShadow, CornerRadius, SelectorBounds, StyleSnapshot } from "@framelia/verify";
 import type { Page } from "@playwright/test";
 
 interface RawComputedStyle {
@@ -217,5 +217,34 @@ export async function captureElementStyle(page: Page, selector: string): Promise
     boxShadow: parseBoxShadow(raw.boxShadow),
     opacity: Number.parseFloat(raw.opacity),
     gap: parseGap(raw),
+  };
+}
+
+/**
+ * A selector's captured bounds in the same pixel coordinate space as a page-scope
+ * screenshot, for attributeDiffRegions to overlap against pixel-diff clusters. Mirrors
+ * @framelia/verify's capture/masks.ts scrollOffset handling: boundingBox() is
+ * viewport-relative, but a fullPage screenshot's (0,0) is document origin, so a
+ * fullPage capture needs the current scroll offset added to land in the same space --
+ * a non-fullPage (viewport) screenshot's (0,0) is already viewport origin and needs no
+ * offset. Returns null (not a guess) for a selector that doesn't resolve to a visible,
+ * positively-sized element, so a stale check-point selector simply drops out of
+ * attribution instead of poisoning it with a zero-size box.
+ */
+export async function captureElementBounds(
+  page: Page,
+  selector: string,
+  fullPage: boolean,
+): Promise<SelectorBounds | null> {
+  const box = await page.locator(selector).boundingBox();
+  if (!box || box.width <= 0 || box.height <= 0) return null;
+  if (!fullPage) return { selector, x: box.x, y: box.y, width: box.width, height: box.height };
+  const scroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+  return {
+    selector,
+    x: box.x + scroll.x,
+    y: box.y + scroll.y,
+    width: box.width,
+    height: box.height,
   };
 }

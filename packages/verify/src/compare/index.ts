@@ -22,7 +22,8 @@ import {
   clusterFails,
   countRealDiffPixels,
   diffBoundingBox,
-  largestRealDiffCluster,
+  diffClusters,
+  largestCluster,
   pixelCompare,
 } from "./pixel.ts";
 import { detectBorderColor, padTo, readPng, writePng } from "./png.ts";
@@ -62,6 +63,7 @@ function skippedOutcome(input: {
     topIssues: input.topIssues,
     warnings: input.warnings,
     diffPath: null,
+    diffClusters: [],
   };
 }
 
@@ -152,6 +154,7 @@ export function compare(
   const avgDeltaE = bbox
     ? avgDeltaE2000(baselineAligned, actualAligned, bbox, undefined, maskBitmap)
     : 0;
+  const clusters = diffClusters(pixel.diff);
 
   const clusterOn = options.clusterCheck ?? profile.cluster;
   const clusterFail =
@@ -177,7 +180,7 @@ export function compare(
   const residual = residualSignal({
     pass,
     realDiffs: countRealDiffPixels(pixel.diff),
-    largestCluster: largestRealDiffCluster(pixel.diff),
+    largestCluster: largestCluster(clusters),
     residualBox: bbox,
   });
   if (residual.warning) warnings.push(residual.warning);
@@ -198,5 +201,6 @@ export function compare(
     topIssues,
     warnings,
     diffPath,
+    diffClusters: clusters,
   };
 }

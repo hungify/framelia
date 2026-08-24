@@ -7,6 +7,9 @@ export type {
   BaselineResolveOutcome,
 } from "./baseline.ts";
 export { compare } from "./compare/index.ts";
+export { attributeDiffRegions } from "./compare/attribution.ts";
+export type { DiffRegionAttribution, SelectorBounds } from "./compare/attribution.ts";
+export type { DiffCluster } from "./compare/pixel.ts";
 export {
   checkDoneGate,
   DEFAULT_MAX_BASELINE_AGE_MS,

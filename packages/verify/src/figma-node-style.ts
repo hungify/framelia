@@ -1,4 +1,10 @@
-import type { Node, SolidPaint } from "@figma/rest-api-spec";
+import type {
+  LocalVariable,
+  LocalVariableCollection,
+  Node,
+  RGBA,
+  SolidPaint,
+} from "@figma/rest-api-spec";
 import type { ExpectStyle } from "@framelia/contracts";
 
 export interface CornerRadius {
@@ -6,6 +12,18 @@ export interface CornerRadius {
   topRight: number;
   bottomRight: number;
   bottomLeft: number;
+}
+
+/**
+ * The subset of `GET /v1/files/:file_key/variables/local`'s response needed to resolve a bound
+ * color variable to its current value. Fetching this is Enterprise-plan-gated on Figma's side, so
+ * callers should only fetch it when a node actually has a bound color (see `boundColorVariableId`)
+ * and must treat a fetch failure as non-fatal -- `extractFigmaStyle` already falls back to the
+ * paint's literal color when this is omitted or doesn't contain the bound variable.
+ */
+export interface FigmaVariablesData {
+  variables: Record<string, LocalVariable>;
+  variableCollections: Record<string, LocalVariableCollection>;
 }
 
 export interface StyleSnapshot {
@@ -21,13 +39,13 @@ export interface StyleSnapshot {
   cornerRadius?: CornerRadius;
 }
 
-export function extractFigmaStyle(node: Node): StyleSnapshot {
+export function extractFigmaStyle(node: Node, variables?: FigmaVariablesData): StyleSnapshot {
   const snapshot: StyleSnapshot = {};
 
   // A node's `fills` is a text paint on TEXT nodes but a background/container
   // paint everywhere else -- comparing both against the code side's CSS
   // `color` would conflate foreground and background paint. See PR #17 review.
-  const fillColor = extractColor(node);
+  const fillColor = extractColor(node, variables);
   if (fillColor !== undefined) {
     if (node.type === "TEXT") snapshot.color = fillColor;
     else snapshot.backgroundColor = fillColor;
@@ -121,17 +139,81 @@ function extractSpacing(node: Node): StyleSnapshot["spacing"] {
   return { top: paddingTop, right: paddingRight, bottom: paddingBottom, left: paddingLeft };
 }
 
-function extractColor(node: Node): string | undefined {
+/**
+ * The variable id bound to a node's fill color, if any -- lets a caller decide whether the
+ * extra (Enterprise-gated) variables/local API call is worth making before fetching it, instead
+ * of paying for it on every node regardless of whether it uses bound variables.
+ */
+export function boundColorVariableId(node: Node): string | undefined {
+  return findSolidFill(node)?.boundVariables?.color?.id;
+}
+
+function findSolidFill(node: Node): SolidPaint | undefined {
   if (!("fills" in node) || !Array.isArray(node.fills)) return undefined;
-  const solidFill = node.fills.find(
+  return node.fills.find(
     (fill): fill is SolidPaint => fill.type === "SOLID" && fill.visible !== false,
   );
+}
+
+function extractColor(node: Node, variables?: FigmaVariablesData): string | undefined {
+  const solidFill = findSolidFill(node);
   if (!solidFill) return undefined;
-  // solidFill.color is always the resolved literal, even when boundVariables.color
-  // points at a Figma Variable -- resolving the variable itself needs the
-  // Enterprise-only Variables API, out of scope for this feature, so it's
-  // deliberately never read here.
+  const resolved = resolveBoundColor(node, solidFill, variables);
+  if (resolved !== undefined) return resolved;
+  // Either the fill isn't bound to a variable, or it is but `variables` wasn't supplied
+  // (no bound color present, fetch failed, or the token can't reach the Enterprise-only
+  // Variables API) -- the literal is always the correct/only value in the former case, and
+  // the best available fallback in the latter.
   return toHexColor(solidFill.color, solidFill.opacity);
+}
+
+/**
+ * Resolves `solidFill.boundVariables.color` to the variable's current value for the mode this
+ * node explicitly uses, falling back to the collection's default mode when the node doesn't set
+ * one explicitly. Ancestor-level mode overrides aren't visible from a single fetched node, so an
+ * inherited (non-default, non-explicit) mode isn't resolved exactly -- a documented limitation,
+ * not a silent wrong answer, since the caller falls back to the literal paint color instead.
+ * Returns undefined (not a guess) for anything else unresolvable: no bound variable, no
+ * `variables` payload, a deleted variable, a non-COLOR variable, or an unfollowed alias chain.
+ */
+function resolveBoundColor(
+  node: Node,
+  solidFill: SolidPaint,
+  variables: FigmaVariablesData | undefined,
+): string | undefined {
+  const alias = solidFill.boundVariables?.color;
+  if (!alias || !variables) return undefined;
+
+  const variable = variables.variables[alias.id];
+  if (!variable || variable.resolvedType !== "COLOR") return undefined;
+
+  const collection = variables.variableCollections[variable.variableCollectionId];
+  if (!collection) return undefined;
+
+  const modeId = node.explicitVariableModes?.[collection.id] ?? collection.defaultModeId;
+  const value = variable.valuesByMode[modeId];
+  if (!isRgba(value)) return undefined;
+
+  // Unlike a literal fill (where transparency lives on the paint's `opacity`), a bound
+  // variable can carry its own alpha in `value.a` (e.g. a "White 50%" token) -- both must
+  // combine, or a translucent token's fill on a fully-opaque paint would round-trip as opaque.
+  const combinedOpacity = (value.a ?? 1) * (solidFill.opacity ?? 1);
+  return toHexColor(value, combinedOpacity);
+}
+
+function isRgba(value: unknown): value is RGBA {
+  if (typeof value !== "object" || value === null) return false;
+  const { r, g, b, a } = value as Partial<RGBA>;
+  // r/g/b must be finite numbers -- a malformed or partial value (missing channel, NaN,
+  // Infinity) must fall back to the literal paint color instead of producing a garbage hex
+  // string (e.g. toHexChannel(undefined) rounds to "NaN" and gets embedded verbatim).
+  if (!isFiniteNumber(r) || !isFiniteNumber(g) || !isFiniteNumber(b)) return false;
+  if (a !== undefined && !isFiniteNumber(a)) return false;
+  return true;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function toHexColor(

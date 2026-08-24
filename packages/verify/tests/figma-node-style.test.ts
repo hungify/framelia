@@ -1,8 +1,13 @@
-import type { Node, Paint } from "@figma/rest-api-spec";
+import type { LocalVariable, LocalVariableCollection, Node, Paint } from "@figma/rest-api-spec";
 import type { ExpectStyle } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
-import { expectStyleToSnapshot, extractFigmaStyle } from "../src/figma-node-style.ts";
+import type { FigmaVariablesData } from "../src/figma-node-style.ts";
+import {
+  boundColorVariableId,
+  expectStyleToSnapshot,
+  extractFigmaStyle,
+} from "../src/figma-node-style.ts";
 
 function solidPaint(r: number, g: number, b: number, overrides: Partial<Paint> = {}): Paint {
   return {
@@ -21,6 +26,49 @@ function frameNode(overrides: Record<string, unknown> = {}): Node {
     scrollBehavior: "SCROLLS",
     ...overrides,
   } as unknown as Node;
+}
+
+function colorVariablesData(
+  overrides: {
+    variable?: Partial<LocalVariable>;
+    collection?: Partial<LocalVariableCollection>;
+  } = {},
+): FigmaVariablesData {
+  const collection: LocalVariableCollection = {
+    id: "VariableCollectionId:1:1",
+    name: "Colors",
+    key: "collection-key",
+    modes: [
+      { modeId: "1:0", name: "Light" },
+      { modeId: "1:1", name: "Dark" },
+    ],
+    defaultModeId: "1:0",
+    remote: false,
+    hiddenFromPublishing: false,
+    variableIds: ["VariableID:1:2"],
+    ...overrides.collection,
+  };
+  const variable: LocalVariable = {
+    id: "VariableID:1:2",
+    name: "surface/neutral",
+    key: "variable-key",
+    variableCollectionId: collection.id,
+    resolvedType: "COLOR",
+    valuesByMode: {
+      "1:0": { r: 229 / 255, g: 229 / 255, b: 229 / 255, a: 1 },
+      "1:1": { r: 0, g: 0, b: 0, a: 1 },
+    },
+    remote: false,
+    description: "",
+    hiddenFromPublishing: false,
+    scopes: [],
+    codeSyntax: {},
+    ...overrides.variable,
+  };
+  return {
+    variables: { [variable.id]: variable },
+    variableCollections: { [collection.id]: collection },
+  };
 }
 
 function textNode(overrides: Record<string, unknown> = {}): Node {
@@ -133,7 +181,7 @@ describe("extractFigmaStyle", () => {
     expect(snapshot.letterSpacingPx).toBe(0.5);
   });
 
-  it("still returns the resolved literal color when the fill is bound to a Figma variable", () => {
+  it("falls back to the fill's literal color when the fill is bound to a variable but no variables data is supplied", () => {
     const node = frameNode({
       fills: [
         solidPaint(229 / 255, 229 / 255, 229 / 255, {
@@ -143,6 +191,201 @@ describe("extractFigmaStyle", () => {
     });
 
     const snapshot = extractFigmaStyle(node);
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("resolves a bound color variable to its default-mode value when variables data is supplied", () => {
+    const node = frameNode({
+      // Literal is stale on purpose -- it should never win once the variable resolves.
+      fills: [
+        solidPaint(1, 0, 0, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(node, colorVariablesData());
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("resolves a bound color variable to the node's explicit mode instead of the default mode", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(1, 0, 0, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+      explicitVariableModes: { "VariableCollectionId:1:1": "1:1" },
+    });
+
+    const snapshot = extractFigmaStyle(node, colorVariablesData());
+
+    expect(snapshot.backgroundColor).toBe("#000000ff");
+  });
+
+  it("combines the resolved variable color with the paint's own opacity", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(1, 0, 0, {
+          opacity: 0.5,
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(node, colorVariablesData());
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e580");
+  });
+
+  it("multiplies the variable's own alpha with the paint's opacity, not just the paint's opacity", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(1, 0, 0, {
+          opacity: 0.5,
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(
+      node,
+      colorVariablesData({
+        variable: { valuesByMode: { "1:0": { r: 229 / 255, g: 229 / 255, b: 229 / 255, a: 0.5 } } },
+      }),
+    );
+
+    // variable alpha 0.5 * paint opacity 0.5 = 0.25 -> 0x40, not 0x80 (paint opacity alone).
+    expect(snapshot.backgroundColor).toBe("#e5e5e540");
+  });
+
+  it("falls back to the literal color when the bound variable was deleted", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(229 / 255, 229 / 255, 229 / 255, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:does-not-exist" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(node, colorVariablesData());
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("falls back to the literal color when the bound variable isn't a COLOR variable", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(229 / 255, 229 / 255, 229 / 255, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(
+      node,
+      colorVariablesData({ variable: { resolvedType: "FLOAT" } }),
+    );
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("falls back to the literal color when the resolved value is missing a color channel", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(229 / 255, 229 / 255, 229 / 255, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(
+      node,
+      colorVariablesData({
+        // `b` deliberately omitted -- a partial/malformed value must not fabricate a channel.
+        variable: { valuesByMode: { "1:0": { r: 1, g: 0, a: 1 } as never } },
+      }),
+    );
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("falls back to the literal color when a color channel is non-numeric", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(229 / 255, 229 / 255, 229 / 255, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(
+      node,
+      colorVariablesData({
+        variable: { valuesByMode: { "1:0": { r: "1", g: 0, b: 0, a: 1 } as never } },
+      }),
+    );
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("falls back to the literal color when a color channel is non-finite (NaN/Infinity)", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(229 / 255, 229 / 255, 229 / 255, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(
+      node,
+      colorVariablesData({
+        variable: { valuesByMode: { "1:0": { r: Number.NaN, g: 0, b: 0, a: 1 } } },
+      }),
+    );
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("falls back to the literal color when the alpha channel is non-finite", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(229 / 255, 229 / 255, 229 / 255, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(
+      node,
+      colorVariablesData({
+        variable: { valuesByMode: { "1:0": { r: 0, g: 0, b: 0, a: Number.POSITIVE_INFINITY } } },
+      }),
+    );
+
+    expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
+  });
+
+  it("falls back to the literal color when the resolved mode's value is an unfollowed alias chain", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(229 / 255, 229 / 255, 229 / 255, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    const snapshot = extractFigmaStyle(
+      node,
+      colorVariablesData({
+        variable: {
+          valuesByMode: { "1:0": { type: "VARIABLE_ALIAS", id: "VariableID:1:9" } },
+        },
+      }),
+    );
 
     expect(snapshot.backgroundColor).toBe("#e5e5e5ff");
   });
@@ -188,6 +431,30 @@ describe("extractFigmaStyle", () => {
     expect(snapshot.spacing).toBeUndefined();
     expect(snapshot.fontSize).toBeUndefined();
     expect(snapshot.fontWeight).toBeUndefined();
+  });
+});
+
+describe("boundColorVariableId", () => {
+  it("returns the variable id bound to the first visible SOLID fill's color", () => {
+    const node = frameNode({
+      fills: [
+        solidPaint(1, 0, 0, {
+          boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } },
+        }),
+      ],
+    });
+
+    expect(boundColorVariableId(node)).toBe("VariableID:1:2");
+  });
+
+  it("returns undefined when the fill has no bound color variable", () => {
+    const node = frameNode({ fills: [solidPaint(1, 0, 0)] });
+
+    expect(boundColorVariableId(node)).toBeUndefined();
+  });
+
+  it("returns undefined when the node has no fills", () => {
+    expect(boundColorVariableId(frameNode({ fills: [] }))).toBeUndefined();
   });
 });
 

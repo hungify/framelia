@@ -2,6 +2,7 @@ import type { DashboardContractResult, DashboardTopIssue } from "@framelia/contr
 import { describe, expect, it } from "vitest";
 
 import {
+  groupPixelAttributions,
   groupStyleMismatches,
   hasEvidenceNotes,
   styleMismatchGateLabel,
@@ -117,6 +118,39 @@ describe("groupStyleMismatches", () => {
     expect(groupStyleMismatches([headerIssue, heroIssue, secondHeaderIssue])).toEqual([
       { selector: "header", issues: [headerIssue, secondHeaderIssue] },
       { selector: ".hero", issues: [heroIssue] },
+    ]);
+  });
+});
+
+function attributionIssue(overrides: Partial<DashboardTopIssue> = {}): DashboardTopIssue {
+  return {
+    severity: "low",
+    kind: "pixel-attribution",
+    message: 'pixel-diff region (42px, bbox [10,10]-[30,25]) overlaps style check-point "header"',
+    repairCandidate: false,
+    blocking: false,
+    ...overrides,
+  };
+}
+
+describe("groupPixelAttributions", () => {
+  it("returns no groups when there are no attribution issues", () => {
+    expect(groupPixelAttributions(undefined)).toEqual([]);
+    expect(groupPixelAttributions([])).toEqual([]);
+  });
+
+  it("ignores non-attribution topIssues, including style mismatches", () => {
+    const issues: DashboardTopIssue[] = [styleIssue()];
+    expect(groupPixelAttributions(issues)).toEqual([]);
+  });
+
+  it("groups attribution issues by the check-point selector they overlap", () => {
+    const headerHit = attributionIssue({ selector: "header" });
+    const heroHit = attributionIssue({ selector: ".hero", message: "another region" });
+
+    expect(groupPixelAttributions([headerHit, heroHit])).toEqual([
+      { selector: "header", issues: [headerHit] },
+      { selector: ".hero", issues: [heroHit] },
     ]);
   });
 });

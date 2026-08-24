@@ -1,12 +1,15 @@
 import type { StyleCheckPoint, VisualMask } from "@framelia/contracts";
 import type {
+  DiffCluster,
   ExpectSize,
+  SelectorBounds,
   StyleSnapshot,
   TopIssue,
   ProfileOverrides,
   StyleToleranceOverrides,
 } from "@framelia/verify";
 import {
+  attributeDiffRegions,
   compare,
   compareStyles,
   expectStyleToSnapshot,
@@ -21,7 +24,7 @@ import {
   SCORE_ATTACHMENT_SUFFIX,
   type AttachJsonFn,
 } from "../attach.ts";
-import { captureElementStyle } from "../capture-style.ts";
+import { captureElementBounds, captureElementStyle } from "../capture-style.ts";
 import { captureActual } from "../capture.ts";
 import { resolveFigmaCompareOptions } from "../figma-profile.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "../score-attachment.ts";
@@ -97,6 +100,15 @@ async function withStyleCheckTimeout(
  * doesn't have to share a single deadline that could also starve its siblings --
  * and so its own diagnostic still gets tagged with its own selector below.
  */
+/** A check-point only has something to compare (style or attribution bounds) once its
+ *  `expectStyle` baked at authoring time -- shared by captureCheckPointStyleIssues and
+ *  captureCheckPointBounds so both walk the same check-point population. */
+function hasBakedExpectStyle(
+  checkPoint: StyleCheckPoint,
+): checkPoint is StyleCheckPoint & { expectStyle: NonNullable<StyleCheckPoint["expectStyle"]> } {
+  return checkPoint.expectStyle !== undefined;
+}
+
 async function captureCheckPointStyleIssues(
   page: Page,
   checkPoints: StyleCheckPoint[],
@@ -104,28 +116,63 @@ async function captureCheckPointStyleIssues(
   timeoutMs: number,
 ): Promise<TopIssue[]> {
   const perCheckPoint = await Promise.all(
-    checkPoints
-      .filter(
-        (
-          checkPoint,
-        ): checkPoint is StyleCheckPoint & {
-          expectStyle: NonNullable<StyleCheckPoint["expectStyle"]>;
-        } => checkPoint.expectStyle !== undefined,
-      )
-      .map(async (checkPoint) => {
-        const issues = await withStyleCheckTimeout(
-          captureStyleIssues(
-            page,
-            checkPoint.selector,
-            expectStyleToSnapshot(checkPoint.expectStyle),
-            styleToleranceOverrides,
-          ),
-          timeoutMs,
-        );
-        return issues.map((issue) => Object.assign({}, issue, { selector: checkPoint.selector }));
-      }),
+    checkPoints.filter(hasBakedExpectStyle).map(async (checkPoint) => {
+      const issues = await withStyleCheckTimeout(
+        captureStyleIssues(
+          page,
+          checkPoint.selector,
+          expectStyleToSnapshot(checkPoint.expectStyle),
+          styleToleranceOverrides,
+        ),
+        timeoutMs,
+      );
+      return issues.map((issue) => Object.assign({}, issue, { selector: checkPoint.selector }));
+    }),
   );
   return perCheckPoint.flat();
+}
+
+/**
+ * Page-scope selector bounds for every check-point with a baked expectStyle (the same
+ * population captureCheckPointStyleIssues compares), captured in the same pixel space
+ * as the page screenshot -- feeds attributeDiffRegions so a pixel-diff cluster can be
+ * traced to the check-point(s) it overlaps. A selector that fails to resolve (stale,
+ * detached, zero-size) is simply absent from the result rather than failing the batch --
+ * see captureElementBounds.
+ */
+async function captureCheckPointBounds(
+  page: Page,
+  checkPoints: StyleCheckPoint[],
+  fullPage: boolean,
+): Promise<SelectorBounds[]> {
+  const bounds = await Promise.all(
+    checkPoints
+      .filter(hasBakedExpectStyle)
+      .map((checkPoint) =>
+        captureElementBounds(page, checkPoint.selector, fullPage).catch(() => null),
+      ),
+  );
+  return bounds.filter((b): b is SelectorBounds => b !== null);
+}
+
+/**
+ * One TopIssue per (cluster, overlapping selector) pair -- mirrors how a style
+ * mismatch is tagged with exactly one selector (see TopIssue.selector) so a region
+ * overlapping two check-points surfaces as two distinguishable diagnostics instead of
+ * one issue with an ambiguous multi-selector list. A cluster with no overlapping
+ * selector contributes nothing -- left unattributed, not guessed.
+ */
+function buildAttributionIssues(clusters: DiffCluster[], selectors: SelectorBounds[]): TopIssue[] {
+  return attributeDiffRegions(clusters, selectors).flatMap((region) =>
+    region.selectors.map((selector) => ({
+      severity: "low" as const,
+      kind: "pixel-attribution" as const,
+      message: `pixel-diff region (${region.pixels}px, bbox [${region.bbox.x0},${region.bbox.y0}]-[${region.bbox.x1},${region.bbox.y1}]) overlaps style check-point "${selector}"`,
+      selector,
+      repairCandidate: false,
+      blocking: false,
+    })),
+  );
 }
 
 export interface ToMatchFigmaOptions {
@@ -280,10 +327,35 @@ export async function runToMatchFigma(
             styleCheckTimeoutMs,
           )
         : [];
-    // Style mismatches are informational-only (TopIssue.blocking: false) and
-    // never affect `outcome.pass` -- merged in after compare() decided pass/fail.
-    const outcomeWithStyle = styleIssues.length
-      ? { ...outcome, topIssues: [...outcome.topIssues, ...styleIssues] }
+    // Root-cause linkage (page scope only, same gating as styleIssues above): cross-
+    // references pixel-diff clusters against check-point selector bounds so a diff
+    // region can be traced to the style check(s) it overlaps. Skipped when there's no
+    // diff to attribute -- no point paying for a bounds capture round-trip on a clean
+    // pass. Best-effort like styleIssues: a bounds-capture timeout or failure yields no
+    // attribution rather than failing the matcher.
+    //
+    // Recomputed from startedAt rather than reusing styleCheckTimeoutMs -- styleIssues
+    // above can itself consume most or all of that budget, and replaying the same
+    // window here would let the matcher run up to 2x timeoutMs before returning (see
+    // the styleCheckTimeoutMs comment above for why that's the wrong failure mode).
+    const attributionTimeoutMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
+    const attributionIssues =
+      !options.selector && options.styleChecks?.length && outcome.diffClusters.length
+        ? buildAttributionIssues(
+            outcome.diffClusters,
+            await withTimeout(
+              captureCheckPointBounds(received, options.styleChecks, options.fullPage ?? false),
+              attributionTimeoutMs,
+              "toMatchFigma pixel attribution",
+            ).catch(() => [] as SelectorBounds[]),
+          )
+        : [];
+    // Style mismatches and pixel-attribution notes are informational-only
+    // (TopIssue.blocking: false) and never affect `outcome.pass` -- merged in after
+    // compare() decided pass/fail.
+    const extraIssues = [...styleIssues, ...attributionIssues];
+    const outcomeWithStyle = extraIssues.length
+      ? { ...outcome, topIssues: [...outcome.topIssues, ...extraIssues] }
       : outcome;
 
     await attachDiffTriplet(context.attach, baseName, {

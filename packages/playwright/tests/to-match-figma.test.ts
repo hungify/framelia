@@ -611,6 +611,166 @@ describe("runToMatchFigma", () => {
     }
   });
 
+  it("attributes a page-scope pixel-diff region to the check-point selector overlapping it", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png);
+    // #glitch diverges from the Figma baseline's uniform color, producing a real
+    // pixel-diff cluster at its own bounds -- exactly where the "glitch" check-point
+    // selector below sits, so the two should attribute to each other.
+    const app = await server(
+      html.replace(
+        "</style>",
+        '#glitch{position:absolute;top:10px;left:10px;width:20px;height:15px;background:red}</style><div id="glitch"></div>',
+      ),
+    );
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        {
+          fileKey: "file-key",
+          styleChecks: [{ selector: "#glitch", nodeId: "1:3", expectStyle: { fontSizePx: 999 } }],
+        },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(false);
+      const topIssues = (
+        attachJsonCalls[0]?.data as {
+          topIssues?: Array<{ kind: string; selector?: string }>;
+        }
+      )?.topIssues;
+      expect(topIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "pixel-attribution", selector: "#glitch" }),
+        ]),
+      );
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("attributes correctly on a high-DPI context (deviceScaleFactor 2) where CSS px and device px diverge", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png);
+    // Same #glitch/check-point layout as the deviceScaleFactor:1 case above -- this only
+    // proves the screenshot's pixel space (now forced to "css" scale, see core.ts) still
+    // lines up with captureElementBounds()'s CSS-px boundingBox() when the browser
+    // context renders at 2x device pixels per CSS pixel.
+    const app = await server(
+      html.replace(
+        "</style>",
+        '#glitch{position:absolute;top:10px;left:10px;width:20px;height:15px;background:red}</style><div id="glitch"></div>',
+      ),
+    );
+    const context = await browser.newContext({ viewport: SIZE, deviceScaleFactor: 2 });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        {
+          fileKey: "file-key",
+          styleChecks: [{ selector: "#glitch", nodeId: "1:3", expectStyle: { fontSizePx: 999 } }],
+        },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(false);
+      const topIssues = (
+        attachJsonCalls[0]?.data as {
+          topIssues?: Array<{ kind: string; selector?: string }>;
+        }
+      )?.topIssues;
+      expect(topIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "pixel-attribution", selector: "#glitch" }),
+        ]),
+      );
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not attribute a pixel-diff region to a check-point selector whose bounds don't overlap it", async () => {
+    const { html, png } = solidPagePng();
+    stubFigmaFetch(png);
+    // #glitch causes the only diff cluster; #far sits nowhere near it (off-canvas), so
+    // it must never show up as an attribution source.
+    const app = await server(
+      html.replace(
+        "</style>",
+        "#glitch{position:absolute;top:10px;left:10px;width:20px;height:15px;background:red}" +
+          "#far{position:absolute;top:-9999px;left:-9999px;width:5px;height:5px}" +
+          '</style><div id="glitch"></div><div id="far"></div>',
+      ),
+    );
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        {
+          fileKey: "file-key",
+          styleChecks: [{ selector: "#far", nodeId: "1:3", expectStyle: { fontSizePx: 999 } }],
+        },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async (name, data) => {
+            attachJsonCalls.push({ name, data });
+          },
+        },
+      );
+
+      expect(result.pass).toBe(false);
+      const topIssues = (
+        attachJsonCalls[0]?.data as {
+          topIssues?: Array<{ kind: string; selector?: string }>;
+        }
+      )?.topIssues;
+      expect(topIssues?.some((issue) => issue.kind === "pixel-attribution")).toBe(false);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("tags a page-scope style-check-error with its own check-point selector, same as a real mismatch", async () => {
     const { html, png } = solidPagePng();
     stubFigmaFetch(png);

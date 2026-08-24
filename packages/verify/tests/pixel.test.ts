@@ -4,6 +4,8 @@ import { buildMaskBitmap } from "../src/compare/mask.ts";
 import {
   countRealDiffPixels,
   diffBoundingBox,
+  diffClusters,
+  largestCluster,
   largestRealDiffCluster,
   pixelCompare,
 } from "../src/compare/pixel.ts";
@@ -90,5 +92,61 @@ describe("largestRealDiffCluster", () => {
   it("returns null for empty image", () => {
     const png = makeSolidPng(10, 10, [0, 0, 0, 255]);
     expect(largestRealDiffCluster(png)).toBeNull();
+  });
+});
+
+function paintRealDiffPixel(png: ReturnType<typeof makeSolidPng>, x: number, y: number): void {
+  const i = (png.width * y + x) << 2;
+  png.data[i] = 255;
+  png.data[i + 1] = 0;
+  png.data[i + 2] = 0;
+  png.data[i + 3] = 255;
+}
+
+describe("diffClusters", () => {
+  it("returns an empty array for no diff pixels", () => {
+    const png = makeSolidPng(10, 10, [0, 0, 0, 255]);
+    expect(diffClusters(png)).toEqual([]);
+  });
+
+  it("returns every disjoint 4-connected region, not just the largest", () => {
+    const png = makeSolidPng(10, 10, [0, 0, 0, 255]);
+    // A 2-pixel cluster near the top-left...
+    paintRealDiffPixel(png, 0, 0);
+    paintRealDiffPixel(png, 1, 0);
+    // ...and an unconnected single-pixel cluster far away.
+    paintRealDiffPixel(png, 9, 9);
+
+    const clusters = diffClusters(png);
+    expect(clusters).toHaveLength(2);
+    expect(clusters).toContainEqual({ pixels: 2, bbox: { x0: 0, y0: 0, x1: 2, y1: 1 } });
+    expect(clusters).toContainEqual({ pixels: 1, bbox: { x0: 9, y0: 9, x1: 10, y1: 10 } });
+  });
+
+  it("agrees with largestRealDiffCluster on which cluster is largest", () => {
+    const png = makeSolidPng(10, 10, [0, 0, 0, 255]);
+    paintRealDiffPixel(png, 0, 0);
+    paintRealDiffPixel(png, 5, 5);
+    paintRealDiffPixel(png, 5, 6);
+
+    const clusters = diffClusters(png);
+    const largest = largestRealDiffCluster(png);
+    expect(largest).toEqual(clusters.find((c) => c.pixels === 2));
+  });
+});
+
+describe("largestCluster", () => {
+  it("returns null for an empty list", () => {
+    expect(largestCluster([])).toBeNull();
+  });
+
+  it("picks the biggest of an already-computed cluster list, agreeing with largestRealDiffCluster", () => {
+    const png = makeSolidPng(10, 10, [0, 0, 0, 255]);
+    paintRealDiffPixel(png, 0, 0);
+    paintRealDiffPixel(png, 5, 5);
+    paintRealDiffPixel(png, 5, 6);
+
+    const clusters = diffClusters(png);
+    expect(largestCluster(clusters)).toEqual(largestRealDiffCluster(png));
   });
 });

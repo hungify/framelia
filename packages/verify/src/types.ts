@@ -9,6 +9,7 @@ import {
 } from "@framelia/contracts";
 
 import type { MaskBounds, MaskEvidence } from "./capture/types.ts";
+import type { DiffCluster } from "./compare/pixel.ts";
 import type { StyleSnapshot } from "./figma-node-style.ts";
 
 export { SCHEMA_VERSION };
@@ -70,7 +71,8 @@ export type TopIssueKind =
   | "style-check-error"
   | "baseline-stability"
   | "capture-stability"
-  | "residual";
+  | "residual"
+  | "pixel-attribution";
 
 export type TopIssueSeverity = "high" | "medium" | "low";
 
@@ -164,6 +166,11 @@ export interface CompareOutcome {
   topIssues: TopIssue[];
   warnings: string[];
   diffPath: string | null;
+  /** Every 4-connected real-diff region, in the aligned comparison canvas's coordinate
+   *  space -- lets a caller (e.g. toMatchFigma) attribute regions to style-check
+   *  selectors via compare/attribution.ts's attributeDiffRegions. Empty on the
+   *  early-exit paths (size mismatch, unreadable PNG) where no diff was ever computed. */
+  diffClusters: DiffCluster[];
 }
 
 export interface ResolvedBaseline {

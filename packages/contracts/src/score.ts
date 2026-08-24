@@ -128,6 +128,7 @@ export const topIssueSchema = z
       "baseline-stability",
       "capture-stability",
       "residual",
+      "pixel-attribution",
     ]),
     message: z.string().min(1),
     hint: z.string().optional(),

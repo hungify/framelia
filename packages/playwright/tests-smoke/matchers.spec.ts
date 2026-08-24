@@ -1,4 +1,9 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { expect } from "@framelia/playwright";
+import { promotePageBaseline } from "@framelia/verify";
 import { makeSolidPng } from "@framelia/verify/internal";
 import { test } from "@playwright/test";
 import { PNG } from "pngjs";
@@ -48,6 +53,21 @@ test("real runner executes toMatchPage", async ({ page }) => {
   await reference.setContent(DIFFERENT_HTML);
   await expect(expect(page).toMatchPage(reference)).rejects.toThrow(/pages did not match/);
   await reference.close();
+});
+
+test("real runner executes toMatchPageBaseline against a promoted baseline", async ({ page }) => {
+  const baselineDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-smoke-page-baseline-"));
+  const sourcePath = path.join(baselineDir, "source.png");
+  fs.writeFileSync(sourcePath, PNG_BODY);
+  promotePageBaseline({ sourcePath, outDir: baselineDir, promotedBy: "smoke-test" });
+
+  await page.setContent(HTML);
+  await expect(page).toMatchPageBaseline("smoke-key", { baselineDir });
+
+  await page.setContent(DIFFERENT_HTML);
+  await expect(expect(page).toMatchPageBaseline("smoke-key", { baselineDir })).rejects.toThrow(
+    /did not match promoted baseline/,
+  );
 });
 
 test("real runner executes toMatchUrl in caller context", async ({ page }) => {

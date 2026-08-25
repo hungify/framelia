@@ -1,10 +1,17 @@
 import * as path from "node:path";
 
-import { CONTRACT_ID_PATTERN, httpUrlSchema, visualArtifactPath } from "@framelia/contracts";
+import { CONTRACT_ID_PATTERN, visualArtifactPath } from "@framelia/contracts";
 import { captureAndPromotePageBaseline } from "@framelia/verify";
 import type { Command } from "commander";
 
-import { emitResult, positiveInteger, resolveProjectRoot, subcommand } from "./shared.ts";
+import {
+  emitResult,
+  positiveInteger,
+  requirePairedViewport,
+  resolveProjectRoot,
+  subcommand,
+  validateTargetUrl,
+} from "./shared.ts";
 
 interface BaselinePromoteOptions {
   key: string;
@@ -29,12 +36,6 @@ function validateContractId(value: string): void {
   }
 }
 
-function validateTargetUrl(value: string): void {
-  if (!httpUrlSchema.safeParse(value).success) {
-    throw new Error("--target-url must use http:// or https://.");
-  }
-}
-
 /** Best-effort default so a local `framelia baseline promote` doesn't require typing
  *  --promoted-by every time; CI should still pass it explicitly (e.g. the actor/run id). */
 function defaultPromotedBy(): string {
@@ -50,9 +51,7 @@ function defaultPromotedBy(): string {
 export async function baselinePromoteCommand(options: BaselinePromoteOptions): Promise<void> {
   validateContractId(options.key);
   validateTargetUrl(options.targetUrl);
-  if ((options.viewportWidth === undefined) !== (options.viewportHeight === undefined)) {
-    throw new Error("--viewport-width and --viewport-height must be supplied together.");
-  }
+  requirePairedViewport(options.viewportWidth, options.viewportHeight);
 
   const projectRoot = resolveProjectRoot(options.projectRoot);
   const outDir = path.join(projectRoot, visualArtifactPath(options.key));

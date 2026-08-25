@@ -1,4 +1,3 @@
-import { httpUrlSchema } from "@framelia/contracts";
 import { suggestMasksForUrl } from "@framelia/verify";
 import { Option, type Command } from "commander";
 
@@ -8,7 +7,14 @@ import {
   VIEWPORT_PRESETS,
   type CreateContractOptions,
 } from "../contract.ts";
-import { emitResult, positiveInteger, resolveProjectRoot, subcommand } from "./shared.ts";
+import {
+  emitResult,
+  positiveInteger,
+  requirePairedViewport,
+  resolveProjectRoot,
+  subcommand,
+  validateTargetUrl,
+} from "./shared.ts";
 
 type CreateContractFlags = Omit<CreateContractOptions, "projectRoot"> & { projectRoot?: string };
 
@@ -20,12 +26,6 @@ interface SuggestMasksOptions {
   headed?: boolean;
 }
 
-function validateTargetUrl(value: string): void {
-  if (!httpUrlSchema.safeParse(value).success) {
-    throw new Error("--target-url must use http:// or https://.");
-  }
-}
-
 /**
  * `framelia contract suggest-masks` (#42): scans a live page for common
  * dynamic-content signals (see @framelia/verify's mask-suggest.ts) and prints
@@ -35,9 +35,7 @@ function validateTargetUrl(value: string): void {
  */
 export async function suggestMasksCommand(options: SuggestMasksOptions): Promise<void> {
   validateTargetUrl(options.targetUrl);
-  if ((options.viewportWidth === undefined) !== (options.viewportHeight === undefined)) {
-    throw new Error("--viewport-width and --viewport-height must be supplied together.");
-  }
+  requirePairedViewport(options.viewportWidth, options.viewportHeight);
 
   const result = await suggestMasksForUrl({
     url: options.targetUrl,

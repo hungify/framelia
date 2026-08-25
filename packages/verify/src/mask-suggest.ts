@@ -95,18 +95,26 @@ export async function suggestMasks(
     }, heuristic.selector);
     if (!matches.length) continue;
 
-    const specificSelectors = new Set<string>();
+    const specificCounts = new Map<string, number>();
     let genericCount = 0;
     for (const match of matches) {
-      if (match.isSpecific && match.selector) specificSelectors.add(match.selector);
-      else genericCount += 1;
+      if (match.isSpecific && match.selector) {
+        specificCounts.set(match.selector, (specificCounts.get(match.selector) ?? 0) + 1);
+      } else {
+        genericCount += 1;
+      }
     }
-    for (const selector of specificSelectors) {
+    for (const [selector, count] of specificCounts) {
       suggestions.push({
         selector,
         reason: heuristic.description,
         heuristic: heuristic.kind,
-        matchedCount: 1,
+        matchedCount: count,
+        // A "specific" selector (data-testid/id) is only actually unique when it
+        // matched once -- the same attribute value can repeat across elements (a
+        // list rendered from a static testid, a duplicated id), so this must
+        // report the real count and maxMatches, not assume 1 (PR #51 review).
+        ...(count > 1 ? { maxMatches: count } : {}),
       });
     }
     if (genericCount > 0) {

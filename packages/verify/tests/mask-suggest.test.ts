@@ -59,6 +59,20 @@ describe("suggestMasks", () => {
     });
   });
 
+  it("reports the true match count (and maxMatches) when the same specific selector repeats (PR #51 review)", async () => {
+    const suggestions = await suggestFor(`
+      <div data-dynamic data-testid="row-status">A</div>
+      <div data-dynamic data-testid="row-status">B</div>
+      <div data-dynamic data-testid="row-status">C</div>
+    `);
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]).toMatchObject({
+      selector: '[data-testid="row-status"]',
+      matchedCount: 3,
+      maxMatches: 3,
+    });
+  });
+
   it("falls back to #id when no data-testid is present", async () => {
     const suggestions = await suggestFor(`<div id="clock" data-dynamic>12:00</div>`);
     expect(suggestions[0]).toMatchObject({ selector: "#clock" });

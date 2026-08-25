@@ -120,3 +120,7 @@ export type {
   CaptureAndPromotePageBaselineOptions,
   CaptureAndPromotePageBaselineOutcome,
 } from "./promote-page-baseline.ts";
+export { DEFAULT_MASK_SUGGESTION_HEURISTICS, suggestMasks } from "./mask-suggest.ts";
+export type { MaskSuggestion, MaskSuggestionHeuristic } from "./mask-suggest.ts";
+export { suggestMasksForUrl } from "./suggest-masks.ts";
+export type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "./suggest-masks.ts";

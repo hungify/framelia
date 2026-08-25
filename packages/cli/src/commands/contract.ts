@@ -1,3 +1,5 @@
+import { httpUrlSchema } from "@framelia/contracts";
+import { suggestMasksForUrl } from "@framelia/verify";
 import { Option, type Command } from "commander";
 
 import {
@@ -6,9 +8,59 @@ import {
   VIEWPORT_PRESETS,
   type CreateContractOptions,
 } from "../contract.ts";
-import { positiveInteger, resolveProjectRoot, subcommand } from "./shared.ts";
+import { emitResult, positiveInteger, resolveProjectRoot, subcommand } from "./shared.ts";
 
 type CreateContractFlags = Omit<CreateContractOptions, "projectRoot"> & { projectRoot?: string };
+
+interface SuggestMasksOptions {
+  targetUrl: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  storageState?: string;
+  headed?: boolean;
+}
+
+function validateTargetUrl(value: string): void {
+  if (!httpUrlSchema.safeParse(value).success) {
+    throw new Error("--target-url must use http:// or https://.");
+  }
+}
+
+/**
+ * `framelia contract suggest-masks` (#42): scans a live page for common
+ * dynamic-content signals (see @framelia/verify's mask-suggest.ts) and prints
+ * candidate `masks[]` entries. Always proposals only -- this never reads or
+ * writes a contract file; accepting a suggestion is a manual edit the caller
+ * makes to their own contract.
+ */
+export async function suggestMasksCommand(options: SuggestMasksOptions): Promise<void> {
+  validateTargetUrl(options.targetUrl);
+  if ((options.viewportWidth === undefined) !== (options.viewportHeight === undefined)) {
+    throw new Error("--viewport-width and --viewport-height must be supplied together.");
+  }
+
+  const result = await suggestMasksForUrl({
+    url: options.targetUrl,
+    ...(options.viewportWidth !== undefined && options.viewportHeight !== undefined
+      ? { viewport: { width: options.viewportWidth, height: options.viewportHeight } }
+      : {}),
+    storageStatePath: options.storageState,
+    headless: !options.headed,
+  });
+
+  if (!result.ok) {
+    emitResult({ error: result.error, message: result.message }, false);
+    return;
+  }
+  emitResult(
+    {
+      url: result.url,
+      suggestions: result.suggestions,
+      note: "Proposals only -- nothing was written to any contract. Review and add the selectors you accept to the contract's masks[] yourself.",
+    },
+    true,
+  );
+}
 
 export function registerContractCommands(program: Command): void {
   const contract = subcommand("contract", "Create and manage visual contracts.");
@@ -70,6 +122,19 @@ export function registerContractCommands(program: Command): void {
           outputPath: output,
         }),
       ),
+  );
+
+  contract.addCommand(
+    subcommand(
+      "suggest-masks",
+      "Scan a live page for common dynamic-content signals and propose mask selectors. Proposals only -- never writes to a contract.",
+    )
+      .requiredOption("--target-url <url>", "page URL to scan")
+      .option("--viewport-width <n>", "viewport width in px", positiveInteger)
+      .option("--viewport-height <n>", "viewport height in px", positiveInteger)
+      .option("--storage-state <path>", "Playwright storage-state file for an authenticated scan")
+      .option("--headed", "run the scan browser headed (defaults to headless)")
+      .action(suggestMasksCommand),
   );
 
   program.addCommand(contract);

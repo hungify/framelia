@@ -36,6 +36,12 @@ export interface FrameliaScoreAttachment {
   /** Set only for baselineKind "figma" -- lets the Reporter rebuild a real baseline pointer. */
   fileKey?: string;
   nodeId?: string;
+  /** Set only when this comparison ran against a promoted baseline (toMatchPageBaseline) --
+   *  lets the Reporter surface who/when/from-what-run accepted the current baseline (#41). */
+  baselinePromotedAt?: string;
+  baselinePromotedBy?: string;
+  baselineVersion?: number;
+  baselineRunId?: string;
 }
 import type { VisualMask } from "@framelia/contracts";
 import type {

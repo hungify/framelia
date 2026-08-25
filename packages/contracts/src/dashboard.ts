@@ -73,7 +73,15 @@ export interface DashboardContractResult {
   status: DashboardVerdict;
   phase: DashboardPhase;
   baselineKind: "figma" | "page";
-  baseline?: DashboardImageEvidence & { revision?: string; provenance: string };
+  baseline?: DashboardImageEvidence & {
+    revision?: string;
+    provenance: string;
+    /** Set only for a toMatchPageBaseline result -- who/when/from-what-run accepted
+     *  this baseline via `framelia baseline promote` (see #41). */
+    promotedAt?: string;
+    promotedBy?: string;
+    runId?: string;
+  };
   actual?: DashboardImageEvidence & { url: string };
   diff?: DashboardImageEvidence;
   capture: {

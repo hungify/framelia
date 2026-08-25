@@ -330,6 +330,18 @@ const resolvedThresholdTooltip = computed(() => {
           >{{ contract.baseline.provenance }}</code
         >
       </div>
+      <div v-if="contract.baseline?.promotedAt" class="min-w-0">
+        <span class="block overflow-hidden text-ellipsis whitespace-nowrap text-muted text-xs"
+          >Baseline promoted</span
+        >
+        <code
+          class="block overflow-hidden text-ellipsis whitespace-nowrap mt-0.75 text-text-soft text-xs"
+          >{{ contract.baseline.revision ? `${contract.baseline.revision} ` : "" }}by
+          {{ contract.baseline.promotedBy ?? "unknown" }} at
+          {{ new Date(contract.baseline.promotedAt).toLocaleString()
+          }}{{ contract.baseline.runId ? ` (run ${contract.baseline.runId})` : "" }}</code
+        >
+      </div>
       <div v-if="contract.evidenceHash" class="min-w-0">
         <span class="block overflow-hidden text-ellipsis whitespace-nowrap text-muted text-xs"
           >Evidence hash</span

@@ -544,6 +544,52 @@ describe("FrameliaReporter", () => {
     expect(fs.existsSync(artifactPath)).toBe(false);
   });
 
+  it("surfaces a toMatchPageBaseline result's promotion provenance on the live dashboard contract and persists its image evidence, but still writes no VerificationArtifact (#41, R9)", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const clientRoot = clientRootFixture();
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "homepage matches promoted baseline");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(
+      testA,
+      passedResultWithImages("test-a", imageDir, {
+        baselineKind: "web",
+        fileKey: undefined,
+        nodeId: undefined,
+        baselinePromotedAt: "2026-08-01T00:00:00.000Z",
+        baselinePromotedBy: "alice@example.com",
+        baselineVersion: 2,
+        baselineRunId: "ci-run-42",
+      }),
+    );
+    const url = await reporter.dashboardUrl();
+    const run = await (await fetch(`${url}/api/run`)).json();
+    expect(run.contracts[0]).toMatchObject({
+      id: "test-a",
+      status: "passed",
+      baseline: {
+        provenance: "promoted",
+        revision: "v2",
+        promotedAt: "2026-08-01T00:00:00.000Z",
+        promotedBy: "alice@example.com",
+        runId: "ci-run-42",
+      },
+      actual: { url: "http://localhost/" },
+    });
+
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const outDir = path.join(projectRoot, ".framelia/visual-verifications/test-a");
+    expect(fs.existsSync(path.join(outDir, "web-baseline.png"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "actual.png"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "diff.png"))).toBe(true);
+    // R9 still applies to the schema-v4 done-gate pipeline: no VerificationArtifact.
+    expect(fs.existsSync(path.join(outDir, "visual-verification.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "visual-score.json"))).toBe(false);
+  });
+
   it("surfaces a matcher's style-comparison topIssues on the live dashboard contract", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const clientRoot = clientRootFixture();

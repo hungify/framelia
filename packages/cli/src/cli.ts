@@ -6,6 +6,7 @@ import { Command, CommanderError } from "commander";
 
 import { DuplicateFlagError, rejectDuplicateFlags, type FlagSpec } from "./argv-flags.ts";
 import { registerAuthCommand } from "./commands/auth.ts";
+import { registerBaselineCommands } from "./commands/baseline.ts";
 import { registerContractCommands } from "./commands/contract.ts";
 import { registerDashboardCommands, runAggregatedDashboard } from "./commands/dashboard.ts";
 import { registerDebugCommands } from "./commands/debug.ts";
@@ -42,6 +43,7 @@ export function createProgram(): Command {
   registerInitCommand(program);
   registerAuthCommand(program);
   registerContractCommands(program);
+  registerBaselineCommands(program);
   registerDebugCommands(program);
 
   program.action(() => runAggregatedDashboard({ projectRoot: process.cwd(), open: true }));

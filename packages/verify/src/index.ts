@@ -101,3 +101,22 @@ export type { NodeMetadata, ResolveNodeSpecOutcome } from "./figma-api.ts";
 export { extractFigmaStyle, expectStyleToSnapshot } from "./figma-node-style.ts";
 export type { BoxShadow, CornerRadius, StyleSnapshot } from "./figma-node-style.ts";
 export { compareStyles } from "./style-compare.ts";
+export {
+  pageBaselineImagePath,
+  pageBaselineMetaPath,
+  promotePageBaseline,
+  readPageBaselineMeta,
+  resolvePageBaseline,
+} from "./page-baseline.ts";
+export type {
+  PageBaselineMeta,
+  PageBaselinePromotion,
+  PromotePageBaselineOptions,
+  PromotePageBaselineResult,
+  ResolvePageBaselineOutcome,
+} from "./page-baseline.ts";
+export { captureAndPromotePageBaseline } from "./promote-page-baseline.ts";
+export type {
+  CaptureAndPromotePageBaselineOptions,
+  CaptureAndPromotePageBaselineOutcome,
+} from "./promote-page-baseline.ts";

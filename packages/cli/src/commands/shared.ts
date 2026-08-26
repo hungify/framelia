@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { httpUrlSchema } from "@framelia/contracts";
 import { EXIT_OK, EXIT_VISUAL_FAIL, JSON_INDENT_SPACES } from "@framelia/verify";
 import { Command, InvalidArgumentError } from "commander";
 
@@ -49,4 +50,20 @@ export function positiveInteger(raw: string): number {
     throw new InvalidArgumentError("must be a positive integer");
   }
   return value;
+}
+
+/** Shared by every command that launches its own browser against a target URL
+ *  (`baseline promote`, `contract suggest-masks`, ...). */
+export function validateTargetUrl(value: string): void {
+  if (!httpUrlSchema.safeParse(value).success) {
+    throw new Error("--target-url must use http:// or https://.");
+  }
+}
+
+/** `--viewport-width`/`--viewport-height` must arrive together or not at all --
+ *  shared by every command that optionally overrides the launched browser's viewport. */
+export function requirePairedViewport(width: number | undefined, height: number | undefined): void {
+  if ((width === undefined) !== (height === undefined)) {
+    throw new Error("--viewport-width and --viewport-height must be supplied together.");
+  }
 }

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import type {
   CaptureAndPromotePageBaselineOptions,
   CaptureAndPromotePageBaselineOutcome,
-} from "@framelia/verify";
+} from "@framelia/verify/cli";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { baselinePromoteCommand } from "../src/commands/baseline.ts";
@@ -19,8 +19,8 @@ const { captureAndPromotePageBaselineMock } = vi.hoisted(() => ({
     >(),
 }));
 
-vi.mock("@framelia/verify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@framelia/verify")>();
+vi.mock("@framelia/verify/cli", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@framelia/verify/cli")>();
   return { ...actual, captureAndPromotePageBaseline: captureAndPromotePageBaselineMock };
 });
 

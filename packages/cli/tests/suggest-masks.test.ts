@@ -1,4 +1,4 @@
-import type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "@framelia/verify";
+import type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "@framelia/verify/cli";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { suggestMasksCommand } from "../src/commands/contract.ts";
@@ -8,8 +8,8 @@ const { suggestMasksForUrlMock } = vi.hoisted(() => ({
     vi.fn<(options: SuggestMasksForUrlOptions) => Promise<SuggestMasksForUrlOutcome>>(),
 }));
 
-vi.mock("@framelia/verify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@framelia/verify")>();
+vi.mock("@framelia/verify/cli", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@framelia/verify/cli")>();
   return { ...actual, suggestMasksForUrl: suggestMasksForUrlMock };
 });
 

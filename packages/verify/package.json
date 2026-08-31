@@ -29,6 +29,11 @@
       "framelia-dev": "./src/internal.ts",
       "types": "./dist/internal.d.ts",
       "default": "./dist/internal.js"
+    },
+    "./cli": {
+      "framelia-dev": "./src/cli.ts",
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
     }
   },
   "publishConfig": {

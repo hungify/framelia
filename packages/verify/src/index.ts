@@ -1,5 +1,4 @@
-export { recordStorageState } from "./auth.ts";
-export type { RecordStorageStateOptions, RecordStorageStateResult } from "./auth.ts";
+// recordStorageState (auth.ts) lives in ./cli.ts, not here -- see that file's doc comment.
 export { readContractEntry } from "./contract-file.ts";
 export type { ReadContractEntryOutcome } from "./contract-file.ts";
 export {
@@ -124,12 +123,7 @@ export type {
   PromotePageBaselineResult,
   ResolvePageBaselineOutcome,
 } from "./page-baseline.ts";
-export { captureAndPromotePageBaseline } from "./promote-page-baseline.ts";
-export type {
-  CaptureAndPromotePageBaselineOptions,
-  CaptureAndPromotePageBaselineOutcome,
-} from "./promote-page-baseline.ts";
+// captureAndPromotePageBaseline (promote-page-baseline.ts) lives in ./cli.ts, not here.
 export { DEFAULT_MASK_SUGGESTION_HEURISTICS, suggestMasks } from "./mask-suggest.ts";
 export type { MaskSuggestion, MaskSuggestionHeuristic } from "./mask-suggest.ts";
-export { suggestMasksForUrl } from "./suggest-masks.ts";
-export type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "./suggest-masks.ts";
+// suggestMasksForUrl (suggest-masks.ts) lives in ./cli.ts, not here.

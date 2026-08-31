@@ -55,15 +55,157 @@ describe("contract scaffold", () => {
       },
     });
 
-    writeContractRequest(outputPath, request);
+    expect(writeContractRequest(outputPath, request)).toBe("created");
 
     expect(JSON.parse(fs.readFileSync(outputPath, "utf8"))).toMatchObject({
       contracts: [{ profile: "component/strict" }],
     });
     expect(() => writeContractRequest(outputPath, request)).toThrow(
-      "Refusing to overwrite existing file",
+      'Refusing to replace existing contract "card.mobile"',
     );
-    expect(() => writeContractRequest(outputPath, request, true)).not.toThrow();
+    expect(writeContractRequest(outputPath, request, true)).toBe("replaced");
+  });
+
+  it("adds a second contract to an existing file without needing --force", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-init-"));
+    temporaryDirectories.push(directory);
+    const outputPath = path.join(directory, ".framelia", "visual-contract.json");
+    const desktop = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
+      viewport: { name: "desktop", width: 1440, height: 1024 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+    const mobile = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.mobile",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
+      viewport: { name: "mobile", width: 390, height: 844 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+
+    expect(writeContractRequest(outputPath, desktop)).toBe("created");
+    expect(writeContractRequest(outputPath, mobile)).toBe("added");
+
+    expect(JSON.parse(fs.readFileSync(outputPath, "utf8"))).toMatchObject({
+      contracts: [{ id: "card.desktop" }, { id: "card.mobile" }],
+    });
+  });
+
+  it("replaces one contract by id with --force while leaving its siblings untouched", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-init-"));
+    temporaryDirectories.push(directory);
+    const outputPath = path.join(directory, ".framelia", "visual-contract.json");
+    const desktop = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
+      viewport: { name: "desktop", width: 1440, height: 1024 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+    const mobile = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.mobile",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
+      viewport: { name: "mobile", width: 390, height: 844 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+    const updatedDesktop = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "999:9999" },
+      viewport: { name: "desktop", width: 1920, height: 1080 },
+      scope: { kind: "page", pageReason: "Complete card page, redesigned." },
+    });
+
+    writeContractRequest(outputPath, desktop);
+    writeContractRequest(outputPath, mobile);
+    expect(writeContractRequest(outputPath, updatedDesktop, true)).toBe("replaced");
+
+    expect(JSON.parse(fs.readFileSync(outputPath, "utf8"))).toMatchObject({
+      contracts: [
+        { id: "card.desktop", viewport: { width: 1920, height: 1080 } },
+        { id: "card.mobile", viewport: { width: 390, height: 844 } },
+      ],
+    });
+  });
+
+  it("refuses to merge a contract whose target.url differs from the file's existing one", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-init-"));
+    temporaryDirectories.push(directory);
+    const outputPath = path.join(directory, ".framelia", "visual-contract.json");
+    const desktop = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
+      viewport: { name: "desktop", width: 1440, height: 1024 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+    const otherPage = createContractRequest({
+      targetUrl: "https://preview.example.com/other",
+      contractId: "card.mobile",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
+      viewport: { name: "mobile", width: 390, height: 844 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+
+    writeContractRequest(outputPath, desktop);
+    expect(() => writeContractRequest(outputPath, otherPage)).toThrow("shares a single target.url");
+    expect(() => writeContractRequest(outputPath, otherPage, true)).toThrow(
+      "shares a single target.url",
+    );
+  });
+
+  it("reports the target.url mismatch even when replacing an existing id without --force", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-init-"));
+    temporaryDirectories.push(directory);
+    const outputPath = path.join(directory, ".framelia", "visual-contract.json");
+    const desktop = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
+      viewport: { name: "desktop", width: 1440, height: 1024 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+    const sameIdOtherUrl = createContractRequest({
+      targetUrl: "https://preview.example.com/other",
+      contractId: "card.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "999:9999" },
+      viewport: { name: "desktop", width: 1920, height: 1080 },
+      scope: { kind: "page", pageReason: "Complete card page, redesigned." },
+    });
+
+    writeContractRequest(outputPath, desktop);
+    expect(() => writeContractRequest(outputPath, sameIdOtherUrl)).toThrow(
+      "shares a single target.url",
+    );
+  });
+
+  it("rejects a request carrying more than one contract instead of silently dropping the rest", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-init-"));
+    temporaryDirectories.push(directory);
+    const outputPath = path.join(directory, ".framelia", "visual-contract.json");
+    const desktop = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.desktop",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
+      viewport: { name: "desktop", width: 1440, height: 1024 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+    const mobile = createContractRequest({
+      targetUrl: "https://preview.example.com/card",
+      contractId: "card.mobile",
+      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
+      viewport: { name: "mobile", width: 390, height: 844 },
+      scope: { kind: "page", pageReason: "Complete card page." },
+    });
+    const both = { ...desktop, contracts: [...desktop.contracts, ...mobile.contracts] };
+
+    expect(() => writeContractRequest(outputPath, both)).toThrow(
+      "expects exactly one contract per request",
+    );
+    expect(fs.existsSync(outputPath)).toBe(false);
   });
 
   it("accepts a page contract with one or more style check-points", () => {

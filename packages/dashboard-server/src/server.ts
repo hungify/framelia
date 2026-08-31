@@ -67,7 +67,7 @@ export async function startDashboardServer(options: {
   port?: number;
   clientRoot?: string;
 }): Promise<DashboardServer> {
-  const hostname = options.hostname ?? "127.0.0.1";
+  const hostname = options.hostname ?? "localhost";
   const clientRoot = options.clientRoot ?? defaultClientRoot();
   await fs.access(path.join(clientRoot, "index.html")).catch(() => {
     throw new Error(

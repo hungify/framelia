@@ -1,4 +1,4 @@
-import { suggestMasksForUrl } from "@framelia/verify";
+import { suggestMasksForUrl } from "@framelia/verify/cli";
 import { Option, type Command } from "commander";
 
 import {

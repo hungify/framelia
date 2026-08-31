@@ -1,7 +1,7 @@
 import * as path from "node:path";
 
 import { CONTRACT_ID_PATTERN, visualArtifactPath } from "@framelia/contracts";
-import { captureAndPromotePageBaseline } from "@framelia/verify";
+import { captureAndPromotePageBaseline } from "@framelia/verify/cli";
 import type { Command } from "commander";
 
 import {

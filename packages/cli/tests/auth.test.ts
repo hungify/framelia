@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { RecordStorageStateOptions, RecordStorageStateResult } from "@framelia/verify";
+import type { RecordStorageStateOptions, RecordStorageStateResult } from "@framelia/verify/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { authCommand } from "../src/commands/auth.ts";
@@ -22,8 +22,8 @@ vi.mock("@clack/prompts", () => ({
   note: vi.fn<(message: string, title?: string) => void>(),
 }));
 
-vi.mock("@framelia/verify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@framelia/verify")>();
+vi.mock("@framelia/verify/cli", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@framelia/verify/cli")>();
   return { ...actual, recordStorageState: recordStorageStateMock };
 });
 

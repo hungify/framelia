@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 
 import * as p from "@clack/prompts";
 import { httpUrlSchema } from "@framelia/contracts";
-import { recordStorageState } from "@framelia/verify";
+import { recordStorageState } from "@framelia/verify/cli";
 import type { Command } from "commander";
 
 import { loadFrameliaConfig } from "../config.ts";

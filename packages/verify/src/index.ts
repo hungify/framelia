@@ -1,5 +1,14 @@
 export { recordStorageState } from "./auth.ts";
 export type { RecordStorageStateOptions, RecordStorageStateResult } from "./auth.ts";
+export { readContractEntry } from "./contract-file.ts";
+export type { ReadContractEntryOutcome } from "./contract-file.ts";
+export {
+  contractFreshnessPath,
+  isContractFresh,
+  readContractFreshness,
+  writeContractFreshness,
+} from "./contract-freshness.ts";
+export type { ContractFreshnessReceipt } from "./contract-freshness.ts";
 export { FigmaBaselineProvider } from "./baseline.ts";
 export type {
   BaselineProvider,

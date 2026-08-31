@@ -23,3 +23,13 @@ export type { ToMatchFigmaOptions } from "./matchers/to-match-figma.ts";
 export type { ToMatchPageOptions } from "./matchers/to-match-page.ts";
 export type { ToMatchPageBaselineOptions } from "./matchers/to-match-page-baseline.ts";
 export type { ToMatchUrlOptions } from "./matchers/to-match-url.ts";
+
+// Re-exported so a spec only needs one import for "read a contract entry, decide
+// whether it's stale, run the matcher" -- see README's "Scaling to many pages".
+export {
+  isContractFresh,
+  readContractEntry,
+  readContractFreshness,
+  writeContractFreshness,
+} from "@framelia/verify";
+export type { ContractFreshnessReceipt, ReadContractEntryOutcome } from "@framelia/verify";

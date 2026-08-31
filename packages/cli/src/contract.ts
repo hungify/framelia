@@ -18,6 +18,7 @@ import {
 } from "./contract/scaffold.ts";
 
 export { createContractRequest, writeContractRequest } from "./contract/scaffold.ts";
+export type { WriteContractRequestOutcome } from "./contract/scaffold.ts";
 
 type BaselineAnswers = ContractAnswers["baseline"];
 
@@ -445,6 +446,12 @@ export async function runCreateContract(
     options.projectRoot,
     options.outputPath ?? visualArtifactPath(featureName, VISUAL_CONTRACT_FILE),
   );
-  writeContractRequest(outputPath, request, options.force);
-  prompts.outro(`Created ${outputPath}`);
+  const outcome = writeContractRequest(outputPath, request, options.force);
+  const verb =
+    outcome === "created"
+      ? "Created"
+      : outcome === "added"
+        ? "Added contract to"
+        : "Replaced contract in";
+  prompts.outro(`${verb} ${outputPath}`);
 }

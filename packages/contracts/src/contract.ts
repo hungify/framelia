@@ -117,7 +117,7 @@ export const profileOverridesSchema = z
 /**
  * Practically-overridable tolerances compareStyles() applies when diffing a region
  * contract's captured DOM style against its Figma-side StyleSnapshot -- mirrors
- * profileOverridesSchema's pattern (git-committed, PR-reviewed, no dashboard UI).
+ * profileOverridesSchema's pattern (git-committed, PR-reviewed, no UI).
  * Style mismatches stay informational-only (TopIssue.blocking: false) regardless
  * of this override -- see style-compare.ts.
  */

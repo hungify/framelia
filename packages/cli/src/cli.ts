@@ -8,12 +8,12 @@ import { DuplicateFlagError, rejectDuplicateFlags, type FlagSpec } from "./argv-
 import { registerAuthCommand } from "./commands/auth.ts";
 import { registerBaselineCommands } from "./commands/baseline.ts";
 import { registerContractCommands } from "./commands/contract.ts";
-import { registerDashboardCommands } from "./commands/dashboard.ts";
 import { registerDebugCommands } from "./commands/debug.ts";
 import { registerDoneGateCommand } from "./commands/done-gate.ts";
 import { registerInitCommand } from "./commands/init-command.ts";
 import { registerSchemaCommand } from "./commands/schema.ts";
 import { registerStatusCommand } from "./commands/status.ts";
+import { registerUICommands } from "./commands/ui.ts";
 
 loadProjectEnv();
 
@@ -36,7 +36,7 @@ export function createProgram(): Command {
     })
     .addHelpText("after", "\nExample:\n  framelia contract create\n");
 
-  registerDashboardCommands(program);
+  registerUICommands(program);
   registerDoneGateCommand(program);
   registerStatusCommand(program, PACKAGE_VERSION);
   registerSchemaCommand(program);

@@ -45,7 +45,7 @@
   "scripts": {
     "build": "tsup",
     "cli": "tsx src/cli.ts",
-    "pretest": "pnpm --filter @framelia/contracts build && pnpm --filter @framelia/verify build && pnpm --filter @framelia/dashboard-server build && pnpm run build",
+    "pretest": "pnpm --filter @framelia/contracts build && pnpm --filter @framelia/verify build && pnpm --filter @framelia/ui-server build && pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -55,7 +55,7 @@
   "dependencies": {
     "@clack/prompts": "^1.7.0",
     "@framelia/contracts": "workspace:*",
-    "@framelia/dashboard-server": "workspace:*",
+    "@framelia/ui-server": "workspace:*",
     "@framelia/verify": "workspace:*",
     "commander": "^15.0.0",
     "nanoid": "3.3.16",

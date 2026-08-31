@@ -62,20 +62,20 @@ jobs:
         run: |
           contracts_version=$(node -p "require('./packages/contracts/package.json').version")
           verify_version=$(node -p "require('./packages/verify/package.json').version")
-          dashboard_server_version=$(node -p "require('./packages/dashboard-server/package.json').version")
+          ui_server_version=$(node -p "require('./packages/ui-server/package.json').version")
           playwright_version=$(node -p "require('./packages/playwright/package.json').version")
           cli_version=$(node -p "require('./packages/cli/package.json').version")
-          if [[ "$contracts_version" != "$verify_version" || "$verify_version" != "$dashboard_server_version" || "$dashboard_server_version" != "$playwright_version" || "$playwright_version" != "$cli_version" ]]; then
-            echo "Package versions must match: contracts=$contracts_version verify=$verify_version dashboard-server=$dashboard_server_version playwright=$playwright_version cli=$cli_version" >&2
+          if [[ "$contracts_version" != "$verify_version" || "$verify_version" != "$ui_server_version" || "$ui_server_version" != "$playwright_version" || "$playwright_version" != "$cli_version" ]]; then
+            echo "Package versions must match: contracts=$contracts_version verify=$verify_version ui-server=$ui_server_version playwright=$playwright_version cli=$cli_version" >&2
             exit 1
           fi
           echo "version=$cli_version" >> "$GITHUB_OUTPUT"
       - name: Pack release artifacts
         run: |
-          mkdir -p .release/contracts .release/verify .release/dashboard-server .release/playwright .release/cli
+          mkdir -p .release/contracts .release/verify .release/ui-server .release/playwright .release/cli
           pnpm --filter @framelia/contracts pack --pack-destination "$GITHUB_WORKSPACE/.release/contracts"
           pnpm --filter @framelia/verify pack --pack-destination "$GITHUB_WORKSPACE/.release/verify"
-          pnpm --filter @framelia/dashboard-server pack --pack-destination "$GITHUB_WORKSPACE/.release/dashboard-server"
+          pnpm --filter @framelia/ui-server pack --pack-destination "$GITHUB_WORKSPACE/.release/ui-server"
           pnpm --filter @framelia/playwright pack --pack-destination "$GITHUB_WORKSPACE/.release/playwright"
           pnpm --filter framelia pack --pack-destination "$GITHUB_WORKSPACE/.release/cli"
       - name: Publish packages in dependency order
@@ -96,7 +96,7 @@ jobs:
 
           publish_package packages/contracts
           publish_package packages/verify
-          publish_package packages/dashboard-server
+          publish_package packages/ui-server
           publish_package packages/playwright
           publish_package packages/cli
       - name: Verify packages from public registry
@@ -129,7 +129,7 @@ jobs:
 
           verify_public_package @framelia/contracts
           verify_public_package @framelia/verify
-          verify_public_package @framelia/dashboard-server
+          verify_public_package @framelia/ui-server
           verify_public_package @framelia/playwright
           verify_public_package framelia
 

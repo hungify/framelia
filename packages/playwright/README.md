@@ -33,7 +33,7 @@ test("login matches Figma", async ({ page }) => {
 
 Or import `@framelia/playwright/register` once from test setup.
 
-Register Reporter in `playwright.config.ts` for live dashboard events and persisted evidence:
+Register Reporter in `playwright.config.ts` for live UI events and persisted evidence:
 
 ```ts
 export default defineConfig({
@@ -54,7 +54,7 @@ includes `visual-score.json`, `run-meta.json`, `punch-list.json`, hashes, and
 ### Web-to-web matchers
 
 `toMatchPage` compares two pages already prepared by your test. `toMatchUrl` opens a page in the
-same browser context, so caller cookies/session carry over. These results are live dashboard and
+same browser context, so caller cookies/session carry over. These results are live UI and
 Playwright attachment results; persisted done-gate contracts remain Figma-baselined by design.
 
 ## Matchers
@@ -81,7 +81,7 @@ comparison is.
 
 ## Reporter
 
-Register `@framelia/playwright/reporter` to get live dashboard events and durable Figma matcher
+Register `@framelia/playwright/reporter` to get live UI events and durable Figma matcher
 artifacts:
 
 ```ts
@@ -94,5 +94,5 @@ Reporter reads matcher score/image attachments from Playwright's main process bo
 matcher call gets its own evidence directory. Passing calls attach expected/actual/diff images so
 Reporter can persist the same evidence required by `framelia done-gate`.
 
-Web-to-web matcher results remain runtime/dashboard evidence. Contract and done-gate artifacts are
+Web-to-web matcher results remain runtime/UI evidence. Contract and done-gate artifacts are
 Figma-baselined after schema-v4 pivot.

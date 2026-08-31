@@ -23,4 +23,4 @@ export {
   visualArtifactPath,
 } from "./paths.ts";
 
-export * from "./dashboard.ts";
+export * from "./ui.ts";

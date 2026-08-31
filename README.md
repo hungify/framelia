@@ -7,7 +7,7 @@ web-to-web visual verification, plus a CLI for browsing and gating the evidence 
 
 Framelia does not own navigation, authentication, or browser-context creation — a developer's own
 `@playwright/test` suite does, and calls a framelia matcher at the point it wants to capture and
-diff. `@framelia/playwright`'s Reporter drives a live dashboard during that run and persists a
+diff. `@framelia/playwright`'s Reporter drives a live UI during that run and persists a
 portable artifact afterward; the CLI never coordinates capture itself.
 
 ```mermaid
@@ -20,8 +20,8 @@ flowchart LR
   Pipeline --> Reporter["Playwright Reporter"]
 
   Reporter --> Events["Live results"]
-  Events --> Server["Hono + SSE server<br/>(@framelia/dashboard-server)"]
-  Server --> Dashboard["Vue dashboard"]
+  Events --> Server["Hono + SSE server<br/>(@framelia/ui-server)"]
+  Server --> UI["Vue UI"]
   Reporter --> Artifact["Versioned artifact<br/>(figma-baselined results only)"]
 
   Artifact --> Open["framelia open"]
@@ -33,27 +33,27 @@ Artifact remains source of truth. Live events only update progress before final 
 
 ### Runtime modes
 
-| Command                                        | Engine run                    | Server | Browser UI                | Output                                       |
-| ---------------------------------------------- | ----------------------------- | ------ | ------------------------- | -------------------------------------------- |
-| `npx playwright test` (matchers, no reporter)  | Yes (your Playwright process) | No     | No                        | Test pass/fail + attachments                 |
-| `npx playwright test` (with framelia Reporter) | Yes (your Playwright process) | Yes    | Live dashboard            | Test pass/fail + JSON artifact + live events |
-| `framelia open`                                | No                            | Yes    | Archived dashboard        | Existing artifact                            |
-| `framelia report`                              | No                            | No     | Portable static dashboard | Static report directory                      |
-| `framelia done-gate`                           | No                            | No     | No                        | Independent persisted-evidence verdict       |
+| Command                                        | Engine run                    | Server | Browser UI         | Output                                       |
+| ---------------------------------------------- | ----------------------------- | ------ | ------------------ | -------------------------------------------- |
+| `npx playwright test` (matchers, no reporter)  | Yes (your Playwright process) | No     | No                 | Test pass/fail + attachments                 |
+| `npx playwright test` (with framelia Reporter) | Yes (your Playwright process) | Yes    | Live UI            | Test pass/fail + JSON artifact + live events |
+| `framelia open`                                | No                            | Yes    | Archived UI        | Existing artifact                            |
+| `framelia report`                              | No                            | No     | Portable static UI | Static report directory                      |
+| `framelia done-gate`                           | No                            | No     | No                 | Independent persisted-evidence verdict       |
 
 ## Workspace
 
 ```text
 apps/
-└── dashboard/               # Vue/Vite + Nuxt UI; depends only on contracts
+└── ui/                      # Vue/Vite + Nuxt UI; depends only on contracts
 packages/
-├── contracts/               # versioned request, artifact, dashboard, event contracts
+├── contracts/               # versioned request, artifact, UI, event contracts
 ├── verify/                  # baseline resolution, capture primitive, compare, done-gate
-├── dashboard-server/        # Hono/SSE server + result-projection, shared by cli and playwright
+├── ui-server/               # Hono/SSE server + result-projection, shared by cli and playwright
 ├── playwright/              # toMatchFigma / toMatchPage / toMatchUrl matchers + Reporter
 └── cli/                     # framelia binary: init, contract create, status, schema,
-    │                        # open, report, dashboard, fetch-gold, compare, done-gate
-    └── dist/dashboard/      # generated dashboard bundled in npm package
+    │                        # open, report, ui, fetch-gold, compare, done-gate
+    └── dist/ui/             # generated UI bundled in npm package
 ```
 
 Package dependency and build direction:
@@ -61,20 +61,20 @@ Package dependency and build direction:
 ```mermaid
 flowchart LR
   Contracts["@framelia/contracts"] --> Verify["@framelia/verify"]
-  Contracts --> Dashboard["@framelia/dashboard"]
-  Verify --> DashServer["@framelia/dashboard-server"]
+  Contracts --> UI["@framelia/ui"]
+  Verify --> UIServer["@framelia/ui-server"]
   Verify --> CLI["framelia CLI"]
-  DashServer --> CLI
+  UIServer --> CLI
   Verify --> PW["@framelia/playwright"]
-  DashServer --> PW
-  Dashboard -. "production build" .-> Bundle["CLI dist/dashboard"]
+  UIServer --> PW
+  UI -. "production build" .-> Bundle["CLI dist/ui"]
   PW -. "peerDependency" .-> PWTest["@playwright/test<br/>(consumer's own copy)"]
 ```
 
 `framelia` remains public compatibility package and CLI distribution. It re-exports
-`@framelia/contracts` and `@framelia/verify`; dashboard source never imports CLI or engine
+`@framelia/contracts` and `@framelia/verify`; UI source never imports CLI or engine
 internals. `@framelia/verify` never depends on `hono`/`@hono/node-server` — that HTTP dependency
-lives only in `@framelia/dashboard-server`, so neither `@framelia/verify` nor a matcher-only
+lives only in `@framelia/ui-server`, so neither `@framelia/verify` nor a matcher-only
 `@framelia/playwright` consumer's core capture/compare path pulls it in for that reason alone.
 
 ## Development
@@ -87,25 +87,25 @@ pnpm exec playwright install chromium
 pnpm validate
 ```
 
-### Preview dashboard
+### Preview UI
 
-Run dashboard with mock evidence and HMR; no contract or backend required:
+Run UI with mock evidence and HMR; no contract or backend required:
 
 ```bash
-pnpm dev:dashboard
+pnpm dev:ui
 ```
 
 Open URL printed by Vite. Mock covers passed, failed, blocked, Figma baseline, viewport capture, and element capture.
 
 ### Run full product
 
-Build dashboard bundled into CLI:
+Build UI bundled into CLI:
 
 ```bash
 pnpm build
 ```
 
-Exercise a real matcher run with the live dashboard, from any project that has
+Exercise a real matcher run with the live UI, from any project that has
 `@framelia/playwright` registered (see [`packages/playwright/README.md`](packages/playwright/README.md)
 for a full quickstart):
 
@@ -120,7 +120,7 @@ export default defineConfig({
 npx playwright test
 ```
 
-The Reporter prints the dashboard URL and keeps the server up until the Playwright process exits.
+The Reporter prints the UI URL and keeps the server up until the Playwright process exits.
 
 Open an existing artifact without rerunning:
 
@@ -129,9 +129,9 @@ pnpm framelia open \
   --artifact /absolute/path/to/visual-verification.json
 ```
 
-### Run dashboard with HMR
+### Run UI with HMR
 
-Use mock mode above for normal UI work. To debug real artifact/API integration, start archived dashboard backend first:
+Use mock mode above for normal UI work. To debug real artifact/API integration, start archived UI backend first:
 
 ```bash
 pnpm build
@@ -143,7 +143,7 @@ pnpm framelia open \
 Command prints backend URL such as `http://127.0.0.1:43127`. Keep process running. In second terminal, pass URL to Vite proxy:
 
 ```bash
-FRAMELIA_API_ORIGIN=http://127.0.0.1:43127 pnpm dev:dashboard
+FRAMELIA_API_ORIGIN=http://127.0.0.1:43127 pnpm dev:ui
 ```
 
 Open Vite URL, normally `http://localhost:5173`. Vite proxies `/api`, `/artifacts`, and `/events` to CLI backend; Vue changes update through HMR.
@@ -163,13 +163,13 @@ Inspect CLI commands:
 pnpm framelia --help
 ```
 
-Detailed contract, command, artifact, and dashboard documentation lives in [`packages/cli/README.md`](packages/cli/README.md).
+Detailed contract, command, artifact, and UI documentation lives in [`packages/cli/README.md`](packages/cli/README.md).
 
 Playwright matcher, Reporter, and getting-started quickstart documentation lives in
 [`packages/playwright/README.md`](packages/playwright/README.md).
 
-Dashboard-specific development and HMR instructions live in [`apps/dashboard/README.md`](apps/dashboard/README.md).
+UI-specific development and HMR instructions live in [`apps/ui/README.md`](apps/ui/README.md).
 
 ## Repository boundary
 
-This repository owns verification engine, CLI, dashboard, artifacts, tests, and npm releases. Agent skills and plugin adapters remain in [`hungify/skills`](https://github.com/hungify/skills) and consume released `framelia` commands.
+This repository owns verification engine, CLI, UI, artifacts, tests, and npm releases. Agent skills and plugin adapters remain in [`hungify/skills`](https://github.com/hungify/skills) and consume released `framelia` commands.

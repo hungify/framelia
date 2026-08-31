@@ -1,6 +1,6 @@
 # @framelia/contracts
 
-Versioned Zod schemas and shared wire types for Framelia verification requests, artifacts, dashboard projections, and live progress events.
+Versioned Zod schemas and shared wire types for Framelia verification requests, artifacts, UI projections, and live progress events.
 
 ```ts
 import {

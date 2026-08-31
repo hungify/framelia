@@ -1,7 +1,7 @@
 {
   "name": "@framelia/contracts",
   "version": "0.0.3",
-  "description": "Versioned contracts, artifacts, and dashboard event types for Framelia.",
+  "description": "Versioned contracts, artifacts, and UI event types for Framelia.",
   "homepage": "https://github.com/hungify/framelia/tree/main/packages/contracts",
   "bugs": {
     "url": "https://github.com/hungify/framelia/issues"

@@ -173,14 +173,14 @@ function failedResult(name: string, imageDir: string): TestResult {
 }
 
 describe("FrameliaReporter", () => {
-  it("drives a live dashboard reporting live:true during the run", async () => {
+  it("drives a live UI reporting live:true during the run", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const clientRoot = clientRootFixture();
     const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
     const testA = fakeTest("test-a", "homepage matches figma");
 
     reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     expect(url).toBeDefined();
 
     expect(await (await fetch(`${url}/api/meta`)).json()).toEqual({ live: true });
@@ -201,7 +201,7 @@ describe("FrameliaReporter", () => {
     const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
 
     reporter.onBegin(fakeConfig(projectRoot), fakeSuite([]));
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
     expect(run.contracts).toEqual([]);
     expect(run.summary.total).toBe(0);
@@ -424,7 +424,7 @@ describe("FrameliaReporter", () => {
     ).toBe(true);
   });
 
-  it("carries the resolved threshold onto the live DashboardContractResult (#8)", async () => {
+  it("carries the resolved threshold onto the live UIContractResult (#8)", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const clientRoot = clientRootFixture();
     const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
@@ -436,7 +436,7 @@ describe("FrameliaReporter", () => {
       passedResult("test-a", { profile: "component/strict", clusterCheck: true }),
     );
 
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
     expect(run.contracts[0]).toMatchObject({
       id: "test-a",
@@ -480,7 +480,7 @@ describe("FrameliaReporter", () => {
   });
 
   it("merges topIssues from every matcher call into the live row instead of only the first", async () => {
-    // The live dashboard collapses all of a test's matcher calls into one row (see
+    // The live UI collapses all of a test's matcher calls into one row (see
     // "persists every Figma matcher score attachment separately" below for the durable
     // per-call artifacts) -- a style issue from any matcher but the first must still
     // surface live, not just once the run finalizes to disk.
@@ -504,7 +504,7 @@ describe("FrameliaReporter", () => {
 
     reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
     reporter.onTestEnd(testA, result);
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
 
     expect(run.contracts).toHaveLength(1);
@@ -527,7 +527,7 @@ describe("FrameliaReporter", () => {
 
     reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
     reporter.onTestEnd(testA, passedResult("test-a", { baselineKind: "web" }));
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
     expect(run.contracts[0]).toMatchObject({
       id: "test-a",
@@ -544,7 +544,7 @@ describe("FrameliaReporter", () => {
     expect(fs.existsSync(artifactPath)).toBe(false);
   });
 
-  it("surfaces a toMatchPageBaseline result's promotion provenance on the live dashboard contract and persists its image evidence, but still writes no VerificationArtifact (#41, R9)", async () => {
+  it("surfaces a toMatchPageBaseline result's promotion provenance on the live UI contract and persists its image evidence, but still writes no VerificationArtifact (#41, R9)", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -564,7 +564,7 @@ describe("FrameliaReporter", () => {
         baselineRunId: "ci-run-42",
       }),
     );
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
     expect(run.contracts[0]).toMatchObject({
       id: "test-a",
@@ -590,7 +590,7 @@ describe("FrameliaReporter", () => {
     expect(fs.existsSync(path.join(outDir, "visual-score.json"))).toBe(false);
   });
 
-  it("surfaces a matcher's style-comparison topIssues on the live dashboard contract", async () => {
+  it("surfaces a matcher's style-comparison topIssues on the live UI contract", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const clientRoot = clientRootFixture();
     const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
@@ -612,7 +612,7 @@ describe("FrameliaReporter", () => {
         ],
       }),
     );
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
     expect(run.contracts[0]).toMatchObject({
       id: "test-a",
@@ -634,7 +634,7 @@ describe("FrameliaReporter", () => {
     reporter.onTestEnd(tests[0]!, passedResult("a"));
     reporter.onTestEnd(tests[1]!, passedResult("b"));
 
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
     expect(run.summary).toMatchObject({ total: 3, passed: 3, queued: 0 });
 
@@ -651,7 +651,7 @@ describe("FrameliaReporter", () => {
     // A timed-out test never reaches the matcher, so it carries no score attachment.
     reporter.onTestEnd(testA, { status: "timedOut", attachments: [] } as unknown as TestResult);
 
-    const url = await reporter.dashboardUrl();
+    const url = await reporter.uiUrl();
     const run = await (await fetch(`${url}/api/run`)).json();
     expect(run.contracts[0]).toMatchObject({ id: "test-a", status: "failed" });
     expect(run.contracts[0].blockers[0]).toMatchObject({ code: "TEST_TIMEDOUT" });

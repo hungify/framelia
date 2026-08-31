@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 /** One convention-based signal `suggestMasks` scans the DOM for -- see
  *  DEFAULT_MASK_SUGGESTION_HEURISTICS for the built-in set. */
 export interface MaskSuggestionHeuristic {
-  /** Stable identifier a caller can filter/report on (e.g. dashboard grouping). */
+  /** Stable identifier a caller can filter/report on (e.g. UI grouping). */
   kind: string;
   /** Human-readable reason surfaced on every suggestion this heuristic produces. */
   description: string;

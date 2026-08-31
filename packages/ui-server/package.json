@@ -1,0 +1,59 @@
+{
+  "name": "@framelia/ui-server",
+  "version": "0.0.3",
+  "description": "Hono/SSE UI runtime and artifact-projection logic for framelia verification runs.",
+  "homepage": "https://github.com/hungify/framelia/tree/main/packages/ui-server",
+  "bugs": {
+    "url": "https://github.com/hungify/framelia/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hungify/framelia.git",
+    "directory": "packages/ui-server"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "framelia-dev": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "build": "pnpm --filter @framelia/ui build && tsup",
+    "pretest": "pnpm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test"
+  },
+  "dependencies": {
+    "@framelia/contracts": "workspace:*",
+    "@framelia/verify": "workspace:*",
+    "@hono/node-server": "^2.0.12",
+    "hono": "4.12.32",
+    "nanoid": "3.3.16"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1",
+    "tsup": "^8.5.1",
+    "typescript": "6.0.3",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "packageManager": "pnpm@11.18.0"
+}

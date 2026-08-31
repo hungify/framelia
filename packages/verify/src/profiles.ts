@@ -71,7 +71,7 @@ export interface StyleGateEligibleSource {
 
 /** A contract's resolved style-gate eligibility: its explicit `styleGateEligible` override
  *  when set, else the resolved profile's own default (see `Profile.styleGateEligible`).
- *  Shared by done-gate/validate.ts (CI gating) and the dashboard projection (display). */
+ *  Shared by done-gate/validate.ts (CI gating) and the UI projection (display). */
 export function resolveStyleGateEligible(source: StyleGateEligibleSource): boolean {
   return source.styleGateEligible ?? getProfile(source.profile ?? "page").styleGateEligible;
 }

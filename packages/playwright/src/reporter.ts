@@ -19,7 +19,7 @@ export interface FrameliaReporterOptions {
   projectRoot?: string;
   hostname?: string;
   port?: number;
-  /** Forwarded to startDashboardServer; mainly for tests -- production use should rely on the default. */
+  /** Forwarded to startUIServer; mainly for tests -- production use should rely on the default. */
   clientRoot?: string;
   /**
    * Project's `maxMaskedAreaRatio` default (from framelia.config.ts). Written into every
@@ -30,30 +30,30 @@ export interface FrameliaReporterOptions {
   maxMaskedAreaRatio?: number;
 }
 
-// @framelia/dashboard-server is an optional peer dependency (it owns the hono/@hono/node-server
+// @framelia/ui-server is an optional peer dependency (it owns the hono/@hono/node-server
 // HTTP runtime) -- a consumer who only calls toMatchFigma/toMatchPage/toMatchUrl and never
 // registers this Reporter should never be forced to install it. `typeof import(...)` is a
 // type-only reference and costs nothing at runtime; the actual module load is deferred to
-// loadDashboardServer() below, which only runs once a Reporter is constructed and used.
-type DashboardServerModule = typeof import("@framelia/dashboard-server");
-type ReporterStoreInstance = InstanceType<DashboardServerModule["ReporterStore"]>;
-type DashboardServer = Awaited<ReturnType<DashboardServerModule["startDashboardServer"]>>;
+// loadUIServer() below, which only runs once a Reporter is constructed and used.
+type UIServerModule = typeof import("@framelia/ui-server");
+type ReporterStoreInstance = InstanceType<UIServerModule["ReporterStore"]>;
+type UIServer = Awaited<ReturnType<UIServerModule["startUIServer"]>>;
 
-let dashboardServerModulePromise: Promise<DashboardServerModule> | undefined;
+let uiServerModulePromise: Promise<UIServerModule> | undefined;
 
-function loadDashboardServer(): Promise<DashboardServerModule> {
-  dashboardServerModulePromise ??= import("@framelia/dashboard-server").catch((error: unknown) => {
+function loadUIServer(): Promise<UIServerModule> {
+  uiServerModulePromise ??= import("@framelia/ui-server").catch((error: unknown) => {
     throw new Error(
-      'FrameliaReporter requires the optional peer dependency "@framelia/dashboard-server" -- ' +
+      'FrameliaReporter requires the optional peer dependency "@framelia/ui-server" -- ' +
         "install it in your project to use the reporter.",
       { cause: error },
     );
   });
-  return dashboardServerModulePromise;
+  return uiServerModulePromise;
 }
 
 /**
- * Playwright Reporter: drives framelia's live dashboard during a
+ * Playwright Reporter: drives framelia's live UI during a
  * matcher-driven test run, and persists a schema-v4 VerificationArtifact per
  * test afterward so `done-gate`/`report`/`open` keep functioning. Register it
  * in `playwright.config.ts`'s `reporter` array.
@@ -61,10 +61,10 @@ function loadDashboardServer(): Promise<DashboardServerModule> {
 export default class FrameliaReporter implements Reporter {
   readonly #options: FrameliaReporterOptions;
   #store?: ReporterStoreInstance;
-  #serverPromise?: Promise<DashboardServer>;
+  #serverPromise?: Promise<UIServer>;
   #projectRoot = process.cwd();
   #artifacts: VerificationArtifact[] = [];
-  /** Loading @framelia/dashboard-server and seeding #store is async; buffers onTestEnd
+  /** Loading @framelia/ui-server and seeding #store is async; buffers onTestEnd
    * calls that land before it resolves so no result is silently dropped (KTD13's Reporter
    * only gets one whole-test-result callback per test -- there is no second chance). */
   #ready?: Promise<void>;
@@ -74,8 +74,8 @@ export default class FrameliaReporter implements Reporter {
     this.#options = options;
   }
 
-  /** Resolves once the dashboard server is reachable; `undefined` if it failed to start. */
-  dashboardUrl(): Promise<string | undefined> {
+  /** Resolves once the UI server is reachable; `undefined` if it failed to start. */
+  uiUrl(): Promise<string | undefined> {
     return (this.#ready ?? Promise.resolve()).then(
       () => this.#serverPromise?.then((server) => server.url).catch(() => undefined) ?? undefined,
     );
@@ -84,7 +84,7 @@ export default class FrameliaReporter implements Reporter {
   onBegin(config: FullConfig, suite: Suite): void {
     this.#projectRoot = this.#options.projectRoot ?? config.rootDir ?? process.cwd();
     const tests = suite.allTests();
-    const ready = loadDashboardServer().then((mod) => {
+    const ready = loadUIServer().then((mod) => {
       const store = new mod.ReporterStore(
         tests.map((test) => ({
           id: sanitizeTestId(test),
@@ -93,7 +93,7 @@ export default class FrameliaReporter implements Reporter {
         })),
       );
       this.#store = store;
-      this.#serverPromise = mod.startDashboardServer({
+      this.#serverPromise = mod.startUIServer({
         source: {
           snapshot: () => store.snapshot(),
           files: () => store.files(),
@@ -104,10 +104,8 @@ export default class FrameliaReporter implements Reporter {
         clientRoot: this.#options.clientRoot,
       });
       this.#serverPromise
-        .then((server) => console.log(`framelia dashboard: ${server.url}`))
-        .catch((error: unknown) =>
-          console.error(`framelia dashboard failed to start: ${String(error)}`),
-        );
+        .then((server) => console.log(`framelia UI: ${server.url}`))
+        .catch((error: unknown) => console.error(`framelia UI failed to start: ${String(error)}`));
       return undefined;
     });
     this.#ready = ready;
@@ -123,11 +121,7 @@ export default class FrameliaReporter implements Reporter {
         result,
         this.#options.maxMaskedAreaRatio,
       );
-      this.#store.recordResult(
-        projection.dashboardId,
-        projection.dashboardResult,
-        projection.files,
-      );
+      this.#store.recordResult(projection.uiId, projection.uiResult, projection.files);
       this.#artifacts.push(...projection.artifacts);
     };
     if (this.#store) {

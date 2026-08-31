@@ -25,20 +25,20 @@ npx framelia status --project-root "$PWD"
 
 ## Commands
 
-| Command                    | Purpose                                                                                         |
-| -------------------------- | ----------------------------------------------------------------------------------------------- |
-| `framelia init`            | Initialize project config and an ignored auth-state directory.                                  |
-| `framelia auth`            | Record Playwright storage state through a headed login browser.                                 |
-| `framelia contract create` | Interactively author a schema-v4, Figma-baselined visual contract.                              |
-| `framelia status`          | Show CLI version, project root, and Figma token availability.                                   |
-| `framelia schema`          | Print the live JSON Schema for a contract or verification artifact.                             |
-| `framelia` (no arguments)  | Open a dashboard aggregating every artifact found under `.framelia/visual-verifications/`.      |
-| `framelia dashboard`       | Same aggregated dashboard, explicit form; supports `--project-root`, `--host`, and `--no-open`. |
-| `framelia open`            | Open one archived artifact in the dashboard without rerunning; supports `--host`.               |
-| `framelia report`          | Export a portable static dashboard for CI artifacts.                                            |
-| `framelia done-gate`       | Revalidate a persisted artifact's identity, freshness, and evidence integrity.                  |
-| `framelia fetch-gold`      | Fetch one Figma PNG for diagnosis.                                                              |
-| `framelia compare`         | Compare two existing PNG files without source provenance gates.                                 |
+| Command                    | Purpose                                                                                  |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `framelia init`            | Initialize project config and an ignored auth-state directory.                           |
+| `framelia auth`            | Record Playwright storage state through a headed login browser.                          |
+| `framelia contract create` | Interactively author a schema-v4, Figma-baselined visual contract.                       |
+| `framelia status`          | Show CLI version, project root, and Figma token availability.                            |
+| `framelia schema`          | Print the live JSON Schema for a contract or verification artifact.                      |
+| `framelia` (no arguments)  | Open the UI aggregating every artifact found under `.framelia/visual-verifications/`.    |
+| `framelia ui`              | Same aggregated UI, explicit form; supports `--project-root`, `--host`, and `--no-open`. |
+| `framelia open`            | Open one archived artifact in the UI without rerunning; supports `--host`.               |
+| `framelia report`          | Export a portable static UI for CI artifacts.                                            |
+| `framelia done-gate`       | Revalidate a persisted artifact's identity, freshness, and evidence integrity.           |
+| `framelia fetch-gold`      | Fetch one Figma PNG for diagnosis.                                                       |
+| `framelia compare`         | Compare two existing PNG files without source provenance gates.                          |
 
 `verify`, `doctor`, and `discover` — plus the navigation action DSL underneath them — are retired.
 There is no CLI command that captures a browser or executes navigation; that ownership moved
@@ -168,7 +168,7 @@ Serve the exported directory over HTTP — browsers block report JSON loading th
 Or browse every artifact under `.framelia/visual-verifications/` at once:
 
 ```bash
-npx framelia dashboard --project-root "$PWD"
+npx framelia ui --project-root "$PWD"
 ```
 
 Inspect every `actual.png`, `diff.png`, `visual-score.json` for each artifact. A passing artifact

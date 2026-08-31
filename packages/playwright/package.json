@@ -30,7 +30,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:smoke": "pnpm --filter @framelia/dashboard-server build && playwright test --config=playwright.config.ts",
+    "test:smoke": "pnpm --filter @framelia/ui-server build && playwright test --config=playwright.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -39,7 +39,7 @@
     "nanoid": "3.3.16"
   },
   "devDependencies": {
-    "@framelia/dashboard-server": "workspace:*",
+    "@framelia/ui-server": "workspace:*",
     "@playwright/test": "^1.61.1",
     "@types/node": "26.0.1",
     "@types/pngjs": "^6.0.5",
@@ -48,11 +48,11 @@
     "vitest": "^4.1.10"
   },
   "peerDependencies": {
-    "@framelia/dashboard-server": "workspace:*",
+    "@framelia/ui-server": "workspace:*",
     "@playwright/test": "^1.61.1"
   },
   "peerDependenciesMeta": {
-    "@framelia/dashboard-server": {
+    "@framelia/ui-server": {
       "optional": true
     }
   },

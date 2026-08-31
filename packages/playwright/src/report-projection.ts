@@ -6,14 +6,14 @@ import {
   assembleContractResult,
   deriveCaptureEvidenceDiagnostics,
   deriveComparisonSummary,
-  deriveDashboardVerdict,
+  deriveUIVerdict,
   projectCapture,
   projectCaptureEvidence,
   visualArtifactPath,
   visualScoreArtifactSchema,
   type BaselineSource,
   type CaptureEvidenceArtifact,
-  type DashboardContractResult,
+  type UIContractResult,
   type VerificationArtifact,
   type VerificationContract,
 } from "@framelia/contracts";
@@ -99,8 +99,8 @@ export function readScoreAttachments(result: TestResult): FrameliaScoreAttachmen
   return scores;
 }
 
-/** Live dashboard's evidence virtual path -- must match the `contracts/${id}/${name}` keys onTestEnd registers into ReporterStore's file map (see writeEvidence's callers). */
-function dashboardArtifactPath(id: string, name: string): string {
+/** Live UI's evidence virtual path -- must match the `contracts/${id}/${name}` keys onTestEnd registers into ReporterStore's file map (see writeEvidence's callers). */
+function uiArtifactPath(id: string, name: string): string {
   return `contracts/${encodeURIComponent(id)}/${name}`;
 }
 
@@ -116,7 +116,7 @@ function fileHash(filePath: string): string {
   return `sha256:${crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex")}`;
 }
 
-function dashboardStatusFor(result: TestResult): DashboardContractResult["status"] {
+function uiStatusFor(result: TestResult): UIContractResult["status"] {
   switch (result.status) {
     case "passed":
       return "passed";
@@ -129,16 +129,16 @@ function dashboardStatusFor(result: TestResult): DashboardContractResult["status
 
 export interface DerivedContract {
   id: string;
-  dashboardResult: DashboardContractResult;
+  uiResult: UIContractResult;
   /**
    * Only set when the primary score is figma-baselined. `VerificationContract.baseline`
    * is figma-only by schema -- a toMatchPage/toMatchUrl result has no schema-valid
-   * `baseline` value, so it gets no persisted contract, only the live dashboardResult above.
+   * `baseline` value, so it gets no persisted contract, only the live uiResult above.
    */
   verificationContract?: VerificationContract;
   verificationResult?: VerificationArtifact["results"][number];
   /** Figma matcher evidence is durable; live two-page (toMatchPage/toMatchUrl) results
-   *  remain dashboard/runtime-only under R9 -- there is no stable baseline artifact to
+   *  remain UI/runtime-only under R9 -- there is no stable baseline artifact to
    *  persist a pointer to. */
   writeEvidence?: {
     outDir: string;
@@ -154,7 +154,7 @@ export interface DerivedContract {
    *  artifact (see @framelia/verify's page-baseline.ts), so its image evidence is
    *  worth persisting durably too. Deliberately skips the schema-v4
    *  VerificationArtifact/done-gate pipeline (R9 still applies to that part) -- this
-   *  only lets the dashboard keep showing expected/actual/diff and who/when promoted
+   *  only lets the UI keep showing expected/actual/diff and who/when promoted
    *  the baseline after the live run ends. */
   writePageBaselineEvidence?: {
     outDir: string;
@@ -185,7 +185,7 @@ export function deriveContract(
   const pass = result.status === "passed";
   const targetUrl = httpTargetUrl(primary?.targetUrl);
   const isTerminal = result.status === "passed" || result.status === "failed";
-  // Same verdict derivation the durable report path (dashboard-server's model.ts) applies to
+  // Same verdict derivation the durable report path (ui-server's model.ts) applies to
   // this contract's persisted visual-score.json -- computed here, live, from the same
   // captureEvidence the matcher already attached, so a run can't read "passed" now and
   // "blocked" once the report is exported. No score attachment (primary undefined) means no
@@ -200,15 +200,15 @@ export function deriveContract(
         targetUrl,
       )
     : undefined;
-  // Unlike the durable path (dashboard-server's model.ts, where captureEvidence is a
+  // Unlike the durable path (ui-server's model.ts, where captureEvidence is a
   // completeness invariant of the compare() pipeline), captureEvidence is best-effort here --
   // not every matcher attaches it -- so a missing one is not itself a caveat live; only surface
   // diagnostics when there's actual evidence to derive them from.
   const diagnostics = captureEvidence ? deriveCaptureEvidenceDiagnostics(captureEvidence, []) : [];
   const maskApplied = captureEvidence?.maskEvidence?.status === "applied";
   const status = primary
-    ? deriveDashboardVerdict({ resultOk: isTerminal, pass, diagnostics, maskApplied })
-    : dashboardStatusFor(result);
+    ? deriveUIVerdict({ resultOk: isTerminal, pass, diagnostics, maskApplied })
+    : uiStatusFor(result);
   // A score attachment only exists once capture already succeeded (see runToMatchFigma/
   // runComparePages: a selector that fails to resolve returns before attaching a score), so a
   // region scope reaching here always resolved to exactly one stable element.
@@ -218,7 +218,7 @@ export function deriveContract(
       ? (scope.expectedSize ?? captureEvidence?.elementRect ?? primary?.actualSize)
       : undefined;
 
-  const dashboardResult = assembleContractResult({
+  const uiResult = assembleContractResult({
     id,
     name: contractNameFor(test),
     tags: test.tags,
@@ -268,7 +268,7 @@ export function deriveContract(
 
   // A toMatchPageBaseline result carries the same expected/actual/diff triplet a
   // Figma result does, plus who/when promoted the baseline it matched -- worth
-  // persisting for the dashboard (#41) even though it skips the schema-v4
+  // persisting for the UI (#41) even though it skips the schema-v4
   // VerificationArtifact/done-gate pipeline below (R9 still applies to that part).
   if (primary?.baselineKind === "web" && primary.baselinePromotedAt != null) {
     const expectedPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-expected");
@@ -278,11 +278,11 @@ export function deriveContract(
       "-actual",
     );
     const diffAttachmentPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-diff");
-    const imageEvidence: Pick<DashboardContractResult, "baseline" | "actual" | "diff"> = {
+    const imageEvidence: Pick<UIContractResult, "baseline" | "actual" | "diff"> = {
       ...(expectedPath
         ? {
             baseline: {
-              path: dashboardArtifactPath(id, WEB_BASELINE_ARTIFACT.image),
+              path: uiArtifactPath(id, WEB_BASELINE_ARTIFACT.image),
               width: primary.baselineSize.width,
               height: primary.baselineSize.height,
               provenance: "promoted",
@@ -300,20 +300,18 @@ export function deriveContract(
       ...(actualAttachmentPath
         ? {
             actual: {
-              path: dashboardArtifactPath(id, RUN_ARTIFACT.actual),
+              path: uiArtifactPath(id, RUN_ARTIFACT.actual),
               width: primary.actualSize.width,
               height: primary.actualSize.height,
               url: targetUrl,
             },
           }
         : {}),
-      ...(diffAttachmentPath
-        ? { diff: { path: dashboardArtifactPath(id, RUN_ARTIFACT.diff) } }
-        : {}),
+      ...(diffAttachmentPath ? { diff: { path: uiArtifactPath(id, RUN_ARTIFACT.diff) } } : {}),
     };
     return {
       id,
-      dashboardResult: { ...dashboardResult, ...imageEvidence },
+      uiResult: { ...uiResult, ...imageEvidence },
       writePageBaselineEvidence: {
         outDir: absoluteOutDir,
         expectedPath,
@@ -323,7 +321,7 @@ export function deriveContract(
     };
   }
 
-  if (primary?.baselineKind !== "figma") return { id, dashboardResult };
+  if (primary?.baselineKind !== "figma") return { id, uiResult };
 
   const baseline: BaselineSource = {
     kind: "figma",
@@ -352,7 +350,7 @@ export function deriveContract(
             // Only the author's declared options.expectSize counts here -- an omitted expectSize
             // must stay absent so validate.ts's "gate-eligible component contract requires
             // expectSize" check can actually catch it. Observed capture dimensions
-            // (regionExpectedSize) are for dashboard display only (see the capture region above).
+            // (regionExpectedSize) are for UI display only (see the capture region above).
             ...(scope.expectedSize ? { expectSize: scope.expectedSize } : {}),
           }
         : { kind: "page", pageReason: SYNTHETIC_PAGE_REASON },
@@ -387,13 +385,13 @@ export function deriveContract(
   const diffAttachmentPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-diff");
 
   // Same virtual paths writeEvidence's copies land under and onTestEnd registers into the
-  // live file map -- lets the dashboard render expected/actual/diff while the run is live,
+  // live file map -- lets the UI render expected/actual/diff while the run is live,
   // not just after report export re-derives them from the durable visual-score.json.
-  const imageEvidence: Pick<DashboardContractResult, "baseline" | "actual" | "diff"> = {
+  const imageEvidence: Pick<UIContractResult, "baseline" | "actual" | "diff"> = {
     ...(expectedPath
       ? {
           baseline: {
-            path: dashboardArtifactPath(id, FIGMA_BASELINE_ARTIFACT.image),
+            path: uiArtifactPath(id, FIGMA_BASELINE_ARTIFACT.image),
             width: primary.baselineSize.width,
             height: primary.baselineSize.height,
             provenance: "figma",
@@ -403,19 +401,19 @@ export function deriveContract(
     ...(actualAttachmentPath
       ? {
           actual: {
-            path: dashboardArtifactPath(id, RUN_ARTIFACT.actual),
+            path: uiArtifactPath(id, RUN_ARTIFACT.actual),
             width: primary.actualSize.width,
             height: primary.actualSize.height,
             url: targetUrl,
           },
         }
       : {}),
-    ...(diffAttachmentPath ? { diff: { path: dashboardArtifactPath(id, RUN_ARTIFACT.diff) } } : {}),
+    ...(diffAttachmentPath ? { diff: { path: uiArtifactPath(id, RUN_ARTIFACT.diff) } } : {}),
   };
 
   return {
     id,
-    dashboardResult: { ...dashboardResult, ...imageEvidence },
+    uiResult: { ...uiResult, ...imageEvidence },
     verificationContract,
     verificationResult,
     writeEvidence: {
@@ -589,7 +587,7 @@ export function writeEvidence(
  * contract's own durable outDir -- same reasoning as writeEvidence (Playwright's own
  * test-results/attachments aren't guaranteed to survive past the next run), but no
  * visual-score.json/VerificationArtifact: those belong to the schema-v4 done-gate
- * pipeline, which stays Figma-only (R9). This only keeps the dashboard's image
+ * pipeline, which stays Figma-only (R9). This only keeps the UI's image
  * evidence and promotion provenance alive after the live run ends.
  */
 export function writePageBaselineEvidence(
@@ -606,8 +604,8 @@ export function writePageBaselineEvidence(
 }
 
 export interface TestEndProjection {
-  dashboardId: string;
-  dashboardResult: DashboardContractResult;
+  uiId: string;
+  uiResult: UIContractResult;
   files: Array<[string, string]>;
   artifacts: VerificationArtifact[];
 }
@@ -643,7 +641,7 @@ function collectWrittenFiles(
     write();
     for (const name of names) {
       const filePath = path.join(outDir, name);
-      if (fs.existsSync(filePath)) files.push([dashboardArtifactPath(contractId, name), filePath]);
+      if (fs.existsSync(filePath)) files.push([uiArtifactPath(contractId, name), filePath]);
     }
   } catch (error: unknown) {
     console.error(
@@ -655,7 +653,7 @@ function collectWrittenFiles(
 /**
  * Everything one Playwright onTestEnd callback needs to do: derive each contract the test's
  * score attachments imply, write durable evidence for the figma-baselined ones, and assemble
- * both the live dashboard result and the durable VerificationArtifacts. The Reporter itself
+ * both the live UI result and the durable VerificationArtifacts. The Reporter itself
  * (reporter.ts) only wires this into Playwright's lifecycle hooks and forwards the result --
  * it owns no projection logic of its own.
  */
@@ -693,12 +691,12 @@ export function finalizeTestEnd(
   }
 
   const primary = derivedContracts[0]!;
-  const dashboardId = sanitizeTestId(test);
-  // The live dashboard collapses every matcher call in a test into this one row (unlike the
+  const uiId = sanitizeTestId(test);
+  // The live UI collapses every matcher call in a test into this one row (unlike the
   // durable artifact, which gets a separate contract per call -- see the id `-1`/`-2` suffixing
   // above) -- a style issue from any matcher but the first would otherwise silently vanish from
   // the live view even though it's still on disk.
-  const topIssues = derivedContracts.flatMap((derived) => derived.dashboardResult.topIssues ?? []);
+  const topIssues = derivedContracts.flatMap((derived) => derived.uiResult.topIssues ?? []);
 
   const artifacts: VerificationArtifact[] = [];
   for (const derived of derivedContracts) {
@@ -720,10 +718,10 @@ export function finalizeTestEnd(
   }
 
   return {
-    dashboardId,
-    dashboardResult: {
-      ...primary.dashboardResult,
-      id: dashboardId,
+    uiId,
+    uiResult: {
+      ...primary.uiResult,
+      id: uiId,
       ...(topIssues.length ? { topIssues } : {}),
     },
     files,

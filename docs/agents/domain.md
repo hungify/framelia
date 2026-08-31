@@ -23,7 +23,7 @@ Single-context repo (this repo):
 └── packages/ (and apps/)
 ```
 
-This repo is a pnpm monorepo (`packages/*`, `apps/*`) but is treated as a **single domain context** — `packages/cli`, `packages/verify`, `packages/contracts`, `packages/playwright`, and `apps/dashboard`/`apps/dashboard-server` all share one domain: Figma-baseline visual verification. There is no `CONTEXT-MAP.md`; don't create one unless a genuinely separate domain (e.g. billing, auth) enters the repo.
+This repo is a pnpm monorepo (`packages/*`, `apps/*`) but is treated as a **single domain context** — `packages/cli`, `packages/verify`, `packages/contracts`, `packages/playwright`, `packages/ui-server`, and `apps/ui` all share one domain: Figma-baseline visual verification. There is no `CONTEXT-MAP.md`; don't create one unless a genuinely separate domain (e.g. billing, auth) enters the repo.
 
 ## Use the glossary's vocabulary
 

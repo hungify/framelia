@@ -11,8 +11,8 @@
     "node_modules",
     "dist",
     "*.tsbuildinfo",
-    "apps/dashboard/auto-imports.d.ts",
-    "apps/dashboard/components.d.ts",
-    "apps/dashboard/typed-router.d.ts"
+    "apps/ui/auto-imports.d.ts",
+    "apps/ui/components.d.ts",
+    "apps/ui/typed-router.d.ts"
   ]
 }

@@ -7,7 +7,7 @@ import { compare, FigmaBaselineProvider, doneGateFromArtifact } from "@framelia/
 ```
 
 Engine owns baseline acquisition, navigation-free capture, image comparison, and done gates. It
-depends on `@framelia/contracts` and has no dependency on the CLI, HTTP server, dashboard, or
+depends on `@framelia/contracts` and has no dependency on the CLI, HTTP server, UI, or
 `@playwright/test`'s `expect` — `@framelia/playwright` is the only package that turns this engine
 into test matchers.
 

@@ -1,37 +1,66 @@
-import { existsSync } from "node:fs";
-import fs from "node:fs/promises";
+import { execSync } from "node:child_process";
 import path from "node:path";
 
-import { expect } from "@framelia/playwright";
+import {
+  expect,
+  isContractFresh,
+  readContractEntry,
+  writeContractFreshness,
+} from "@framelia/playwright";
 import { test } from "@playwright/test";
 
 const contractPath = path.resolve(".framelia/visual-verifications/login/visual-contract.json");
-const contractFile = existsSync(contractPath)
-  ? (JSON.parse(await fs.readFile(contractPath, "utf8")) as {
-      contracts: Array<{
-        baseline: { fileKey: string; nodeId: string };
-        id: string;
-        viewport: { name: string; width: number; height: number };
-      }>;
-    })
-  : undefined;
-const loginContract = contractFile?.contracts.find((contract) => contract.id === "login.desktop");
-const hasFigmaConfig = Boolean(process.env.FIGMA_ACCESS_TOKEN && loginContract);
 
-test("toMatchFigma compares login page with its visual contract", async ({ page }) => {
-  test.skip(
-    !hasFigmaConfig,
-    "Blocked: run pnpm cli:contract:login and provide FIGMA_ACCESS_TOKEN.",
-  );
-  // Match the Figma frame's pixel dimensions so toMatchFigma compares like-for-like sizes.
-  await page.setViewportSize({
-    width: loginContract!.viewport.width,
-    height: loginContract!.viewport.height,
+/**
+ * Whole-app fingerprint for the freshness-skip demo below: coarse (any commit touches it,
+ * every contract re-verifies), but zero-config. A per-route fingerprint (e.g. a content
+ * hash of the files behind /login) would skip more often at the cost of maintaining that
+ * mapping yourself -- see @framelia/playwright's README ("Scaling to many pages").
+ */
+function resolveFingerprint(): string | undefined {
+  try {
+    return execSync("git rev-parse HEAD", { cwd: process.cwd() }).toString().trim();
+  } catch {
+    return undefined;
+  }
+}
+
+const fingerprint = resolveFingerprint();
+
+for (const contractId of ["login.desktop", "login.mobile"] as const) {
+  const entry = readContractEntry(contractPath, contractId);
+
+  test(`toMatchFigma compares login page with its ${contractId} visual contract`, async ({
+    page,
+  }) => {
+    test.skip(
+      !(entry.ok && process.env.FIGMA_ACCESS_TOKEN),
+      entry.ok
+        ? "Blocked: set FIGMA_ACCESS_TOKEN."
+        : `Blocked: ${entry.message} Run pnpm cli:contract:login.`,
+    );
+    const { contract } = entry as Extract<typeof entry, { ok: true }>;
+
+    test.skip(
+      fingerprint !== undefined && isContractFresh(contract.outDir, fingerprint),
+      `unchanged since the last passing check at this commit (${fingerprint}).`,
+    );
+
+    // Match the Figma frame's pixel dimensions so toMatchFigma compares like-for-like sizes.
+    await page.setViewportSize(contract.viewport);
+    await page.goto("/login");
+    await expect(page).toMatchFigma(contract.baseline.nodeId, {
+      fileKey: contract.baseline.fileKey,
+      fullPage: true,
+      animationPolicy: "freeze",
+    });
+
+    if (fingerprint !== undefined) {
+      writeContractFreshness(contract.outDir, {
+        fingerprint,
+        pass: true,
+        checkedAt: new Date().toISOString(),
+      });
+    }
   });
-  await page.goto("/login");
-  await expect(page).toMatchFigma(loginContract!.baseline.nodeId, {
-    fileKey: loginContract!.baseline.fileKey,
-    fullPage: true,
-    animationPolicy: "freeze",
-  });
-});
+}

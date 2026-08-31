@@ -25,6 +25,6 @@ export class LoginPage extends BasePage {
     await this.fillControlledInput(this.emailInput, email);
     await this.fillControlledInput(this.passwordInput, password);
     await this.submitButton.click();
-    await this.page.waitForURL(/\/app(?:$|\/)/);
+    await this.page.waitForURL(/\/app(?:$|\/)/, { timeout: 10_000 });
   }
 }

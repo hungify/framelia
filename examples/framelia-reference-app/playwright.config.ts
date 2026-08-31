@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
-if (existsSync(".env.playwright")) process.loadEnvFile(".env.playwright");
+if (existsSync(".env.e2e")) process.loadEnvFile(".env.e2e");
 
 const PORT = process.env.PORT ?? "3000";
 const baseURL = `http://localhost:${PORT}`;
@@ -23,6 +23,7 @@ export default defineConfig({
   use: {
     baseURL,
     trace: "retain-on-failure",
+    headless: false,
   },
   projects: [
     {
@@ -32,7 +33,7 @@ export default defineConfig({
     },
     {
       name: "unauthenticated",
-      testMatch: /e2e\/specs\/(?:public|web-to-web.*|figma)\.spec\.ts/,
+      testMatch: /e2e\/specs\/(?:public|web-to-web.*|figma|cli)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
     {

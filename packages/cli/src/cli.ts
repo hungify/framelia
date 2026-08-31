@@ -8,7 +8,7 @@ import { DuplicateFlagError, rejectDuplicateFlags, type FlagSpec } from "./argv-
 import { registerAuthCommand } from "./commands/auth.ts";
 import { registerBaselineCommands } from "./commands/baseline.ts";
 import { registerContractCommands } from "./commands/contract.ts";
-import { registerDashboardCommands, runAggregatedDashboard } from "./commands/dashboard.ts";
+import { registerDashboardCommands } from "./commands/dashboard.ts";
 import { registerDebugCommands } from "./commands/debug.ts";
 import { registerDoneGateCommand } from "./commands/done-gate.ts";
 import { registerInitCommand } from "./commands/init-command.ts";
@@ -46,7 +46,6 @@ export function createProgram(): Command {
   registerBaselineCommands(program);
   registerDebugCommands(program);
 
-  program.action(() => runAggregatedDashboard({ projectRoot: process.cwd(), open: true }));
   return program;
 }
 

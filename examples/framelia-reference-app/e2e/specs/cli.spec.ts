@@ -41,7 +41,11 @@ interface CliResult {
 }
 
 function runCli(args: string[]): CliResult {
-  const result = spawnSync(process.execPath, [FRAMELIA_BIN, ...args], { encoding: "utf8" });
+  // Invoke the installed pnpm bin shim directly rather than `node <bin>`: with
+  // workspace:* (see the root pnpm-workspace.yaml's "examples/*" entry), pnpm
+  // generates its normal cross-platform shell shim at node_modules/.bin/framelia,
+  // not the plain JS symlink `link:` produced -- `node` can't parse the shim as JS.
+  const result = spawnSync(FRAMELIA_BIN, args, { encoding: "utf8" });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -210,16 +214,16 @@ test.describe("framelia CLI: needs the running app", () => {
 
     const contract = JSON.parse(
       fs.readFileSync(
-        path.join(
-          projectRoot,
-          ".framelia/visual-verifications/login/visual-contract.json",
-        ),
+        path.join(projectRoot, ".framelia/visual-verifications/login/visual-contract.json"),
         "utf8",
       ),
     );
     expect(contract).toMatchObject({
       contracts: [
-        { id: "login.email-field", scope: { kind: "region", selector: '[data-testid="login-email"]' } },
+        {
+          id: "login.email-field",
+          scope: { kind: "region", selector: '[data-testid="login-email"]' },
+        },
       ],
     });
   });
@@ -330,15 +334,18 @@ async function writeVerificationArtifactFixture(
   return { artifactPath, outDir };
 }
 
-/** Reads the dashboard server's own "Dashboard: http://…" stderr line (see
- *  packages/cli/src/commands/dashboard.ts's serveDashboard) to learn its ephemeral port. */
+/** Reads the dashboard server's own "➜  Local:   http://…" stderr line (see
+ *  packages/cli/src/commands/dashboard.ts's printLocalUrl) to learn its ephemeral port. */
 function waitForDashboardUrl(child: ChildProcessWithoutNullStreams): Promise<string> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out waiting for dashboard URL")), 15_000);
+    const timer = setTimeout(
+      () => reject(new Error("Timed out waiting for dashboard URL")),
+      15_000,
+    );
     let buffer = "";
     child.stderr.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
-      const match = /Dashboard: (http:\/\/\S+)/.exec(buffer);
+      const match = /Local:\s+(http:\/\/\S+)/.exec(buffer);
       if (match) {
         clearTimeout(timer);
         resolve(match[1]!);
@@ -356,13 +363,12 @@ test.describe("framelia CLI: long-running dashboard servers", () => {
     const projectRoot = tempProjectRoot("framelia-cli-open-");
     const { artifactPath } = await writeVerificationArtifactFixture(projectRoot, "home");
 
-    const child = spawn(process.execPath, [
-      FRAMELIA_BIN,
-      "open",
-      "--artifact",
-      artifactPath,
-      "--no-open",
-    ]);
+    // NO_COLOR: waitForDashboardUrl regex-matches this plain, so the child's picocolors
+    // output must stay uncolored regardless of whether the parent test runner's own env
+    // (e.g. Playwright forcing color for its own reporter) would otherwise turn it on.
+    const child = spawn(FRAMELIA_BIN, ["open", "--artifact", artifactPath, "--no-open"], {
+      env: { ...process.env, NO_COLOR: "1" },
+    });
     try {
       const url = await waitForDashboardUrl(child);
       const response = await fetch(url);
@@ -376,16 +382,12 @@ test.describe("framelia CLI: long-running dashboard servers", () => {
     const projectRoot = tempProjectRoot("framelia-cli-dashboard-");
     await writeVerificationArtifactFixture(projectRoot, "home");
 
-    const child = spawn(process.execPath, [
-      FRAMELIA_BIN,
-      "dashboard",
-      "--project-root",
-      projectRoot,
-      "--no-open",
-    ]);
+    const child = spawn(FRAMELIA_BIN, ["dashboard", "--project-root", projectRoot, "--no-open"], {
+      env: { ...process.env, NO_COLOR: "1" },
+    });
     try {
       const url = await waitForDashboardUrl(child);
-      const response = await fetch(`${url}/api/run`);
+      const response = await fetch(`${url}api/run`);
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ summary: { total: 1 } });
     } finally {
@@ -421,7 +423,11 @@ test.describe("framelia CLI: needs FIGMA_ACCESS_TOKEN", () => {
  * it. Encodes an 8-bit RGBA image with no filtering/interlacing -- the smallest
  * spec-compliant PNG pngjs can read back.
  */
-function makeSolidPng(width: number, height: number, rgba: [number, number, number, number]): Buffer {
+function makeSolidPng(
+  width: number,
+  height: number,
+  rgba: [number, number, number, number],
+): Buffer {
   const crcTable = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
     let c = n;

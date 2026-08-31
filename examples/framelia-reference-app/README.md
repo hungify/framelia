@@ -2,7 +2,7 @@
 
 Standalone TanStack Start consumer app showing Framelia around a real Better Auth flow: login/signup (email/password + GitHub/Google OAuth), protected dashboard, profile settings, logout, deterministic auth fixtures, and all three Framelia Playwright matchers.
 
-This example intentionally lives outside the root pnpm workspace. It keeps the generated Mugnavo architecture: TanStack Start, shadcn/ui, Better Auth, Drizzle/PostgreSQL, Vite+, Nitro, and Playwright.
+This example is a member of the root pnpm workspace (`framelia`/`@framelia/playwright`/`@framelia/dashboard-server` resolve via `workspace:*`, not `link:`) -- required so its own Playwright test process and `packages/playwright`'s matchers share exactly one `@playwright/test` install; a `link:` reference resolved from outside the workspace pulls in a second, physically distinct copy, which Playwright refuses to load ("Requiring @playwright/test second time"). It otherwise keeps the generated Mugnavo architecture: TanStack Start, shadcn/ui, Better Auth, Drizzle/PostgreSQL, Vite+, Nitro, and Playwright. The root `pnpm-workspace.yaml` scopes this app's `vite` → `vite-plus` alias override to `"framelia-reference-app>vite"` so it doesn't also hijack `apps/dashboard`'s own real `vite` dependency.
 
 ## Requirements
 
@@ -102,14 +102,15 @@ Not covered here (different concern, different pass): `framelia baseline promote
 `done-gate`/`report` commands, which consume whatever `.framelia/visual-verifications/`
 evidence this loop produces once a merge gate is actually wired up.
 
-`framelia`/`@framelia/dashboard-server`/`@framelia/playwright` are `link:`-ed straight to
-the monorepo's own `packages/*` (see `package.json`'s devDependencies) -- this app tracks
-Framelia's development, not a released version, so there's nothing to publish-then-pin
-here. `@framelia/contracts`/`@framelia/verify` need no link entry of their own: once
+`framelia`/`@framelia/dashboard-server`/`@framelia/playwright` resolve via `workspace:*`
+straight to the monorepo's own `packages/*` (see `package.json`'s devDependencies and the
+root `pnpm-workspace.yaml`, which lists `examples/*`) -- this app tracks Framelia's
+development, not a released version, so there's nothing to publish-then-pin here.
+`@framelia/contracts`/`@framelia/verify` need no dependency entry of their own: once
 `framelia`/`@framelia/playwright`/`@framelia/dashboard-server` resolve to the real
 monorepo packages, each already resolves its own `@framelia/contracts`/`@framelia/verify`
 correctly through the monorepo's own workspace. Run `pnpm run framelia:build` after
-changing anything under `packages/*` so this app's linked `framelia` bin and
+changing anything under `packages/*` so this app's `framelia` bin and
 `@framelia/dashboard-server`'s bundled dashboard reflect it (`@framelia/playwright` needs
 no build -- its package.json exports source directly).
 

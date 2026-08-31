@@ -16,6 +16,18 @@ valid for a Figma-baselined capture. Deterministic state/deep links, fonts, and 
 come first. Capture resolves visible in-scope locators once, preserves layout, uses fixed
 `#FF00FF`, unions bounds, and blocks when evidence is missing or area exceeds the default 15% cap.
 
+## Contract-scale helpers
+
+`readContractEntry(contractPath, contractId)` reads one entry out of a (possibly
+multi-contract) `visual-contract.json`, schema-validated against `verificationRequestSchema`.
+
+`writeContractFreshness` persists a small per-contract receipt (`last-verified.json`, under the
+contract's own `outDir`) recording whether the last check against a caller-supplied fingerprint
+passed; `readContractFreshness`/`isContractFresh` read and check that receipt. This package never
+computes the fingerprint or decides to skip a test on the strength of it -- see
+`@framelia/playwright`'s README ("Scaling to many pages") for the intended call pattern from a
+Playwright spec.
+
 ## Navigation-free capture
 
 `captureReadyPage(page, spec)` (exported from `@framelia/verify/internal`) screenshots an

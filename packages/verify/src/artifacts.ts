@@ -7,6 +7,9 @@ export const RUN_ARTIFACT = {
   score: "visual-score.json",
   runMeta: "run-meta.json",
   punchList: "punch-list.json",
+  /** Opt-in receipt from contract-freshness.ts -- deliberately absent from RUN_OUTPUTS
+   *  below, since done-gate never requires it. */
+  freshness: "last-verified.json",
 } as const;
 
 export const FIGMA_BASELINE_ARTIFACT = {

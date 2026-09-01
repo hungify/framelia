@@ -5,6 +5,7 @@ import * as readline from "node:readline";
 
 import { FRAMELIA_DIR } from "@framelia/contracts";
 import {
+  DEFAULT_DASHBOARD_PORT,
   startDashboardServer,
   waitForDashboardShutdown,
   type DashboardServer,
@@ -21,7 +22,7 @@ import {
   exportDashboardReport,
   readVerificationArtifact,
 } from "../dashboard/report.ts";
-import { resolveProjectRoot, subcommand } from "./shared.ts";
+import { positiveInteger, resolveProjectRoot, subcommand } from "./shared.ts";
 
 const wildcardHosts = new Set(["0.0.0.0", "::", "0000:0000:0000:0000:0000:0000:0000:0000"]);
 const loopbackHosts = new Set([
@@ -215,6 +216,7 @@ async function serveDashboard(
   open: boolean,
   hostname: string,
   hostExplicit: boolean,
+  port: number,
 ): Promise<void> {
   const shutdown = waitForDashboardShutdown();
   let shouldOpen = open;
@@ -224,7 +226,7 @@ async function serveDashboard(
   for (;;) {
     const startedAt = performance.now();
     // eslint-disable-next-line no-await-in-loop -- must finish starting before this iteration can proceed
-    const server = await startDashboardServer({ source, hostname });
+    const server = await startDashboardServer({ source, hostname, port });
     let restart = false;
     try {
       // eslint-disable-next-line no-await-in-loop -- banner describes this iteration's server, not the next
@@ -263,12 +265,14 @@ export async function runAggregatedDashboard(options: {
   open: boolean;
   host: string;
   hostExplicit: boolean;
+  port: number;
 }): Promise<void> {
   await serveDashboard(
     await aggregateDashboardSource(options.projectRoot),
     options.open,
     options.host,
     options.hostExplicit,
+    options.port,
   );
 }
 
@@ -277,7 +281,7 @@ function suiteNameFromArtifactPath(artifactPath: string): string {
 }
 
 async function openCommand(
-  options: { artifact: string; open: boolean; host: string | true },
+  options: { artifact: string; open: boolean; host: string | true; port: number },
   command: Command,
 ): Promise<void> {
   const artifact = await readVerificationArtifact(options.artifact);
@@ -287,6 +291,7 @@ async function openCommand(
     options.open,
     normalizeHost(options.host),
     command.getOptionValueSource("host") !== "default",
+    options.port,
   );
 }
 
@@ -315,14 +320,19 @@ export function registerDashboardCommands(program: Command): void {
     )
       .option("--project-root <dir>", "target project root")
       .option("--host [host]", "host to bind (bare flag binds every interface)", "localhost")
+      .option("--port <port>", "port to bind", positiveInteger, DEFAULT_DASHBOARD_PORT)
       .option("--no-open", "do not open dashboard in browser")
       .action(
-        (options: { projectRoot?: string; open: boolean; host: string | true }, command: Command) =>
+        (
+          options: { projectRoot?: string; open: boolean; host: string | true; port: number },
+          command: Command,
+        ) =>
           runAggregatedDashboard({
             projectRoot: resolveProjectRoot(options.projectRoot),
             open: options.open,
             host: normalizeHost(options.host),
             hostExplicit: command.getOptionValueSource("host") !== "default",
+            port: options.port,
           }),
       ),
     { isDefault: true },
@@ -331,6 +341,7 @@ export function registerDashboardCommands(program: Command): void {
     subcommand("open", "Open dashboard for an existing verification artifact.")
       .requiredOption("--artifact <path>", "verification artifact JSON")
       .option("--host [host]", "host to bind (bare flag binds every interface)", "localhost")
+      .option("--port <port>", "port to bind", positiveInteger, DEFAULT_DASHBOARD_PORT)
       .option("--no-open", "do not open dashboard in browser")
       .action(openCommand),
   );

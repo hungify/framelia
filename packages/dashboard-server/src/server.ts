@@ -18,6 +18,9 @@ export interface DashboardServer {
   close: () => Promise<void>;
 }
 
+export const DEFAULT_DASHBOARD_PORT = 6789;
+const MAX_PORT_ATTEMPTS = 20;
+
 const contentTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -156,12 +159,29 @@ export async function startDashboardServer(options: {
     return sendFile(path.join(clientRoot, "index.html"));
   });
 
-  const server = await new Promise<ServerType>((resolve, reject) => {
-    const instance = serve({ fetch: app.fetch, hostname, port: options.port ?? 0 }, () =>
-      resolve(instance),
-    );
-    instance.once("error", reject);
-  });
+  const listen = (port: number): Promise<ServerType> =>
+    new Promise<ServerType>((resolve, reject) => {
+      const instance = serve({ fetch: app.fetch, hostname, port }, () => resolve(instance));
+      instance.once("error", reject);
+    });
+
+  let port = options.port ?? DEFAULT_DASHBOARD_PORT;
+  let server: ServerType;
+  for (;;) {
+    try {
+      // eslint-disable-next-line no-await-in-loop -- must know this port failed before trying the next
+      server = await listen(port);
+      break;
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== "EADDRINUSE" ||
+        port >= (options.port ?? DEFAULT_DASHBOARD_PORT) + MAX_PORT_ATTEMPTS - 1
+      )
+        throw error;
+      console.error(`Port ${port} is in use, trying ${port + 1}...`);
+      port += 1;
+    }
+  }
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("Could not resolve dashboard server address.");

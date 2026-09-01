@@ -66,13 +66,14 @@ export function registerContractCommands(program: Command): void {
   contract.addCommand(
     subcommand(
       "create",
-      "Create a schema-v4 visual contract. Prompts interactively for any flag left unset.",
+      "Create a schema-v5 visual contract. Prompts interactively for any flag left unset.",
     )
       .option("--project-root <dir>", "target project root")
       .option("--output <path>", "contract path relative to project root")
       .option("--force", "replace existing contract")
       .option("--target-url <url>", "target application URL")
       .option("--contract-id <id>", "contract id, e.g. home.desktop")
+      .option("--name <name>", "display name for just this contract, e.g. Login")
       .option("--file-key <key>", "Figma file key")
       .option("--node-id <id>", "Figma node id, e.g. 153:5181")
       .addOption(

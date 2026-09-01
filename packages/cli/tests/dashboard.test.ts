@@ -46,8 +46,9 @@ async function fixture(): Promise<{
       contracts: [
         {
           id: "home",
+          name: "Home",
           baseline: { kind: "figma", fileKey: "abc123", nodeId: "1:2" },
-          viewport: { name: "desktop", width: 320, height: 240 },
+          viewport: { preset: "desktop", width: 320, height: 240 },
           outDir: ".framelia/visual-verifications/home",
           scope: { kind: "page", pageReason: "release page" },
         },
@@ -492,8 +493,9 @@ describe("aggregateDashboardSource", () => {
         contracts: [
           {
             id: "desktop",
+            name: "Desktop",
             baseline: { kind: "figma", fileKey: "abc123", nodeId: "1:2" },
-            viewport: { name: "desktop", width: 1440, height: 1024 },
+            viewport: { preset: "desktop", width: 1440, height: 1024 },
             outDir: ".framelia/visual-verifications/login/run-2026-08-04/desktop",
             scope: { kind: "page", pageReason: "release page" },
           },

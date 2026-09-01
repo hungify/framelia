@@ -90,7 +90,9 @@ const resolvedThresholdTooltip = computed(() => {
           >evidence review</span
         >
       </div>
-      <code class="block mt-1 text-muted text-xs">{{ contract.id }}</code>
+      <code v-if="contract.id !== contract.name" class="block mt-1 text-muted text-xs">{{
+        contract.id
+      }}</code>
     </header>
     <div
       v-if="reviewNotice"

@@ -46,7 +46,7 @@ const outcome = await captureReadyPage(page, {
 ```
 
 There is no browser-owning, navigation-owning capture path in this package anymore — that
-ownership moved entirely to the caller (KTD1–3 of the Playwright matcher pivot). Baseline
+ownership moved entirely to the caller as part of the Playwright matcher pivot. Baseline
 resolution stays: `FigmaBaselineProvider` fetches a fresh Figma node render per call; there is no
 web-baseline provider, since web-vs-web comparison is `@framelia/playwright`'s `toMatchPage`/
 `toMatchUrl`, diffing two already-navigated pages directly rather than through a persisted

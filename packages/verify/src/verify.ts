@@ -100,7 +100,7 @@ function contractToDoneGate(
   const scope = resolveContractScope(contract);
   return {
     id: contract.id,
-    viewport: contract.viewport.name,
+    viewport: contract.viewport.preset,
     outDir: resolveArtifactPath(contract.outDir, projectRoot),
     baseline: contract.baseline,
     target,

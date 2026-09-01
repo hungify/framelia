@@ -29,7 +29,7 @@ npx framelia status --project-root "$PWD"
 | -------------------------- | ----------------------------------------------------------------------------------------------- |
 | `framelia init`            | Initialize project config and an ignored auth-state directory.                                  |
 | `framelia auth`            | Record Playwright storage state through a headed login browser.                                 |
-| `framelia contract create` | Interactively author a schema-v4, Figma-baselined visual contract.                              |
+| `framelia contract create` | Interactively author a schema-v5, Figma-baselined visual contract.                              |
 | `framelia status`          | Show CLI version, project root, and Figma token availability.                                   |
 | `framelia schema`          | Print the live JSON Schema for a contract or verification artifact.                             |
 | `framelia` (no arguments)  | Open a dashboard aggregating every artifact found under `.framelia/visual-verifications/`.      |
@@ -85,20 +85,21 @@ npx framelia contract create
 ```
 
 An interactive wizard asks for a target URL (identity only — recorded for evidence, not
-navigated by this command), contract ID, Figma `fileKey`/`nodeId`, viewport, and capture scope. It
-writes `.framelia/visual-verifications/<feature>/visual-contract.json`, where `<feature>` is the
-first segment of the contract ID. Use `--output <path>` for another location; an existing file
-requires `--force`.
+navigated by this command), contract ID, display name, Figma `fileKey`/`nodeId`, viewport, and
+capture scope. It writes `.framelia/visual-verifications/<feature>/visual-contract.json`, where
+`<feature>` is the first segment of the contract ID. Use `--output <path>` for another location; an
+existing file requires `--force`.
 
 ```json
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "target": { "kind": "web", "url": "http://127.0.0.1:3000/login" },
   "contracts": [
     {
       "id": "login.desktop",
+      "name": "Desktop",
       "baseline": { "kind": "figma", "fileKey": "abc123", "nodeId": "153:5181" },
-      "viewport": { "name": "desktop", "width": 1440, "height": 1024 },
+      "viewport": { "preset": "desktop", "width": 1440, "height": 1024 },
       "outDir": ".framelia/visual-verifications/login/desktop",
       "scope": {
         "kind": "page",

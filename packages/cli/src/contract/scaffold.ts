@@ -14,8 +14,9 @@ import { JSON_INDENT_SPACES } from "@framelia/verify";
 export interface ContractAnswers {
   targetUrl: string;
   contractId: string;
+  name: string;
   baseline: { kind: "figma"; fileKey: string; nodeId: string };
-  viewport: { name: string; width: number; height: number };
+  viewport: { preset: string; width: number; height: number };
   scope:
     | { kind: "page"; pageReason: string; styleChecks?: StyleCheckPoint[] }
     | {
@@ -34,6 +35,7 @@ export function createContractRequest(answers: ContractAnswers): VerificationReq
     contracts: [
       {
         id: answers.contractId,
+        name: answers.name,
         baseline: answers.baseline,
         viewport: answers.viewport,
         outDir: visualArtifactPath(outDirName),

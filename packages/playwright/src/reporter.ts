@@ -54,8 +54,8 @@ function loadDashboardServer(): Promise<DashboardServerModule> {
 
 /**
  * Playwright Reporter: drives framelia's live dashboard during a
- * matcher-driven test run, and persists a schema-v4 VerificationArtifact per
- * test afterward so `done-gate`/`report`/`open` keep functioning. Register it
+ * matcher-driven test run, and persists a VerificationArtifact per test
+ * afterward so `done-gate`/`report`/`open` keep functioning. Register it
  * in `playwright.config.ts`'s `reporter` array.
  */
 export default class FrameliaReporter implements Reporter {
@@ -65,8 +65,9 @@ export default class FrameliaReporter implements Reporter {
   #projectRoot = process.cwd();
   #artifacts: VerificationArtifact[] = [];
   /** Loading @framelia/dashboard-server and seeding #store is async; buffers onTestEnd
-   * calls that land before it resolves so no result is silently dropped (KTD13's Reporter
-   * only gets one whole-test-result callback per test -- there is no second chance). */
+   * calls that land before it resolves so no result is silently dropped -- Playwright's
+   * Reporter only gets one whole-test-result callback per test, so there is no second
+   * chance to record it. */
   #ready?: Promise<void>;
   #pending: Promise<void>[] = [];
 

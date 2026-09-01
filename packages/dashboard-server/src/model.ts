@@ -201,8 +201,8 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
     : undefined;
   const dashboardResult = assembleContractResult({
     id: contract.id,
-    name: contract.id,
-    tags: [contract.viewport.name, contract.scope.kind],
+    name: contract.name,
+    tags: [contract.viewport.preset, contract.scope.kind],
     status,
     baselineKind: contract.baseline.kind,
     ...(score && baselinePath

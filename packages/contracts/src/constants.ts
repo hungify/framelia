@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 4 as const;
+export const SCHEMA_VERSION = 5 as const;
 export const MIN_CONTRACTS_PER_REQUEST = 1;
 export const MAX_CONTRACTS_PER_REQUEST = 8;
 export const MIN_CONTRACT_TIMEOUT_MS = 1_000;

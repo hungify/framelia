@@ -475,8 +475,9 @@ describe("styleToleranceOverridesSchema", () => {
   it("region contracts accept an optional styleToleranceOverrides field, following the profileOverrides pattern", () => {
     const contract = {
       id: "auth-login-desktop",
+      name: "Auth login · Desktop",
       baseline: { kind: "figma", fileKey: "file-key", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1280, height: 800 },
+      viewport: { preset: "desktop", width: 1280, height: 800 },
       scope: { kind: "region", selector: '[data-testid="auth.login"]' },
       styleToleranceOverrides: { maxColorDeltaE: 5 },
     };

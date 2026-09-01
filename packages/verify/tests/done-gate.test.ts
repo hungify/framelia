@@ -129,7 +129,10 @@ describe("done gate schema v4", () => {
     const old = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const future = new Date(Date.now() + 5 * 60 * 1000).toISOString();
     for (const testCase of [
-      { overrides: { schemaVersion: 3 }, reason: /schemaVersion must be 4/ },
+      {
+        overrides: { schemaVersion: SCHEMA_VERSION - 1 },
+        reason: new RegExp(`schemaVersion must be ${SCHEMA_VERSION}`),
+      },
       { overrides: { runType: "dev" }, reason: /runType must be "final"/ },
       { overrides: { pass: false }, reason: /pass is not true/ },
       { overrides: { capturedAt: old }, reason: /capturedAt older than/ },

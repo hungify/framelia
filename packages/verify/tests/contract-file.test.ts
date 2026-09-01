@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { SCHEMA_VERSION } from "@framelia/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { readContractEntry } from "../src/contract-file.ts";
@@ -22,20 +23,22 @@ function tempDir(): string {
 
 const target = { kind: "web" as const, url: "http://localhost:3000" };
 const contractRequest = {
-  schemaVersion: 4,
+  schemaVersion: SCHEMA_VERSION,
   target,
   contracts: [
     {
       id: "login.desktop",
+      name: "Login · Desktop",
       baseline: { kind: "figma" as const, fileKey: "file-key", nodeId: "1:2" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       outDir: ".framelia/visual-verifications/login",
       scope: { kind: "page" as const, pageReason: "full page" },
     },
     {
       id: "login.mobile",
+      name: "Login · Mobile",
       baseline: { kind: "figma" as const, fileKey: "file-key", nodeId: "1:3" },
-      viewport: { name: "mobile", width: 390, height: 844 },
+      viewport: { preset: "mobile", width: 390, height: 844 },
       outDir: ".framelia/visual-verifications/login",
       scope: { kind: "page" as const, pageReason: "full page" },
     },
@@ -73,7 +76,11 @@ describe("readContractEntry", () => {
 
   it("reports INVALID_CONTRACT_FILE for JSON that fails schema validation", () => {
     const dir = tempDir();
-    const filePath = writeContractFile(dir, { schemaVersion: 4, target, contracts: [] });
+    const filePath = writeContractFile(dir, {
+      schemaVersion: SCHEMA_VERSION,
+      target,
+      contracts: [],
+    });
     const result = readContractEntry(filePath, "login.desktop");
     expect(result).toMatchObject({ ok: false, error: "INVALID_CONTRACT_FILE" });
   });

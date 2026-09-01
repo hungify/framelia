@@ -209,7 +209,7 @@ describe("FrameliaReporter", () => {
     await expect(reporter.onEnd({ status: "passed" } as any)).resolves.toBeUndefined();
   });
 
-  it("writes a VerificationArtifact per test that done-gate/report/open can read without error (R13)", async () => {
+  it("writes a VerificationArtifact per test that done-gate/report/open can read without error", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -519,7 +519,7 @@ describe("FrameliaReporter", () => {
     await reporter.onEnd({ status: "passed" } as any);
   });
 
-  it("records a toMatchPage/toMatchUrl (non-figma) result live but writes no VerificationArtifact (R9)", async () => {
+  it("records a toMatchPage/toMatchUrl (non-figma) result live but writes no VerificationArtifact", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const clientRoot = clientRootFixture();
     const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
@@ -544,7 +544,7 @@ describe("FrameliaReporter", () => {
     expect(fs.existsSync(artifactPath)).toBe(false);
   });
 
-  it("surfaces a toMatchPageBaseline result's promotion provenance on the live dashboard contract and persists its image evidence, but still writes no VerificationArtifact (#41, R9)", async () => {
+  it("surfaces a toMatchPageBaseline result's promotion provenance on the live dashboard contract and persists its image evidence, but still writes no VerificationArtifact (#41)", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -585,7 +585,7 @@ describe("FrameliaReporter", () => {
     expect(fs.existsSync(path.join(outDir, "web-baseline.png"))).toBe(true);
     expect(fs.existsSync(path.join(outDir, "actual.png"))).toBe(true);
     expect(fs.existsSync(path.join(outDir, "diff.png"))).toBe(true);
-    // R9 still applies to the schema-v4 done-gate pipeline: no VerificationArtifact.
+    // Non-Figma results don't get a persisted done-gate artifact.
     expect(fs.existsSync(path.join(outDir, "visual-verification.json"))).toBe(false);
     expect(fs.existsSync(path.join(outDir, "visual-score.json"))).toBe(false);
   });

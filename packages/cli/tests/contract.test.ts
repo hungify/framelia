@@ -27,13 +27,14 @@ describe("contract scaffold", () => {
     const request = createContractRequest({
       targetUrl: "http://127.0.0.1:3000/login",
       contractId: "login.desktop",
+      name: "Login · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page", pageReason: "Complete login page." },
     });
 
     expect(request).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       target: { kind: "web", url: "http://127.0.0.1:3000/login" },
       contracts: [{ id: "login.desktop", outDir: ".framelia/visual-verifications/login/desktop" }],
     });
@@ -46,8 +47,9 @@ describe("contract scaffold", () => {
     const request = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.mobile",
+      name: "Card · Mobile",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "mobile", width: 390, height: 844 },
+      viewport: { preset: "mobile", width: 390, height: 844 },
       scope: {
         kind: "region",
         selector: "[data-testid=card]",
@@ -73,15 +75,17 @@ describe("contract scaffold", () => {
     const desktop = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.desktop",
+      name: "Card · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
     const mobile = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.mobile",
+      name: "Card · Mobile",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
-      viewport: { name: "mobile", width: 390, height: 844 },
+      viewport: { preset: "mobile", width: 390, height: 844 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
 
@@ -100,22 +104,25 @@ describe("contract scaffold", () => {
     const desktop = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.desktop",
+      name: "Card · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
     const mobile = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.mobile",
+      name: "Card · Mobile",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
-      viewport: { name: "mobile", width: 390, height: 844 },
+      viewport: { preset: "mobile", width: 390, height: 844 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
     const updatedDesktop = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.desktop",
+      name: "Card · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "999:9999" },
-      viewport: { name: "desktop", width: 1920, height: 1080 },
+      viewport: { preset: "desktop", width: 1920, height: 1080 },
       scope: { kind: "page", pageReason: "Complete card page, redesigned." },
     });
 
@@ -138,15 +145,17 @@ describe("contract scaffold", () => {
     const desktop = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.desktop",
+      name: "Card · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
     const otherPage = createContractRequest({
       targetUrl: "https://preview.example.com/other",
       contractId: "card.mobile",
+      name: "Card · Mobile",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
-      viewport: { name: "mobile", width: 390, height: 844 },
+      viewport: { preset: "mobile", width: 390, height: 844 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
 
@@ -164,15 +173,17 @@ describe("contract scaffold", () => {
     const desktop = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.desktop",
+      name: "Card · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
     const sameIdOtherUrl = createContractRequest({
       targetUrl: "https://preview.example.com/other",
       contractId: "card.desktop",
+      name: "Card · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "999:9999" },
-      viewport: { name: "desktop", width: 1920, height: 1080 },
+      viewport: { preset: "desktop", width: 1920, height: 1080 },
       scope: { kind: "page", pageReason: "Complete card page, redesigned." },
     });
 
@@ -189,15 +200,17 @@ describe("contract scaffold", () => {
     const desktop = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.desktop",
+      name: "Card · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
     const mobile = createContractRequest({
       targetUrl: "https://preview.example.com/card",
       contractId: "card.mobile",
+      name: "Card · Mobile",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5182" },
-      viewport: { name: "mobile", width: 390, height: 844 },
+      viewport: { preset: "mobile", width: 390, height: 844 },
       scope: { kind: "page", pageReason: "Complete card page." },
     });
     const both = { ...desktop, contracts: [...desktop.contracts, ...mobile.contracts] };
@@ -212,8 +225,9 @@ describe("contract scaffold", () => {
     const request = createContractRequest({
       targetUrl: "http://127.0.0.1:3000/home",
       contractId: "home.desktop",
+      name: "Home · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: {
         kind: "page",
         pageReason: "Baseline node represents complete home page.",
@@ -236,8 +250,9 @@ describe("contract scaffold", () => {
     const request = createContractRequest({
       targetUrl: "http://127.0.0.1:3000/home",
       contractId: "home.desktop",
+      name: "Home · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page", pageReason: "Baseline node represents complete home page." },
     });
 
@@ -248,8 +263,9 @@ describe("contract scaffold", () => {
     const request = createContractRequest({
       targetUrl: "http://127.0.0.1:3000/login",
       contractId: "login.form.desktop",
+      name: "Login · Form · Desktop",
       baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: {
         kind: "region",
         selector: "[data-testid=login-form]",
@@ -288,6 +304,8 @@ describe("contract create --target-url and friends (non-interactive)", () => {
         "http://localhost:8888/login",
         "--contract-id",
         "login.desktop",
+        "--name",
+        "Desktop",
         "--file-key",
         "abc123",
         "--node-id",
@@ -333,6 +351,8 @@ describe("contract create --target-url and friends (non-interactive)", () => {
         "http://localhost:8888/login",
         "--contract-id",
         "login.desktop",
+        "--name",
+        "Desktop",
         "--file-key",
         "abc123",
         "--node-id",
@@ -374,6 +394,8 @@ describe("contract create --target-url and friends (non-interactive)", () => {
         "http://localhost:8888/home",
         "--contract-id",
         "home.desktop",
+        "--name",
+        "Desktop",
         "--file-key",
         "abc123",
         "--node-id",
@@ -418,6 +440,8 @@ describe("contract create --target-url and friends (non-interactive)", () => {
         "http://localhost:8888/home",
         "--contract-id",
         "home.desktop",
+        "--name",
+        "Desktop",
         "--file-key",
         "abc123",
         "--node-id",
@@ -453,6 +477,8 @@ describe("contract create --target-url and friends (non-interactive)", () => {
         "http://localhost:8888/login",
         "--contract-id",
         "login.desktop",
+        "--name",
+        "Desktop",
         "--file-key",
         "abc123",
         "--node-id",
@@ -563,6 +589,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
     const { adapter, warnings } = scriptedPrompts([
       "http://127.0.0.1:3000/login", // target URL
       "login.tablet", // contract ID
+      "Login · Tablet", // display name
       "abc123", // Figma file key
       "153:5181", // Figma node ID
       "custom", // viewport preset
@@ -588,7 +615,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
       contracts: [
         {
           id: "login.tablet",
-          viewport: { name: "tablet", width: 834, height: 1194 },
+          viewport: { preset: "tablet", width: 834, height: 1194 },
           scope: { kind: "region", selector: "[data-testid=card]" },
         },
       ],
@@ -626,6 +653,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
         projectRoot: directory,
         targetUrl: "http://127.0.0.1:3000/login",
         contractId: "login.desktop",
+        name: "Desktop",
         fileKey: "abc123",
         nodeId: "153:5181",
       },
@@ -640,7 +668,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
     );
     expect(written.contracts[0]).toMatchObject({
       id: "login.desktop",
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page" },
     });
     expect(written.contracts[0].scope).not.toHaveProperty("styleChecks");
@@ -663,6 +691,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
         projectRoot: directory,
         targetUrl: "http://127.0.0.1:3000/login",
         contractId: "login.desktop",
+        name: "Desktop",
         fileKey: "abc123",
         nodeId: "153:5181",
         pageReason: "Baseline node represents complete page.",
@@ -691,6 +720,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
         projectRoot: directory,
         targetUrl: "http://127.0.0.1:3000/login",
         contractId: "login.desktop",
+        name: "Desktop",
         fileKey: "abc123",
         nodeId: "153:5181",
         viewport: "desktop",
@@ -718,6 +748,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
     const { adapter, warnings } = scriptedPrompts([
       "http://127.0.0.1:3000/home",
       "home.desktop",
+      "Desktop", // display name
       "abc123",
       "153:5181",
       "desktop", // viewport preset
@@ -756,6 +787,7 @@ describe("runCreateContract (scripted prompt adapter)", () => {
     const { adapter } = scriptedPrompts([
       "http://127.0.0.1:3000/home",
       "home.desktop",
+      "Desktop", // display name
       "abc123",
       "153:5181",
       "desktop",

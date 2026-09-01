@@ -244,6 +244,7 @@ export interface CreateContractOptions {
   /** Non-interactive overrides: any field left undefined still prompts interactively. */
   targetUrl?: string;
   contractId?: string;
+  name?: string;
   fileKey?: string;
   nodeId?: string;
   viewport?: ViewportPreset;
@@ -317,6 +318,15 @@ export async function runCreateContract(
   );
   if (!contractId) return;
 
+  const name = await resolveField("--name", options.name, required, () =>
+    text(prompts, {
+      message: "Display name (just this contract -- the feature is already grouped)",
+      placeholder: "Desktop",
+      validate: required,
+    }),
+  );
+  if (!name) return;
+
   const fileKey = await resolveField("--file-key", options.fileKey, required, () =>
     text(prompts, { message: "Figma file key", validate: required }),
   );
@@ -346,21 +356,24 @@ export async function runCreateContract(
 
   let viewport: ContractAnswers["viewport"];
   if (viewportPreset === "custom") {
-    const name = await resolveField("--viewport-name", options.viewportName, required, () =>
-      text(prompts, { message: "Viewport name", placeholder: "tablet", validate: required }),
+    const viewportPresetName = await resolveField(
+      "--viewport-name",
+      options.viewportName,
+      required,
+      () => text(prompts, { message: "Viewport name", placeholder: "tablet", validate: required }),
     );
-    if (!name) return;
+    if (!viewportPresetName) return;
     const width = options.viewportWidth ?? (await positiveIntegerText(prompts, "Viewport width"));
     if (width === undefined) return;
     const height =
       options.viewportHeight ?? (await positiveIntegerText(prompts, "Viewport height"));
     if (height === undefined) return;
-    viewport = { name, width, height };
+    viewport = { preset: viewportPresetName, width, height };
   } else {
     viewport =
       viewportPreset === "desktop"
-        ? { name: "desktop", width: 1440, height: 1024 }
-        : { name: "mobile", width: 390, height: 844 };
+        ? { preset: "desktop", width: 1440, height: 1024 }
+        : { preset: "mobile", width: 390, height: 844 };
   }
 
   const scopeKind =
@@ -437,6 +450,7 @@ export async function runCreateContract(
   const request = createContractRequest({
     targetUrl,
     contractId,
+    name,
     baseline,
     viewport,
     scope,

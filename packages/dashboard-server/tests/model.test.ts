@@ -80,8 +80,9 @@ async function fixture(): Promise<{ artifact: VerificationArtifact }> {
       contracts: [
         {
           id: "home",
+          name: "Home",
           baseline: { kind: "figma", fileKey: "abc123", nodeId: "1:2" },
-          viewport: { name: "desktop", width: 320, height: 240 },
+          viewport: { preset: "desktop", width: 320, height: 240 },
           outDir: ".framelia/visual-verifications/home",
           scope: { kind: "page", pageReason: "release page" },
         },

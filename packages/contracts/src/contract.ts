@@ -15,7 +15,7 @@ export type RunType = z.infer<typeof runTypeSchema>;
 
 export const viewportSchema = z
   .object({
-    name: z.string().min(1),
+    preset: z.string().min(1),
     width: z.number().int().positive(),
     height: z.number().int().positive(),
   })
@@ -158,6 +158,7 @@ export const visualMaskSchema = z
 export const verificationContractSchema = z
   .object({
     id: z.string().regex(CONTRACT_ID_PATTERN),
+    name: nonEmptyTrimmed,
     baseline: baselineSchema,
     viewport: viewportSchema,
     // Defaults to `visualArtifactPath(id)` when omitted — see the transform below.
@@ -170,15 +171,7 @@ export const verificationContractSchema = z
     profileOverrides: profileOverridesSchema.optional(),
     /** Explicit per-contract style-comparison tolerance overrides, merged on top of compareStyles()'s own defaults. */
     styleToleranceOverrides: styleToleranceOverridesSchema.optional(),
-    /** Explicit override of whether this contract's resolved threshold blocks the CI merge
-     *  gate; unset falls back to the resolved profile's own gateEligible default. Lets a
-     *  deliberately loose custom threshold opt out of gating without naming a "dev" preset,
-     *  and lets an explicitly-loose preset opt back in -- see done-gate/validate.ts. */
     gateEligible: z.boolean().optional(),
-    /** Explicit override of whether style mismatches (color/typography/etc.) block the CI
-     *  merge gate; unset falls back to the resolved profile's own styleGateEligible default
-     *  (false everywhere by default -- style stays informational-only unless opted in). See
-     *  done-gate/validate.ts. */
     styleGateEligible: z.boolean().optional(),
     masks: z.array(visualMaskSchema).min(1).max(MAX_MASK_SELECTORS).optional(),
   })

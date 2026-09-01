@@ -44,6 +44,12 @@ export interface ReadyCaptureSpec {
   screenshot: { masks?: VisualMask[]; maxMaskedAreaRatio?: number };
   timeoutMs?: number;
   devtoolsSelector?: true | string;
+  /** Device pixel ratio to capture at (matches the Page's own context configuration --
+   *  see captureReadyPage's doc comment). 1 (the default) captures one PNG pixel per CSS
+   *  px, unchanged from before this option existed. >1 captures at that many physical
+   *  pixels per CSS px instead, for a sharper image; every CSS-px-based bound this module
+   *  reports (mask evidence, selector bounds) is scaled to match. */
+  scale?: number;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
 }

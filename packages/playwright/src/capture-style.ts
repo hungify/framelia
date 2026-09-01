@@ -229,22 +229,34 @@ export async function captureElementStyle(page: Page, selector: string): Promise
  * a non-fullPage (viewport) screenshot's (0,0) is already viewport origin and needs no
  * offset. Returns null (not a guess) for a selector that doesn't resolve to a visible,
  * positively-sized element, so a stale check-point selector simply drops out of
- * attribution instead of poisoning it with a zero-size box.
+ * attribution instead of poisoning it with a zero-size box. `scale` mirrors
+ * capture/core.ts's own capture scale: boundingBox() is always CSS px, but the
+ * pixel-diff clusters this gets compared against come from the actual PNG buffer, which
+ * is `scale` physical pixels per CSS px -- pass the same scale the capture used, or 1
+ * (the default) for an unscaled, one-PNG-pixel-per-CSS-px capture.
  */
 export async function captureElementBounds(
   page: Page,
   selector: string,
   fullPage: boolean,
+  scale = 1,
 ): Promise<SelectorBounds | null> {
   const box = await page.locator(selector).boundingBox();
   if (!box || box.width <= 0 || box.height <= 0) return null;
-  if (!fullPage) return { selector, x: box.x, y: box.y, width: box.width, height: box.height };
+  if (!fullPage)
+    return {
+      selector,
+      x: box.x * scale,
+      y: box.y * scale,
+      width: box.width * scale,
+      height: box.height * scale,
+    };
   const scroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
   return {
     selector,
-    x: box.x + scroll.x,
-    y: box.y + scroll.y,
-    width: box.width,
-    height: box.height,
+    x: (box.x + scroll.x) * scale,
+    y: (box.y + scroll.y) * scale,
+    width: box.width * scale,
+    height: box.height * scale,
   };
 }

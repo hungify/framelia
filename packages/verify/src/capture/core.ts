@@ -57,12 +57,20 @@ export async function captureReadyPage(
   );
   const fontReject = checkFontReadiness(settled, fontPolicy);
   if (fontReject) return fontReject;
+  const scale = spec.scale ?? 1;
+  // "css" (one PNG pixel per CSS px) is the default and what every existing
+  // CSS-px-based bound below (masks.ts's scope/mask bounds, capture-style.ts's
+  // captureElementBounds) assumes -- Playwright's own "device" default would let a
+  // deviceScaleFactor > 1 context silently misalign every one of them. Only switch to
+  // "device" (and scale those bounds to match, see resolveMasks's `scale` param below)
+  // when the caller explicitly asks for a sharper, non-1:1 capture.
+  const screenshotScale = scale === 1 ? "css" : "device";
   const selector = spec.scope.kind === "region" ? spec.scope.selector : undefined;
   if (selector) {
     const selectorReject = await resolveSelector(page, selector);
     if (selectorReject) return selectorReject;
   }
-  const resolvedMasks = await resolveMasks(page, spec);
+  const resolvedMasks = await resolveMasks(page, spec, scale);
   if (!resolvedMasks.ok) return resolvedMasks.reject;
   const { locators: maskLocators, evidence: maskEvidence } = resolvedMasks;
   const capturedAt = new Date().toISOString();
@@ -84,12 +92,7 @@ export async function captureReadyPage(
     try {
       await locator.screenshot({
         path: spec.outPath,
-        // "css" (one PNG pixel per CSS px), not Playwright's own "device" default --
-        // boundingBox()-derived coordinates (masks.ts's scope/mask bounds,
-        // capture-style.ts's captureElementBounds for pixel-diff attribution) are
-        // always CSS px, so the screenshot must share that space or a
-        // deviceScaleFactor > 1 context silently misaligns every one of them.
-        scale: "css",
+        scale: screenshotScale,
         animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
         mask: maskLocators,
         ...(maskLocators.length ? { maskColor: MASK_COLOR } : {}),
@@ -105,8 +108,7 @@ export async function captureReadyPage(
     try {
       await page.screenshot({
         path: spec.outPath,
-        // See the locator.screenshot() branch above for why "css", not "device".
-        scale: "css",
+        scale: screenshotScale,
         fullPage: spec.scope.kind === "page" ? spec.scope.fullPage : false,
         animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
         mask: maskLocators,

@@ -1,11 +1,26 @@
 packages:
   - "packages/*"
   - "apps/*"
+  - "examples/*"
 
 allowBuilds:
   esbuild: true
   simple-git-hooks: true
   vue-demi: true
 
+# vite-plus (examples/framelia-reference-app's generated toolchain) aliases "vite"
+# to its own core package. Scoped to that project's own dependency only --
+# an unscoped override would also hijack apps/dashboard's real vite@^8.
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.9
+  vite-plus: 0.2.9
+
 overrides:
   esbuild: 0.28.1
+  "framelia-reference-app>vite": "catalog:"
+
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: "*"

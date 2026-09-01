@@ -531,12 +531,13 @@ describe("aggregateDashboardSource", () => {
     const run = await source.snapshot();
     expect(run.summary.total).toBe(2);
     const ids = run.contracts.map((contract) => contract.id).toSorted();
-    expect(ids).toEqual(["home.home", "login.desktop"]);
+    // "home"'s contract.id already equals its feature key -- prefixing would double it.
+    expect(ids).toEqual(["home", "login.desktop"]);
     expect(run.contracts.find((contract) => contract.id === "login.desktop")).toMatchObject({
       feature: "login",
       status: "passed",
     });
-    expect(run.contracts.find((contract) => contract.id === "home.home")).toMatchObject({
+    expect(run.contracts.find((contract) => contract.id === "home")).toMatchObject({
       feature: "home",
     });
 
@@ -594,6 +595,6 @@ describe("aggregateDashboardSource", () => {
     const source = await aggregateDashboardSource(root);
     const run = await source.snapshot();
     expect(run.summary.total).toBe(1);
-    expect(run.contracts[0]?.id).toBe("home.home");
+    expect(run.contracts[0]?.id).toBe("home");
   });
 });

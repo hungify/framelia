@@ -354,6 +354,7 @@ const resolvedThresholdTooltip = computed(() => {
     </div>
     <details
       v-if="contract.captureEvidence"
+      open
       class="mx-3.5 mt-3 border-t border-line-soft pt-2.5 text-xs"
     >
       <summary class="cursor-pointer select-none text-text font-medium">

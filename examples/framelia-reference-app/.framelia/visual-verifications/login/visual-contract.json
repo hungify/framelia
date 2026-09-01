@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 4,
+  "target": {
+    "kind": "web",
+    "url": "http://localhost:8888/login"
+  },
+  "contracts": [
+    {
+      "id": "login.desktop",
+      "baseline": {
+        "kind": "figma",
+        "fileKey": "q2MZbYDBibNKYDm7ESfvKF",
+        "nodeId": "6006:1025"
+      },
+      "viewport": {
+        "name": "desktop",
+        "width": 1196,
+        "height": 796
+      },
+      "outDir": ".framelia/visual-verifications/login/desktop",
+      "scope": {
+        "kind": "page",
+        "pageReason": "Baseline node represents complete page."
+      }
+    },
+    {
+      "id": "login.mobile",
+      "baseline": {
+        "kind": "figma",
+        "fileKey": "q2MZbYDBibNKYDm7ESfvKF",
+        "nodeId": "6007:4421"
+      },
+      "viewport": {
+        "name": "mobile",
+        "width": 356,
+        "height": 728
+      },
+      "outDir": ".framelia/visual-verifications/login/mobile",
+      "scope": {
+        "kind": "page",
+        "pageReason": "Baseline node represents complete page."
+      }
+    }
+  ]
+}

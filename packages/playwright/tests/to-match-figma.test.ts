@@ -1101,6 +1101,30 @@ describe("runToMatchFigma", () => {
     }
   });
 
+  it("fails fast with an actionable message when contractId doesn't match CONTRACT_ID_PATTERN", async () => {
+    const context = await browser.newContext();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    try {
+      const page = await context.newPage();
+      const result = await runToMatchFigma(
+        page,
+        NODE_ID,
+        { fileKey: "file-key", contractId: "Login.Desktop" },
+        {
+          timeoutMs: 1_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async () => undefined,
+        },
+      );
+      expect(result.pass).toBe(false);
+      expect(result.message()).toContain('contractId "Login.Desktop"');
+    } finally {
+      await context.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails cleanly with a baseline-fetch-failed message when the Figma API rejects the request", async () => {
     const { html } = solidPagePng();
     globalThis.fetch = (async (input: string | URL | Request) => {

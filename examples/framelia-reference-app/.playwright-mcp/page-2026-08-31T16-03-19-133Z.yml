@@ -1,0 +1,144 @@
+- generic [active] [ref=f11e1]:
+  - generic [ref=f11e198]:
+    - banner [ref=f11e199]:
+      - generic "Framelia" [ref=f11e200]:
+        - strong [ref=f11e201]: Framelia
+        - generic [ref=f11e202]:
+          - button "Contracts" [pressed] [ref=f11e203]
+          - button "Details" [pressed] [ref=f11e204]
+      - generic [ref=f11e205]:
+        - generic [ref=f11e206]: login.mobile.page
+        - code [ref=f11e207]: login.mobile.page
+      - generic [ref=f11e208]: Archived
+    - main [ref=f11e210]:
+      - complementary [ref=f11e211]:
+        - generic [ref=f11e212]:
+          - generic [ref=f11e213]:
+            - generic [ref=f11e214]:
+              - strong [ref=f11e215]: Verification run
+              - generic [ref=f11e216]: 4 of 4 stories
+            - generic [ref=f11e217]: failed
+          - generic [ref=f11e218]:
+            - searchbox "Search stories" [ref=f11e220]
+            - combobox "Filter by status" [ref=f11e221]:
+              - generic: All
+          - tree [ref=f11e226]:
+            - treeitem "Login.Mobile.Page 1" [expanded] [level=1] [ref=f11e227]:
+              - generic [ref=f11e228]: ▾
+              - strong [ref=f11e231]: Login.Mobile.Page
+              - generic [ref=f11e232]: "1"
+            - group [ref=f11e236]:
+              - treeitem "login.mobile.page 2.40%" [level=2] [selected] [ref=f11e237]:
+                - strong [ref=f11e241]: login.mobile.page
+                - generic [ref=f11e242]: 2.40%
+            - treeitem "Login.Desktop.Page 1" [expanded] [level=1] [ref=f11e244]:
+              - generic [ref=f11e245]: ▾
+              - strong [ref=f11e248]: Login.Desktop.Page
+              - generic [ref=f11e249]: "1"
+            - group [ref=f11e253]:
+              - treeitem "login.desktop.page 0.62%" [level=2] [ref=f11e254]:
+                - strong [ref=f11e258]: login.desktop.page
+                - generic [ref=f11e259]: 0.62%
+            - treeitem "Login/Mobile.Page 1" [expanded] [level=1] [ref=f11e261]:
+              - generic [ref=f11e262]: ▾
+              - strong [ref=f11e265]: Login/Mobile.Page
+              - generic [ref=f11e266]: "1"
+            - group [ref=f11e270]:
+              - treeitem "login.mobile.page 2.40%" [level=2] [selected] [ref=f11e271]:
+                - strong [ref=f11e275]: login.mobile.page
+                - generic [ref=f11e276]: 2.40%
+            - treeitem "Login/Desktop.Page 1" [expanded] [level=1] [ref=f11e278]:
+              - generic [ref=f11e279]: ▾
+              - strong [ref=f11e282]: Login/Desktop.Page
+              - generic [ref=f11e283]: "1"
+            - group [ref=f11e287]:
+              - treeitem "login.desktop.page 0.62%" [level=2] [ref=f11e288]:
+                - strong [ref=f11e292]: login.desktop.page
+                - generic [ref=f11e293]: 0.62%
+          - generic "Verification summary" [ref=f11e295]:
+            - generic [ref=f11e296]:
+              - generic [ref=f11e297]: Visual tests
+              - generic [ref=f11e298]: 0 clean passes / 4
+            - progressbar "0%" [ref=f11e300]
+            - generic [ref=f11e302]: 4 failed
+            - paragraph [ref=f11e304]: ⌥ + ← / → to move selection
+      - region "Visual comparison inspector" [ref=f11e306]:
+        - generic [ref=f11e309]:
+          - img "Baseline capture" [ref=f11e310]
+          - img "Actual capture" [ref=f11e311]
+          - slider "Reveal after image" [ref=f11e312]
+        - generic [ref=f11e314]:
+          - tablist "Comparison mode" [ref=f11e315]:
+            - tab "Baseline" [ref=f11e316] [cursor=pointer]
+            - tab "Actual" [ref=f11e317] [cursor=pointer]
+            - tab "Scrub" [selected] [ref=f11e318] [cursor=pointer]
+            - tab "Diff" [ref=f11e319] [cursor=pointer]
+            - tab "Split" [ref=f11e320] [cursor=pointer]
+          - generic [ref=f11e322]:
+            - generic [ref=f11e323]: Opacity
+            - generic "Opacity" [ref=f11e324]:
+              - slider "Thumb" [ref=f11e327]
+            - status "Opacity Opacity" [ref=f11e328]: 55%
+          - generic [ref=f11e329]:
+            - checkbox "Difference blend" [checked] [ref=f11e332]
+            - generic [ref=f11e333]: Difference
+        - generic [ref=f11e334]:
+          - button "Zoom out" [ref=f11e335] [cursor=pointer]: −
+          - button "51%" [ref=f11e336] [cursor=pointer]
+          - button "Zoom in" [ref=f11e337] [cursor=pointer]: +
+          - button "100%" [ref=f11e339] [cursor=pointer]
+          - button "Fit" [ref=f11e340] [cursor=pointer]
+      - complementary [ref=f11e341]:
+        - generic [ref=f11e342]:
+          - generic [ref=f11e343]:
+            - generic [ref=f11e344]:
+              - heading "login.mobile.page" [level=1] [ref=f11e345]
+              - generic [ref=f11e346]: failed
+            - code [ref=f11e347]: login.mobile.page
+          - generic [ref=f11e348]:
+            - generic [ref=f11e349]:
+              - term [ref=f11e350]: Diff ratio
+              - definition [ref=f11e351]: 2.40%
+            - generic [ref=f11e352]:
+              - term [ref=f11e353]: Pixels
+              - definition [ref=f11e354]: 23,507
+            - generic [ref=f11e355]:
+              - term [ref=f11e356]: Viewport
+              - definition [ref=f11e357]: 712×1376
+            - generic [ref=f11e358]:
+              - term [ref=f11e359]: Baseline
+              - definition [ref=f11e360]: figma
+          - generic [ref=f11e361]:
+            - generic [ref=f11e362]: Resolved threshold — page
+            - 'generic "profile: page minMatch: 0.99 minSSIM: 0.97 maxAvgDeltaE: 4 maxDiffPixels: unbounded maxAreaGapPercent: 5 cluster: true" [ref=f11e363]':
+              - generic [ref=f11e364]: match ≥ 99.00%
+              - generic [ref=f11e365]: SSIM ≥ 97.00%
+              - generic [ref=f11e366]: ΔE ≤ 4.00
+              - generic [ref=f11e367]: px ≤ unbounded
+              - generic [ref=f11e368]: cluster on
+          - generic [ref=f11e369]:
+            - generic [ref=f11e370]:
+              - generic [ref=f11e371]: Baseline provenance
+              - code [ref=f11e372]: figma://q2MZbYDBibNKYDm7ESfvKF/6007:4284
+            - generic [ref=f11e373]:
+              - generic [ref=f11e374]: Evidence hash
+              - code [ref=f11e375]: sha256:5eeccbb9b0434004b5f6ab7f2d440464a606355e8eca545cc715bc778a88a74c
+          - group [ref=f11e376]:
+            - generic "Capture evidence · 0 warning(s)" [ref=f11e377] [cursor=pointer]
+            - generic [ref=f11e378]:
+              - term [ref=f11e379]: Final URL
+              - definition [ref=f11e380]: http://localhost:8888/login
+              - term [ref=f11e381]: Readiness
+              - definition [ref=f11e382]: not configured
+              - term [ref=f11e383]: Fonts
+              - definition [ref=f11e384]: loaded
+              - term [ref=f11e385]: Actions
+              - definition [ref=f11e386]: none
+              - term [ref=f11e387]: Times
+              - definition [ref=f11e388]: 2026-08-31T15:24:33.021Z → 2026-08-31T15:24:34.535Z → 2026-08-31T15:24:34.594Z
+              - term [ref=f11e389]: Hashes
+              - definition [ref=f11e390]: sha256:c5728b4dc9a5326fa4f7c0a3a6abd2604e690dc54737f5017cb3c070acdad093
+              - term [ref=f11e391]: Artifacts
+              - definition [ref=f11e392]: login.mobile.page/contracts/login.mobile.page/visual-score.json · login.mobile.page/contracts/login.mobile.page/figma-baseline.png · login.mobile.page/contracts/login.mobile.page/actual.png · login.mobile.page/contracts/login.mobile.page/diff.png
+  - region "Notifications (F8)":
+    - list

@@ -1,0 +1,44 @@
+node_modules
+.pnpm-store
+
+# Ignore lockfiles we don't use
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+# bun.lock
+
+.DS_Store
+.cache
+playwright/.auth/
+
+# Ignore everything generated under .framelia/ (auth state, verification evidence,
+# baselines, dashboard reports) except the contracts themselves -- visual-contract.json
+# is the spec (target URL, Figma baseline, viewport, scope), meant to be committed so
+# CI and teammates can run `pnpm test:figma`/`framelia done-gate` against it without
+# recreating it locally first. See packages/cli/README.md's "never commit tokens or
+# place them in contracts" -- that warning only makes sense if contracts are committed.
+.framelia/*
+!.framelia/visual-verifications/
+.framelia/visual-verifications/*
+!.framelia/visual-verifications/*/
+.framelia/visual-verifications/*/*
+!.framelia/visual-verifications/*/visual-contract.json
+
+# Env files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+.data
+.vercel
+.output
+.wrangler
+.netlify
+dist
+/build/
+/api/
+/server/build
+/public/build
+
+.tanstack

@@ -106,6 +106,33 @@ function remapVirtualPaths<T>(value: T, remap: ReadonlyMap<string, string>): T {
   return value;
 }
 
+/**
+ * `feature` is the full evidence directory path (arbitrary depth -- e.g. an unlighthouse-style
+ * "host/port/route" namespace some setups use to keep environments from colliding). But
+ * deriveContract (report-projection.ts) has its own narrower 2-level convention -- 1 feature
+ * segment + 1 leaf segment per viewport/story -- and bakes *both* into contract.id by joining
+ * them with "." (e.g. dir "login/desktop.page" -> id "login.desktop.page"). When id reveals
+ * that convention, group by just the leading segment ("login") so every viewport of the same
+ * page lands under one rail entry instead of one per viewport; otherwise keep the full path
+ * as an opaque feature key, since that's what makes the unlighthouse-style layout collision-free.
+ */
+function groupingFeatureFor(feature: string, contractId: string): string {
+  // deriveContract's own 2-level convention always makes contractId equal the full path
+  // joined by "." too (its leaf segment IS "${leaf}.${scopeKind}"), so that broader match
+  // has to be checked second -- otherwise it'd always win and the narrower, more useful
+  // top-segment grouping below would never get a chance to fire.
+  const topSegment = feature.split("/")[0]!;
+  if (
+    topSegment !== feature &&
+    (contractId === topSegment ||
+      contractId.startsWith(`${topSegment}-`) ||
+      contractId.startsWith(`${topSegment}.`))
+  ) {
+    return topSegment;
+  }
+  return feature;
+}
+
 function withFeaturePrefix(projection: DashboardProjection, feature: string): DashboardProjection {
   const prefix = `${encodeURIComponent(feature)}/`;
   const remap = new Map<string, string>();
@@ -115,11 +142,27 @@ function withFeaturePrefix(projection: DashboardProjection, feature: string): Da
     remap.set(virtual, prefixed);
     files.set(prefixed, real);
   }
-  const contracts: DashboardContractResult[] = projection.run.contracts.map((contract) => ({
-    ...remapVirtualPaths(contract, remap),
-    feature,
-    id: `${feature}.${contract.id}`,
-  }));
+  const contracts: DashboardContractResult[] = projection.run.contracts.map((contract) => {
+    const groupingFeature = groupingFeatureFor(feature, contract.id);
+    // feature can use "/" for a nested evidence dir while contract.id stays "."-only --
+    // normalize before comparing so a readable id (e.g. "login.desktop.page" from folder
+    // "login/desktop.page") doesn't get doubled into "login/desktop.page.login.desktop.page".
+    const normalizedFeature = groupingFeature.replaceAll("/", ".");
+    return {
+      ...remapVirtualPaths(contract, remap),
+      feature: groupingFeature,
+      // Prefix only when contract.id doesn't already carry the feature's identity (e.g.
+      // legacy opaque-hash ids) -- otherwise it'd just double. A leaf id like
+      // "login.desktop.page" already carries feature "login" via the "." delimiter
+      // deriveContract/contractChildLabel use, so that counts as carrying it too.
+      id:
+        contract.id === normalizedFeature ||
+        contract.id.startsWith(`${normalizedFeature}-`) ||
+        contract.id.startsWith(`${normalizedFeature}.`)
+          ? contract.id
+          : `${groupingFeature}.${contract.id}`,
+    };
+  });
   return { files, run: { ...projection.run, contracts } };
 }
 

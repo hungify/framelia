@@ -24,12 +24,15 @@ export const EXIT_PREFLIGHT_FAILED = 3;
 
 export const DEVICE_SCALE_FACTOR = 1;
 export const DEFAULT_CAPTURE_TIMEOUT_MS = 60 * MS_PER_SECOND;
-// Matches TanStack Query/Router devtools' default class/id naming ("tsqd-*", "tsrd-*")
-// and Next.js's dev overlay, which mounts as a <nextjs-portal> custom element
-// inside a shadow root — screenshot({ style }) pierces that natively.
-// Projects using a different devtool (or a renamed one) should override via devtoolsSelector.
+// Matches the standalone TanStack Query/Router devtools' class/id naming ("tsqd-*",
+// "tsrd-*", still used by their panel content when embedded via the unified shell
+// below), the unified @tanstack/react-devtools shell's own trigger/panel host
+// (`data-testid="tanstack_devtools"`), and Next.js's dev overlay, which mounts as a
+// <nextjs-portal> custom element inside a shadow root — screenshot({ style }) pierces
+// that natively. Projects using a different devtool (or a renamed one) should
+// override via devtoolsSelector.
 export const DEFAULT_DEVTOOLS_SELECTOR =
-  '[class*="tsqd" i], [id*="tsqd" i], [class*="tsrd" i], [id*="tsrd" i], nextjs-portal';
+  '[class*="tsqd" i], [id*="tsqd" i], [class*="tsrd" i], [id*="tsrd" i], [data-testid="tanstack_devtools"], nextjs-portal';
 export const SELECTOR_TIMEOUT_MS = 15 * MS_PER_SECOND;
 export const NETWORK_IDLE_BEST_EFFORT_MS = 5 * MS_PER_SECOND;
 export const NETWORK_IDLE_BUFFER_MS = 300;

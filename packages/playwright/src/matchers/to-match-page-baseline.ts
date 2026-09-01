@@ -27,6 +27,9 @@ export interface ToMatchPageBaselineOptions {
   profile?: ProfileName;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
+  /** Hides dev-only overlays (TanStack Query/Router devtools, Next.js's dev overlay) before
+   *  capture: `true` uses the built-in selector, or pass a custom CSS selector. */
+  devtoolsSelector?: true | string;
   /** Directory a baseline was promoted into (see `framelia baseline promote` /
    *  `promotePageBaseline`). Defaults to `.framelia/visual-verifications/<key>` under cwd. */
   baselineDir?: string;
@@ -78,6 +81,7 @@ export async function runToMatchPageBaseline(
         timeoutMs,
         fontPolicy: options.fontPolicy,
         animationPolicy: options.animationPolicy,
+        devtoolsSelector: options.devtoolsSelector,
       }),
       timeoutMs,
       "toMatchPageBaseline",

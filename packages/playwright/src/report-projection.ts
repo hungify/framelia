@@ -54,6 +54,25 @@ export function sanitizeTestId(test: TestCase): string {
   return test.id.replaceAll(/[^a-zA-Z0-9-]+/g, "-");
 }
 
+/** Like sanitizeTestId, but keeps dots (a contractId like "login.desktop" reads literally)
+ *  and collapses any run of dots so it can't spell a ".." traversal segment. */
+export function sanitizeContractId(contractId: string): string {
+  return contractId.replaceAll(/[^a-zA-Z0-9._-]+/g, "-").replaceAll(/\.{2,}/g, ".");
+}
+
+/** Durable evidence folder segments for a contractId, e.g. ("login.desktop", "page") ->
+ *  ["login", "desktop.page"] -- mirrors contract.ts's own featureName grouping so a folder
+ *  matches how `framelia contract create` names its own. Splits only on the first dot so a
+ *  multi-part story name stays intact as the leaf. */
+export function contractDirSegments(contractId: string, leafSuffix: string): string[] {
+  const sanitized = sanitizeContractId(contractId);
+  const dotIndex = sanitized.indexOf(".");
+  if (dotIndex === -1) return [`${sanitized}.${leafSuffix}`];
+  const feature = sanitized.slice(0, dotIndex);
+  const leaf = sanitized.slice(dotIndex + 1);
+  return [feature, `${leaf}.${leafSuffix}`];
+}
+
 export function contractNameFor(test: TestCase): string {
   return test.titlePath().slice(1).join(" › ") || test.title;
 }
@@ -173,12 +192,21 @@ export function deriveContract(
   index: number,
   total: number,
 ): DerivedContract {
-  const baseId = sanitizeTestId(test);
+  // id stays flat ("login.desktop.page") since contractSchema's id field forbids "/".
+  const scopeKind = score?.scope?.kind ?? "page";
+  const baseId = score?.contractId
+    ? `${sanitizeContractId(score.contractId)}.${scopeKind}`
+    : sanitizeTestId(test);
   const id = total === 1 ? baseId : `${baseId}-${index + 1}`;
   // Contract/result outDir is relative to projectRoot (VISUAL_ARTIFACT_DIR_PATTERN
   // requires it -- matches the old CLI's convention); fs operations need the
-  // resolved absolute path instead.
-  const relativeOutDir = visualArtifactPath(id);
+  // resolved absolute path instead. Unlike `id`, the folder is free to nest under the
+  // same feature folder `framelia contract create` uses, so CLI-authored config and
+  // toMatchFigma evidence end up sharing one directory instead of two disconnected ones.
+  const outDirSegments = score?.contractId
+    ? contractDirSegments(score.contractId, total === 1 ? scopeKind : `${scopeKind}-${index + 1}`)
+    : [id];
+  const relativeOutDir = visualArtifactPath(...outDirSegments);
   const absoluteOutDir = path.join(evidenceRoot, relativeOutDir);
   const outDir = relativeOutDir;
   const primary = score;

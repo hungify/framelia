@@ -1,0 +1,14 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e3]:
+    - banner [ref=f5e4]:
+      - generic "Framelia" [ref=f5e5]:
+        - strong [ref=f5e6]: Framelia
+        - generic [ref=f5e7]:
+          - button "Contracts" [pressed] [ref=f5e8]
+          - button "Details" [pressed] [ref=f5e9]
+      - generic [ref=f5e10]: Archived
+    - main [ref=f5e12]:
+      - paragraph [ref=f5e13]: Loading verification evidence
+      - progressbar [ref=f5e15]
+  - region "Notifications (F8)":
+    - list

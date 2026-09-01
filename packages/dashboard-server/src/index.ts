@@ -1,4 +1,9 @@
-export { defaultClientRoot, startDashboardServer, waitForDashboardShutdown } from "./server.ts";
+export {
+  DEFAULT_DASHBOARD_PORT,
+  defaultClientRoot,
+  startDashboardServer,
+  waitForDashboardShutdown,
+} from "./server.ts";
 export type { DashboardServer, DashboardSource } from "./server.ts";
 export { overallStatus, projectArtifact, summarize } from "./model.ts";
 export type { DashboardProjection } from "./model.ts";

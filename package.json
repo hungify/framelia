@@ -9,7 +9,7 @@
     "dev:dashboard": "pnpm --filter @framelia/dashboard dev",
     "framelia": "pnpm --filter framelia cli",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm --filter @framelia/verify test && pnpm --filter @framelia/dashboard-server test && pnpm --filter @framelia/playwright test && pnpm --filter framelia test && pnpm --filter @framelia/dashboard test",
+    "test": "pnpm --filter @framelia/contracts test && pnpm --filter @framelia/verify test && pnpm --filter @framelia/dashboard-server test && pnpm --filter @framelia/playwright test && pnpm --filter framelia test && pnpm --filter @framelia/dashboard test",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",

@@ -1,8 +1,8 @@
 import * as z from "zod";
 
 import { SCHEMA_VERSION } from "./constants.ts";
-import { profileSchema } from "./contract.ts";
 import { httpUrlSchema } from "./primitives.ts";
+import { profileSchema } from "./visual-contract.ts";
 
 const scoreSizeSchema = z
   .object({

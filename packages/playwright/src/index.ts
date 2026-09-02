@@ -1,9 +1,6 @@
-import { expect as baseExpect } from "@playwright/test";
+import { expect as baseExpect, test } from "@playwright/test";
 
-import { toMatchFigma } from "./matchers/to-match-figma.ts";
-import { toMatchPageBaseline } from "./matchers/to-match-page-baseline.ts";
-import { toMatchPage } from "./matchers/to-match-page.ts";
-import { toMatchUrl } from "./matchers/to-match-url.ts";
+import { createFrameliaMatchers } from "./create-matchers.ts";
 
 /**
  * Typed `expect` re-export: generic inference through `.extend()`'s
@@ -11,13 +8,15 @@ import { toMatchUrl } from "./matchers/to-match-url.ts";
  * `global.d.ts { PlaywrightTest.Matchers<R,T> }` augmentation, which has a
  * documented breaking-change history (playwright/playwright#26658, #27113,
  * #27117).
+ *
+ * Requires a real, module-scope `@playwright/test` import -- `expect.extend()` must
+ * return a synchronously usable object (spec files call `expect(...)` inline), so this
+ * zero-config entry point can't defer resolving `@playwright/test` the way
+ * createFrameliaMatchers's factory does. See that function's doc comment for why that
+ * makes this file one of exactly two still exposed to the "second instance" crash, and
+ * the escape hatch for a consumer who hits it.
  */
-export const expect = baseExpect.extend({
-  toMatchFigma,
-  toMatchPage,
-  toMatchPageBaseline,
-  toMatchUrl,
-});
+export const expect = baseExpect.extend(createFrameliaMatchers(test));
 
 export type { ToMatchFigmaOptions } from "./matchers/to-match-figma.ts";
 export type { ToMatchPageOptions } from "./matchers/to-match-page.ts";

@@ -4,8 +4,7 @@ import { visualArtifactPath } from "@framelia/contracts";
 import type { VisualMask } from "@framelia/contracts";
 import type { ProfileName } from "@framelia/verify";
 import { compare, resolvePageBaseline } from "@framelia/verify";
-import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
-import { test } from "@playwright/test";
+import type { MatcherReturnType, Page } from "@playwright/test";
 
 import {
   attachDiffTriplet,
@@ -137,27 +136,4 @@ export async function runToMatchPageBaseline(
         `toMatchPageBaseline: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-}
-
-/** The registered matcher: thin Playwright-runner glue around {@link runToMatchPageBaseline}. */
-export async function toMatchPageBaseline(
-  this: ExpectMatcherState,
-  received: Page,
-  key: string,
-  options: ToMatchPageBaselineOptions = {},
-): Promise<MatcherReturnType> {
-  const testInfo = test.info();
-  // oxlint-disable-next-line no-this-in-exported-function -- Playwright's own expect.extend() contract.
-  const timeoutMs = this.timeout;
-  const baseName = sanitizeAttachmentBaseName(`page-baseline-${key}`);
-  return runToMatchPageBaseline(received, key, options, {
-    timeoutMs,
-    workDir: testInfo.outputPath(baseName),
-    attach: (name, filePath) =>
-      testInfo.attach(name, { path: filePath, contentType: "image/png" }).then(() => undefined),
-    attachJson: (name, data) =>
-      testInfo
-        .attach(name, { body: JSON.stringify(data), contentType: "application/json" })
-        .then(() => undefined),
-  });
 }

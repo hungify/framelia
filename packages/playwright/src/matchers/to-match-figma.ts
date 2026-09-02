@@ -15,8 +15,7 @@ import {
   expectStyleToSnapshot,
   FigmaBaselineProvider,
 } from "@framelia/verify";
-import type { ExpectMatcherState, MatcherReturnType, Page } from "@playwright/test";
-import { test } from "@playwright/test";
+import type { MatcherReturnType, Page } from "@playwright/test";
 
 import {
   attachDiffTriplet,
@@ -400,31 +399,4 @@ export async function runToMatchFigma(
       message: () => `toMatchFigma: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-}
-
-/**
- * The registered matcher: thin Playwright-runner glue around {@link runToMatchFigma}.
- * `this: ExpectMatcherState` is Playwright's own expect.extend() contract, not an
- * import-bound `this` a bundler could drop — Playwright always invokes matchers with
- * `this` bound to ExpectMatcherState via its own dispatcher.
- */
-export async function toMatchFigma(
-  this: ExpectMatcherState,
-  received: Page,
-  nodeId: string,
-  options: ToMatchFigmaOptions = {},
-): Promise<MatcherReturnType> {
-  const testInfo = test.info();
-  // oxlint-disable-next-line no-this-in-exported-function -- see doc comment above.
-  const timeoutMs = this.timeout;
-  return runToMatchFigma(received, nodeId, options, {
-    timeoutMs,
-    workDir: testInfo.outputPath(sanitizeAttachmentBaseName(nodeId)),
-    attach: (name, path) =>
-      testInfo.attach(name, { path, contentType: "image/png" }).then(() => undefined),
-    attachJson: (name, data) =>
-      testInfo
-        .attach(name, { body: JSON.stringify(data), contentType: "application/json" })
-        .then(() => undefined),
-  });
 }

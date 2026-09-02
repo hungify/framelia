@@ -4,9 +4,9 @@ import * as path from "node:path";
 
 import { chromium } from "@playwright/test";
 
-import { captureReadyPage } from "./capture/core.ts";
-import { DEFAULT_CAPTURE_TIMEOUT_MS } from "./constants.ts";
-import { promotePageBaseline, type PromotePageBaselineResult } from "./page-baseline.ts";
+import { captureReadyPage } from "../capture/core.ts";
+import { DEFAULT_CAPTURE_TIMEOUT_MS } from "../constants.ts";
+import { promotePageBaseline, type PromotePageBaselineResult } from "./page.ts";
 
 export interface CaptureAndPromotePageBaselineOptions {
   url: string;
@@ -31,7 +31,7 @@ export type CaptureAndPromotePageBaselineOutcome =
 /**
  * The CLI-facing accept/promote step toMatchFigma never needed (Figma is always the
  * live source of truth) but toMatchPageBaseline's persisted baseline has none until
- * someone explicitly accepts a captured state -- see page-baseline.ts. Owns launching
+ * someone explicitly accepts a captured state -- see baseline/page.ts. Owns launching
  * its own browser (mirrors auth.ts's recordStorageState) so `framelia baseline promote`
  * doesn't need a Playwright test runner just to capture one page.
  */

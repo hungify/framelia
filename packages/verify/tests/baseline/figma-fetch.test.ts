@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { PNG } from "pngjs";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { fetchBaseline } from "../src/index.ts";
-import { makeSolidPng } from "../src/internal.ts";
+import { fetchBaseline } from "../../src/index.ts";
+import { makeSolidPng } from "../../src/internal.ts";
 
 function figmaFetchImpl(png: Buffer, document: unknown): typeof fetch {
   return (async (input: string | URL | Request) => {

@@ -4,9 +4,9 @@ import * as path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { FigmaBaselineProvider } from "../src/baseline.ts";
-import type { FetchBaselineOptions, FetchBaselineOutcome } from "../src/fetch-baseline.ts";
-import type { StalenessOptions } from "../src/staleness.ts";
+import type { FetchBaselineOptions, FetchBaselineOutcome } from "../../src/baseline/figma-fetch.ts";
+import { FigmaBaselineProvider } from "../../src/baseline/provider.ts";
+import type { StalenessOptions } from "../../src/staleness.ts";
 
 const baselineSource = { kind: "figma" as const, fileKey: "file", nodeId: "1:2" };
 

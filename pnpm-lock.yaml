@@ -220,6 +220,9 @@ importers:
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.62.1
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       nanoid:
         specifier: 3.3.16
         version: 3.3.16

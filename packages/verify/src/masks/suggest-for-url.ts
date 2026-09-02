@@ -1,8 +1,8 @@
 import { chromium } from "@playwright/test";
 
-import { settle } from "./capture/settle.ts";
-import { DEFAULT_CAPTURE_TIMEOUT_MS } from "./constants.ts";
-import { suggestMasks, type MaskSuggestion, type MaskSuggestionHeuristic } from "./mask-suggest.ts";
+import { settle } from "../capture/settle.ts";
+import { DEFAULT_CAPTURE_TIMEOUT_MS } from "../constants.ts";
+import { suggestMasks, type MaskSuggestion, type MaskSuggestionHeuristic } from "./heuristics.ts";
 
 export interface SuggestMasksForUrlOptions {
   url: string;
@@ -21,13 +21,13 @@ export type SuggestMasksForUrlOutcome =
 
 /**
  * The CLI-facing entry for `framelia contract suggest-masks` (#42). Owns
- * launching its own browser (mirrors promote-page-baseline.ts's
+ * launching its own browser (mirrors baseline/promote-page.ts's
  * captureAndPromotePageBaseline) so the command doesn't need a Playwright test
  * runner just to scan one page. Reuses capture/settle.ts's settle() -- the same
  * readiness pipeline captureReadyPage runs before every toMatchFigma/toMatchPage
  * capture -- so suggestions reflect the DOM a real capture would actually see
  * (fonts loaded, animations frozen), not a premature mid-render snapshot; see
- * suggestMasks in mask-suggest.ts for the scan itself. Suggestions are always
+ * suggestMasks in masks/heuristics.ts for the scan itself. Suggestions are always
  * proposals only -- this never writes to a contract.
  */
 export async function suggestMasksForUrl(

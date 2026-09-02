@@ -13,11 +13,14 @@
 export { recordStorageState } from "./auth.ts";
 export type { RecordStorageStateOptions, RecordStorageStateResult } from "./auth.ts";
 
-export { captureAndPromotePageBaseline } from "./promote-page-baseline.ts";
+export { captureAndPromotePageBaseline } from "./baseline/promote-page.ts";
 export type {
   CaptureAndPromotePageBaselineOptions,
   CaptureAndPromotePageBaselineOutcome,
-} from "./promote-page-baseline.ts";
+} from "./baseline/promote-page.ts";
 
-export { suggestMasksForUrl } from "./suggest-masks.ts";
-export type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "./suggest-masks.ts";
+export { suggestMasksForUrl } from "./masks/suggest-for-url.ts";
+export type {
+  SuggestMasksForUrlOptions,
+  SuggestMasksForUrlOutcome,
+} from "./masks/suggest-for-url.ts";

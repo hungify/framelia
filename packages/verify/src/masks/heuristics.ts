@@ -70,7 +70,7 @@ interface RawMatch {
 }
 
 /**
- * Scans an already-navigated, already-settled Page (see suggest-masks.ts's
+ * Scans an already-navigated, already-settled Page (see masks/suggest-for-url.ts's
  * suggestMasksForUrl, which runs the same readiness pipeline captureReadyPage
  * uses before calling this) for DEFAULT_MASK_SUGGESTION_HEURISTICS' signals,
  * proposing a mask selector per finding. Never writes anything -- purely a

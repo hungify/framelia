@@ -7,8 +7,8 @@ import type {
   GetLocalVariablesResponse,
 } from "@figma/rest-api-spec";
 
-import { FIGMA_BASELINE_ARTIFACT } from "./artifacts.ts";
-import { compositeOnCanvas, parsePng, writePng } from "./compare/png.ts";
+import { FIGMA_BASELINE_ARTIFACT } from "../artifacts.ts";
+import { compositeOnCanvas, parsePng, writePng } from "../compare/png.ts";
 import {
   DEFAULT_IMAGE_SCALE,
   DEFAULT_RETRY_AFTER_MS,
@@ -18,10 +18,10 @@ import {
   MAX_RETRY_AFTER_MS,
   MIN_RETRY_AFTER_MS,
   MS_PER_SECOND,
-} from "./constants.ts";
-import { resolveToken } from "./figma-api.ts";
-import { boundColorVariableId, extractFigmaStyle } from "./figma-node-style.ts";
-import type { FigmaVariablesData, StyleSnapshot } from "./figma-node-style.ts";
+} from "../constants.ts";
+import { resolveToken } from "../figma-api.ts";
+import { boundColorVariableId, extractFigmaStyle } from "../figma-node-style.ts";
+import type { FigmaVariablesData, StyleSnapshot } from "../figma-node-style.ts";
 
 export interface FetchBaselineOptions {
   fileKey: string;

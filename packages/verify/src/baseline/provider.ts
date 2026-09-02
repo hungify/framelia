@@ -3,16 +3,16 @@ import * as path from "node:path";
 
 import type { BaselineSource, FigmaBaselineSource } from "@framelia/contracts";
 
-import { FIGMA_BASELINE_ARTIFACT } from "./artifacts.ts";
+import { FIGMA_BASELINE_ARTIFACT } from "../artifacts.ts";
+import { checkBaselineStaleness } from "../staleness.ts";
+import type { CaptureDefaults, ProfileName, ResolvedBaseline } from "../types.ts";
 import {
   fetchBaseline,
   baselineMetaPath,
   readBaselineMeta,
   type FetchBaselineOptions,
   type FetchBaselineOutcome,
-} from "./fetch-baseline.ts";
-import { checkBaselineStaleness } from "./staleness.ts";
-import type { ContractDefaults, ProfileName, ResolvedBaseline } from "./types.ts";
+} from "./figma-fetch.ts";
 
 export interface BaselineResolveOptions<TSource extends BaselineSource = BaselineSource> {
   source: TSource;
@@ -20,7 +20,7 @@ export interface BaselineResolveOptions<TSource extends BaselineSource = Baselin
   profile: ProfileName;
   stabilitySamples: number;
   /** Project-wide capture-tuning defaults resolved from framelia.config.ts. */
-  defaults: ContractDefaults;
+  defaults: CaptureDefaults;
 }
 
 export type BaselineResolveOutcome =

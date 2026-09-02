@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { resolveArtifactPath } from "../src/index.ts";
 import { compositeOnCanvas, makeSolidPng, parseHexRgb } from "../src/internal.ts";
+import { AppError } from "../src/types.ts";
+import { captureThrown } from "./support/capture-error.ts";
 
 describe("resolveArtifactPath", () => {
   it("keeps absolute paths", () => {
@@ -16,6 +18,13 @@ describe("resolveArtifactPath", () => {
       path.resolve("/repo", ".framelia/artifacts/x"),
     );
   });
+
+  it("raises a MISSING_PROJECT_ROOT AppError when no cwd is given for a relative path", () => {
+    expect(() => resolveArtifactPath("relative/path")).toThrow(/requires an explicit project root/);
+    const error = captureThrown(() => resolveArtifactPath("relative/path"));
+    expect(error).toBeInstanceOf(AppError);
+    expect((error as AppError).code).toBe("MISSING_PROJECT_ROOT");
+  });
 });
 
 describe("canvas composite", () => {
@@ -27,6 +36,12 @@ describe("canvas composite", () => {
   it("parseHexRgb rejects malformed hexadecimal input", () => {
     expect(() => parseHexRgb("#zzz")).toThrow(/Invalid hex color/);
     expect(() => parseHexRgb("#12345g")).toThrow(/Invalid hex color/);
+  });
+
+  it("raises an INVALID_HEX_COLOR AppError for malformed input", () => {
+    const error = captureThrown(() => parseHexRgb("#zzz"));
+    expect(error).toBeInstanceOf(AppError);
+    expect((error as AppError).code).toBe("INVALID_HEX_COLOR");
   });
 
   it("compositeOnCanvas flattens alpha onto fill", () => {

@@ -1,4 +1,4 @@
-import { fetchBaseline } from "../src/fetch-baseline.ts";
+import { fetchBaseline } from "../src/baseline/figma-fetch.ts";
 
 const [fileKey, nodeId, outPath, scaleRaw] = process.argv.slice(2);
 if (!fileKey || !nodeId || !outPath) {

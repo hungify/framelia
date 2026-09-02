@@ -2,7 +2,7 @@ import * as http from "node:http";
 
 import { describe, expect, it } from "vitest";
 
-import { suggestMasksForUrl } from "../src/suggest-masks.ts";
+import { suggestMasksForUrl } from "../../src/masks/suggest-for-url.ts";
 
 async function withTestServer(html: string, run: (url: string) => Promise<void>): Promise<void> {
   const server = http.createServer((_request, response) => {

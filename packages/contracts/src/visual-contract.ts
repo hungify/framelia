@@ -94,8 +94,11 @@ export const contractScopeSchema = z.discriminatedUnion("kind", [
 // document/body, common root/app-shell ids, and framelia/app/shell-flavored data-testid or classes.
 // "app"/"shell" must appear as a whole hyphen-delimited word (\b), not a substring — otherwise
 // ordinary selectors like ".approval-count" or ".appointment-badge" get rejected as false positives.
+// The trailing lookahead covers not just a combinator/end (e.g. "body > div") but any qualifier
+// that still targets that same element -- "body.loading", "html[dir]", "#app:not(.x)" all still
+// select the document/root/app-shell element itself, just conditionally.
 const BROAD_MASK_SELECTOR =
-  /^(?:html|body|#root|#app|\[data-(?:testid|framelia)[^\]]*\b(?:app|shell)\b[^\]]*\]|\.[\w-]*\b(?:app|shell)\b[\w-]*)(?:\s|>|$)/i;
+  /^(?:html|body|#root|#app|\[data-(?:testid|framelia)[^\]]*\b(?:app|shell)\b[^\]]*\]|\.[\w-]*\b(?:app|shell)\b[\w-]*)(?:[\s.[:>+~,]|$)/i;
 
 /**
  * Practically-overridable subset of verify's Profile: the fields consumed directly by
@@ -125,15 +128,10 @@ export const styleToleranceOverridesSchema = z
   .object({
     /** Perceptual (CIEDE2000) distance a color/backgroundColor pair may differ by before flagging. */
     maxColorDeltaE: z.number().nonnegative().optional(),
-    /** Pixel epsilon a spacing side may differ by before flagging. */
     maxSpacingDeltaPx: z.number().nonnegative().optional(),
-    /** Pixel epsilon fontSize may differ by before flagging. */
     maxFontSizeDeltaPx: z.number().nonnegative().optional(),
-    /** Pixel epsilon lineHeightPx may differ by before flagging. */
     maxLineHeightDeltaPx: z.number().nonnegative().optional(),
-    /** Pixel epsilon letterSpacingPx may differ by before flagging. */
     maxLetterSpacingDeltaPx: z.number().nonnegative().optional(),
-    /** Pixel epsilon borderWidth may differ by before flagging. */
     maxBorderWidthDeltaPx: z.number().nonnegative().optional(),
     /** Pixel epsilon gap (flex/grid) may differ by before flagging. */
     maxGapDeltaPx: z.number().nonnegative().optional(),

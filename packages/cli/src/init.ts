@@ -3,9 +3,9 @@ import * as path from "node:path";
 
 import * as p from "@clack/prompts";
 import {
-  contractDefaultsSchema,
+  captureDefaultsSchema,
   DEFAULT_AUTH_STATE_PATH,
-  type ContractDefaults,
+  type CaptureDefaults,
 } from "@framelia/contracts";
 
 import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "./config.ts";
@@ -13,12 +13,12 @@ import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "./co
 const AUTH_GITIGNORE = "*\n!.gitignore\n";
 
 /**
- * One illustrative literal per ContractDefaults field, rendered into the scaffolded
- * config's commented example block. Typed as Record<keyof ContractDefaults, string> so
- * adding a field to contractDefaultsSchema without adding an example here is a compile
+ * One illustrative literal per CaptureDefaults field, rendered into the scaffolded
+ * config's commented example block. Typed as Record<keyof CaptureDefaults, string> so
+ * adding a field to captureDefaultsSchema without adding an example here is a compile
  * error, not a silently stale `framelia init` template.
  */
-const CONTRACT_DEFAULT_EXAMPLES: Record<keyof ContractDefaults, string> = {
+const CONTRACT_DEFAULT_EXAMPLES: Record<keyof CaptureDefaults, string> = {
   stabilitySamples: "3",
   timeoutMs: "60_000",
   devtoolsSelector: "true",
@@ -29,7 +29,7 @@ const CONTRACT_DEFAULT_EXAMPLES: Record<keyof ContractDefaults, string> = {
   maxMaskedAreaRatio: "0.15",
 };
 
-const CONTRACT_DEFAULTS_COMMENT = contractDefaultsSchema
+const CONTRACT_DEFAULTS_COMMENT = captureDefaultsSchema
   .keyof()
   .options.map((key) => `  // ${key}: ${CONTRACT_DEFAULT_EXAMPLES[key]},`)
   .join("\n");

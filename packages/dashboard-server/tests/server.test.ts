@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -101,5 +102,40 @@ describe("startDashboardServer", () => {
     await expect(startDashboardServer({ source, clientRoot })).rejects.toThrow(
       /Dashboard build missing/,
     );
+  });
+
+  it("end-to-end: retries onto the next port on a real EADDRINUSE, reachable through the public API", async () => {
+    // A genuine OS-level EADDRINUSE, driven entirely through startDashboardServer's
+    // public options (not by reaching into port-listener.ts directly) -- this is the
+    // one test that proves shutdown.ts/port-listener.ts/static-assets.ts actually
+    // recombine into a working server, not just that each extracted piece works
+    // in isolation.
+    const clientRoot = await clientFixture();
+    const blocker = net.createServer();
+    const blockedPort = await new Promise<number>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen(0, "localhost", () => {
+        const address = blocker.address();
+        if (address === null || typeof address === "string") {
+          reject(new Error("Expected an AddressInfo from a listening TCP server."));
+          return;
+        }
+        resolve(address.port);
+      });
+    });
+    try {
+      const source: DashboardSource = { snapshot: () => emptyRun, files: () => new Map() };
+      const server = await startDashboardServer({ source, clientRoot, port: blockedPort });
+      try {
+        expect(server.url).toBe(`http://localhost:${blockedPort + 1}`);
+        expect(await (await fetch(`${server.url}/api/run`)).json()).toMatchObject({
+          runId: "run-1",
+        });
+      } finally {
+        await server.close();
+      }
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
   });
 });

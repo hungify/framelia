@@ -1,11 +1,11 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { DashboardEvent, DashboardRun } from "@framelia/contracts";
-import { serve, type ServerType } from "@hono/node-server";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+
+import { listenWithPortRetry } from "./port-listener.ts";
+import { assertClientBuildExists, mountArtifactRoute, mountClientRoutes } from "./static-assets.ts";
 
 export interface DashboardSource {
   snapshot: () => DashboardRun | Promise<DashboardRun>;
@@ -19,17 +19,6 @@ export interface DashboardServer {
 }
 
 export const DEFAULT_DASHBOARD_PORT = 6789;
-const MAX_PORT_ATTEMPTS = 20;
-
-const contentTypes = new Map([
-  [".css", "text/css; charset=utf-8"],
-  [".html", "text/html; charset=utf-8"],
-  [".js", "text/javascript; charset=utf-8"],
-  [".json", "application/json; charset=utf-8"],
-  [".png", "image/png"],
-  [".svg", "image/svg+xml"],
-  [".woff2", "font/woff2"],
-]);
 
 /**
  * Where the bundled Vue dashboard client lives by default. Both the CLI's
@@ -42,28 +31,16 @@ export function defaultClientRoot(): string {
   return fileURLToPath(new URL("../dist/dashboard", import.meta.url));
 }
 
-async function sendFile(filePath: string): Promise<Response> {
-  try {
-    const data = await fs.readFile(filePath);
-    return new Response(data, {
-      headers: {
-        "content-type": contentTypes.get(path.extname(filePath)) ?? "application/octet-stream",
-        "cache-control":
-          path.extname(filePath) === ".html" ? "no-store" : "public, max-age=31536000, immutable",
-      },
-    });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return new Response("Not found", { status: 404 });
-    throw error;
-  }
-}
-
-function contained(root: string, requestPath: string): string | undefined {
-  const candidate = path.resolve(root, requestPath);
-  return candidate === root || candidate.startsWith(`${root}${path.sep}`) ? candidate : undefined;
-}
-
+/**
+ * Wires up the dashboard's routes and binds a real HTTP listener. Static-file
+ * serving lives in static-assets.ts, the EADDRINUSE port-retry loop in
+ * port-listener.ts, and shutdown-signal handling in shutdown.ts (see
+ * `waitForDashboardShutdown`, exported alongside this from index.ts) — every
+ * route here is thin wiring onto those modules and `options.source`, except
+ * `/events`, whose SSE fan-out (ordered writes, heartbeat, subscriber
+ * cleanup) is route-specific enough that it doesn't fit any of the three
+ * extracted modules and stays inline.
+ */
 export async function startDashboardServer(options: {
   source: DashboardSource;
   hostname?: string;
@@ -72,11 +49,7 @@ export async function startDashboardServer(options: {
 }): Promise<DashboardServer> {
   const hostname = options.hostname ?? "localhost";
   const clientRoot = options.clientRoot ?? defaultClientRoot();
-  await fs.access(path.join(clientRoot, "index.html")).catch(() => {
-    throw new Error(
-      `Dashboard build missing: ${clientRoot}. Run pnpm --filter @framelia/dashboard-server build.`,
-    );
-  });
+  await assertClientBuildExists(clientRoot);
   const app = new Hono();
 
   app.get("/api/run", async (context) =>
@@ -92,12 +65,7 @@ export async function startDashboardServer(options: {
     );
     return result ? context.json(result) : context.json({ error: "Contract not found" }, 404);
   });
-  app.get("/artifacts/*", async (context) => {
-    const requested = context.req.path.slice("/artifacts/".length);
-    const files = await options.source.files();
-    const filePath = files.get(requested) ?? files.get(decodeURIComponent(requested));
-    return filePath ? sendFile(filePath) : context.json({ error: "Artifact not found" }, 404);
-  });
+  mountArtifactRoute(app, options.source.files);
   app.get("/events", (context) => {
     const subscribe = options.source.subscribe;
     if (!subscribe)
@@ -146,42 +114,14 @@ export async function startDashboardServer(options: {
       await new Promise<void>((resolve) => stream.onAbort(resolve));
     });
   });
-  app.get("*", async (context) => {
-    const requested = context.req.path === "/" ? "index.html" : context.req.path.slice(1);
-    const candidate = contained(clientRoot, requested);
-    if (candidate) {
-      try {
-        if ((await fs.stat(candidate)).isFile()) return sendFile(candidate);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
-    }
-    return sendFile(path.join(clientRoot, "index.html"));
+  mountClientRoutes(app, clientRoot);
+
+  const server = await listenWithPortRetry({
+    fetch: app.fetch,
+    hostname,
+    startPort: options.port ?? DEFAULT_DASHBOARD_PORT,
+    onPortInUse: (port, nextPort) => console.error(`Port ${port} is in use, trying ${nextPort}...`),
   });
-
-  const listen = (port: number): Promise<ServerType> =>
-    new Promise<ServerType>((resolve, reject) => {
-      const instance = serve({ fetch: app.fetch, hostname, port }, () => resolve(instance));
-      instance.once("error", reject);
-    });
-
-  let port = options.port ?? DEFAULT_DASHBOARD_PORT;
-  let server: ServerType;
-  for (;;) {
-    try {
-      // eslint-disable-next-line no-await-in-loop -- must know this port failed before trying the next
-      server = await listen(port);
-      break;
-    } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code !== "EADDRINUSE" ||
-        port >= (options.port ?? DEFAULT_DASHBOARD_PORT) + MAX_PORT_ATTEMPTS - 1
-      )
-        throw error;
-      console.error(`Port ${port} is in use, trying ${port + 1}...`);
-      port += 1;
-    }
-  }
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("Could not resolve dashboard server address.");
@@ -192,18 +132,4 @@ export async function startDashboardServer(options: {
         server.close((error) => (error ? reject(error) : resolve())),
       ),
   };
-}
-
-export async function waitForDashboardShutdown(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    // Whichever signal fires first must also remove the other's listener —
-    // `once()` only self-removes the one that actually fired, leaking the rest.
-    const onSignal = (): void => {
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
-      resolve();
-    };
-    process.once("SIGINT", onSignal);
-    process.once("SIGTERM", onSignal);
-  });
 }

@@ -61,7 +61,6 @@ export class ReporterStore {
     return () => this.#listeners.delete(listener);
   }
 
-  /** Replaces the seeded `queued` entry for `contractId` with its terminal result. */
   recordResult(
     contractId: string,
     result: DashboardContractResult,

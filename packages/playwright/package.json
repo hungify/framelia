@@ -21,7 +21,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./register": "./src/register.ts",
-    "./reporter": "./src/reporter.ts"
+    "./reporter": "./src/reporter.ts",
+    "./create-matchers": "./src/create-matchers.ts"
   },
   "publishConfig": {
     "access": "public",

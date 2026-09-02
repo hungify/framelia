@@ -228,16 +228,13 @@ describe("FrameliaReporter", () => {
     );
     expect(fs.existsSync(artifactPathB)).toBe(true);
 
-    // report/open path: reading the artifact JSON + schema parse must not throw.
     const rawB = JSON.parse(fs.readFileSync(artifactPathB, "utf8"));
     const artifact = verificationArtifactSchema.parse(rawB);
     expect(artifact.allPassed).toBe(false);
 
-    // done-gate path: must return a verdict, not throw.
     const verdict = doneGateFromArtifact(artifact);
-    expect(verdict.done).toBe(false); // the failing match should not be done
+    expect(verdict.done).toBe(false);
 
-    // visual-score.json exists with real comparison data for the failing test.
     const score = JSON.parse(
       fs.readFileSync(
         path.join(projectRoot, ".framelia/visual-verifications/test-b/visual-score.json"),

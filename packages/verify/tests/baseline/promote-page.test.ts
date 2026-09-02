@@ -5,8 +5,8 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { pageBaselineImagePath, readPageBaselineMeta } from "../src/page-baseline.ts";
-import { captureAndPromotePageBaseline } from "../src/promote-page-baseline.ts";
+import { pageBaselineImagePath, readPageBaselineMeta } from "../../src/baseline/page.ts";
+import { captureAndPromotePageBaseline } from "../../src/baseline/promote-page.ts";
 
 const temporaryDirectories: string[] = [];
 

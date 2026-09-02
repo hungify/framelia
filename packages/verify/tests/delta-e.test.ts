@@ -3,6 +3,8 @@ import { describe, it, expect } from "vitest";
 import { avgDeltaE2000 } from "../src/compare/delta-e.ts";
 import { buildMaskBitmap } from "../src/compare/mask.ts";
 import { makeSolidPng } from "../src/compare/png.ts";
+import { AppError } from "../src/types.ts";
+import { captureThrown } from "./support/capture-error.ts";
 
 describe("avgDeltaE2000", () => {
   it("returns 0 for identical images", () => {
@@ -48,6 +50,19 @@ describe("avgDeltaE2000", () => {
     const actual = makeSolidPng(9, 10, [0, 0, 0, 255]);
     expect(() => avgDeltaE2000(baseline, actual, { x0: 0, y0: 0, x1: 9, y1: 10 })).toThrow(
       /requires equal dimensions/,
+    );
+  });
+
+  it("raises a DIMENSION_MISMATCH AppError with the message preserved verbatim", () => {
+    const baseline = makeSolidPng(10, 10, [0, 0, 0, 255]);
+    const actual = makeSolidPng(9, 10, [0, 0, 0, 255]);
+    const error = captureThrown(() =>
+      avgDeltaE2000(baseline, actual, { x0: 0, y0: 0, x1: 9, y1: 10 }),
+    );
+    expect(error).toBeInstanceOf(AppError);
+    expect((error as AppError).code).toBe("DIMENSION_MISMATCH");
+    expect((error as AppError).message).toBe(
+      "avgDeltaE2000 requires equal dimensions: baseline 10x10, actual 9x10",
     );
   });
 });

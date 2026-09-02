@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { WEB_BASELINE_ARTIFACT } from "./artifacts.ts";
-import { JSON_INDENT_SPACES } from "./constants.ts";
-import { writeFileAtomic } from "./fs-atomic.ts";
+import { WEB_BASELINE_ARTIFACT } from "../artifacts.ts";
+import { JSON_INDENT_SPACES } from "../constants.ts";
+import { writeFileAtomic } from "../fs-atomic.ts";
 
 const WEB_BASELINE_HISTORY_DIR = "web-baseline-history";
 

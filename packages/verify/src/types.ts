@@ -1,6 +1,6 @@
 import {
   SCHEMA_VERSION,
-  type ContractDefaults,
+  type CaptureDefaults,
   type ProfileName,
   type ProfileOverrides,
   type RunType,
@@ -14,7 +14,7 @@ import type { StyleSnapshot } from "./figma-node-style.ts";
 
 export { SCHEMA_VERSION };
 export type {
-  ContractDefaults,
+  CaptureDefaults,
   ProfileName,
   ProfileOverrides,
   RunType,
@@ -23,9 +23,29 @@ export type {
 };
 export type { MaskBounds, MaskEvidence };
 
+/**
+ * Precondition-violation failure classes: raised before any verification
+ * work has actually started (a bad path, a malformed env file, a corrupt
+ * input color/dimension pair). Deliberately narrow and closed -- not every
+ * failure in this package uses AppError; the dominant convention is the
+ * `FidelityErrorCode`-tagged Result-object types below (RejectResult,
+ * *Outcome), used for classifiable domain outcomes discovered *during*
+ * verification work. The two are not unified on purpose: collapsing them
+ * would be a real breaking change for @framelia/playwright's matchers,
+ * which pattern-match on the existing discriminated unions.
+ */
+export type AppErrorCode =
+  | "MISSING_PROJECT_ROOT"
+  | "INVALID_PROJECT_RELATIVE_PATH"
+  | "PATH_ESCAPES_PROJECT_ROOT"
+  | "ENV_FILE_ENTRY_INVALID"
+  | "ENV_FILE_NOT_FOUND"
+  | "INVALID_HEX_COLOR"
+  | "DIMENSION_MISMATCH";
+
 export class AppError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string) {
+  readonly code: AppErrorCode;
+  constructor(code: AppErrorCode, message: string) {
     super(message);
     this.code = code;
     this.name = "AppError";

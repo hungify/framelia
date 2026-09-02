@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { PNG } from "pngjs";
 
 import { BORDER_SAMPLE_STRIDE_DIVISOR, WHITE_RGBA } from "../constants.ts";
+import { AppError } from "../types.ts";
 
 export function parsePng(buf: Buffer): PNG {
   return PNG.sync.read(buf);
@@ -77,7 +78,7 @@ export function detectBorderColor(png: PNG): [number, number, number, number] {
 export function parseHexRgb(hex: string): [number, number, number] {
   const h = hex.trim().replace(/^#/, "");
   if (!/^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(h)) {
-    throw new Error(`Invalid hex color: ${hex}`);
+    throw new AppError("INVALID_HEX_COLOR", `Invalid hex color: ${hex}`);
   }
   if (h.length === 3) {
     return [

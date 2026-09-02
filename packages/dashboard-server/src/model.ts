@@ -25,7 +25,7 @@ import {
   resolveDisplayThreshold,
   resolveStyleGateEligible,
   RUN_ARTIFACT,
-  type ContractDefaults,
+  type CaptureDefaults,
 } from "@framelia/verify";
 
 type DashboardFileMap = Map<string, string>;
@@ -275,7 +275,7 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
 export async function projectArtifact(
   artifact: VerificationArtifact,
   suiteName?: string,
-  defaults: ContractDefaults = {},
+  defaults: CaptureDefaults = {},
 ): Promise<DashboardProjection> {
   const resultById = new Map(artifact.results.map((result) => [result.id, result]));
   const rawTargetUrl = artifact.request.target.url;

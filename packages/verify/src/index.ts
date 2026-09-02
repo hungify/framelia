@@ -8,12 +8,12 @@ export {
   writeContractFreshness,
 } from "./contract-freshness.ts";
 export type { ContractFreshnessReceipt } from "./contract-freshness.ts";
-export { FigmaBaselineProvider } from "./baseline.ts";
+export { FigmaBaselineProvider } from "./baseline/provider.ts";
 export type {
   BaselineProvider,
   BaselineResolveOptions,
   BaselineResolveOutcome,
-} from "./baseline.ts";
+} from "./baseline/provider.ts";
 export { compare } from "./compare/index.ts";
 export { attributeDiffRegions } from "./compare/attribution.ts";
 export type { DiffRegionAttribution, SelectorBounds } from "./compare/attribution.ts";
@@ -29,8 +29,12 @@ export type {
   DoneGateViewport,
   ViewportVerdict,
 } from "./done-gate/index.ts";
-export { fetchBaseline, baselineMetaPath, readBaselineMeta } from "./fetch-baseline.ts";
-export type { FetchBaselineOptions, FetchBaselineOutcome, BaselineMeta } from "./fetch-baseline.ts";
+export { fetchBaseline, baselineMetaPath, readBaselineMeta } from "./baseline/figma-fetch.ts";
+export type {
+  FetchBaselineOptions,
+  FetchBaselineOutcome,
+  BaselineMeta,
+} from "./baseline/figma-fetch.ts";
 export { assertProjectRelativePath, loadEnvFiles, loadProjectEnv } from "./load-env.ts";
 export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";
@@ -45,6 +49,7 @@ export {
 export type { Profile, ThresholdOverrideSource, StyleGateEligibleSource } from "./profiles.ts";
 export { doneGateFromArtifact, writeVerificationArtifact } from "./verify.ts";
 export { SCHEMA_VERSION, AppError } from "./types.ts";
+export type { AppErrorCode } from "./types.ts";
 export { RUN_ARTIFACT, FIGMA_BASELINE_ARTIFACT, WEB_BASELINE_ARTIFACT } from "./artifacts.ts";
 export {
   DEFAULT_IMAGE_SCALE,
@@ -55,10 +60,10 @@ export {
   JSON_INDENT_SPACES,
 } from "./constants.ts";
 export type {
+  CaptureDefaults,
   CompareOptions,
   CompareOutcome,
   ComputedTextStyle,
-  ContractDefaults,
   ExpectSize,
   FidelityErrorCode,
   BaselineEvidence,
@@ -115,15 +120,15 @@ export {
   promotePageBaseline,
   readPageBaselineMeta,
   resolvePageBaseline,
-} from "./page-baseline.ts";
+} from "./baseline/page.ts";
 export type {
   PageBaselineMeta,
   PageBaselinePromotion,
   PromotePageBaselineOptions,
   PromotePageBaselineResult,
   ResolvePageBaselineOutcome,
-} from "./page-baseline.ts";
-// captureAndPromotePageBaseline (promote-page-baseline.ts) lives in ./cli.ts, not here.
-export { DEFAULT_MASK_SUGGESTION_HEURISTICS, suggestMasks } from "./mask-suggest.ts";
-export type { MaskSuggestion, MaskSuggestionHeuristic } from "./mask-suggest.ts";
-// suggestMasksForUrl (suggest-masks.ts) lives in ./cli.ts, not here.
+} from "./baseline/page.ts";
+// captureAndPromotePageBaseline (baseline/promote-page.ts) lives in ./cli.ts, not here.
+export { DEFAULT_MASK_SUGGESTION_HEURISTICS, suggestMasks } from "./masks/heuristics.ts";
+export type { MaskSuggestion, MaskSuggestionHeuristic } from "./masks/heuristics.ts";
+// suggestMasksForUrl (masks/suggest-for-url.ts) lives in ./cli.ts, not here.

@@ -1,5 +1,7 @@
 import type { PNG } from "pngjs";
 
+import { AppError } from "../types.ts";
+
 export interface Bbox {
   x0: number;
   y0: number;
@@ -15,7 +17,8 @@ export function avgDeltaE2000(
   maskBitmap: Uint8Array | null = null,
 ): number {
   if (baseline.width !== actual.width || baseline.height !== actual.height) {
-    throw new Error(
+    throw new AppError(
+      "DIMENSION_MISMATCH",
       `avgDeltaE2000 requires equal dimensions: baseline ${baseline.width}x${baseline.height}, actual ${actual.width}x${actual.height}`,
     );
   }

@@ -128,8 +128,16 @@ export async function startDashboardServer(options: {
   return {
     url: `http://${hostname}:${address.port}`,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        // `close()` alone waits for every active connection, and `/events` holds an SSE
+        // stream open for as long as its client is subscribed: one dashboard tab left
+        // open would keep this promise pending forever, stalling the CLI's restart,
+        // quit, and SIGTERM shutdown paths. Dropping live sockets *is* the shutdown
+        // here -- there is no request worth draining once the server stops serving.
+        // `in` narrows @hono/node-server's ServerType union (HTTP/2 servers have no
+        // closeAllConnections); this server is always a plain http.Server.
+        if ("closeAllConnections" in server) server.closeAllConnections();
+      }),
   };
 }

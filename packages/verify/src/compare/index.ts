@@ -20,7 +20,6 @@ import {
 import { buildMaskBitmap } from "./mask.ts";
 import {
   clusterFails,
-  countRealDiffPixels,
   diffBoundingBox,
   diffClusters,
   largestCluster,
@@ -179,7 +178,7 @@ export function compare(
 
   const residual = residualSignal({
     pass,
-    realDiffs: countRealDiffPixels(pixel.diff),
+    realDiffs: pixel.diffPixels,
     largestCluster: largestCluster(clusters),
     residualBox: bbox,
   });

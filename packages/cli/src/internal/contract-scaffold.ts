@@ -9,7 +9,9 @@ import {
   type StyleCheckPoint,
   type VerificationRequest,
 } from "@framelia/contracts";
-import { JSON_INDENT_SPACES } from "@framelia/verify";
+
+import { JSON_INDENT_SPACES } from "../cli-constants.ts";
+import { UsageError } from "../errors.ts";
 
 export interface ContractAnswers {
   targetUrl: string;
@@ -74,12 +76,12 @@ function mergeContractRequest(
   const existingIndex = existing.contracts.findIndex((contract) => contract.id === newContract.id);
 
   if (existing.target.url !== request.target.url) {
-    throw new Error(
+    throw new UsageError(
       `${resolved} already targets ${existing.target.url}; every contract in one file shares a single target.url (got ${request.target.url}). Pass --output to write a separate file instead.`,
     );
   }
   if (existingIndex !== -1 && !force) {
-    throw new Error(
+    throw new UsageError(
       `Refusing to replace existing contract "${newContract.id}" in ${resolved}. Pass --force to replace it.`,
     );
   }
@@ -96,6 +98,8 @@ function mergeContractRequest(
   };
 }
 
+/** Filesystem access is an explicit, documented exception to the `CliRuntime` seam
+ *  (see the rewrite plan's Central seams section) -- this module operates on real paths. */
 export function writeContractRequest(
   outputPath: string,
   request: VerificationRequest,
@@ -115,7 +119,7 @@ export function writeContractRequest(
   if (fileExists) {
     if (!existing) {
       if (!force) {
-        throw new Error(
+        throw new UsageError(
           `Refusing to overwrite existing file: ${resolved}. Pass --force to replace it.`,
         );
       }

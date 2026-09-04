@@ -2,9 +2,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { initializeProject } from "../src/init.ts";
+import { UsageError } from "../src/errors.ts";
+/**
+ * Phase 5 (see the CLI v2 rewrite plan): business logic moved from the old
+ * `src/init.ts` (still present, unreferenced by the new CLI, pending Phase 10
+ * cleanup) to `internal/project-init.ts`. `initializeProject` is the same pure
+ * scaffold step, now throwing an ordinary `Error` (library-facing); the
+ * `UsageError` reclassification happens only in `projectInitCommand`.
+ */
+import { initializeProject, projectInitCommand } from "../src/internal/project-init.ts";
+import type { CliRuntime } from "../src/runtime-types.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -14,10 +23,36 @@ afterEach(() => {
   }
 });
 
-describe("project init", () => {
+function fakeRuntime(overrides: Partial<CliRuntime> = {}): CliRuntime {
+  return {
+    cwd: () => "/project",
+    env: {},
+    stdin: process.stdin,
+    stdout: { write: vi.fn<(text: string) => void>() },
+    stderr: { write: vi.fn<(text: string) => void>() },
+    exitCode: undefined,
+    ...overrides,
+  };
+}
+
+function captureThrown(fn: () => void): unknown {
+  try {
+    fn();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
+
+function tempProjectRoot(): string {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-project-init-"));
+  temporaryDirectories.push(projectRoot);
+  return projectRoot;
+}
+
+describe("initializeProject (scaffold step)", () => {
   it("creates config without enabling auth globally", () => {
-    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-project-init-"));
-    temporaryDirectories.push(projectRoot);
+    const projectRoot = tempProjectRoot();
 
     const result = initializeProject(projectRoot);
     const config = fs.readFileSync(result.configPath, "utf8");
@@ -36,23 +71,64 @@ describe("project init", () => {
     expect(fs.existsSync(result.authStatePath)).toBe(false);
   });
 
-  it("refuses accidental config overwrite", () => {
-    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-project-init-"));
-    temporaryDirectories.push(projectRoot);
+  it("refuses accidental config overwrite with an ordinary Error, not UsageError", () => {
+    const projectRoot = tempProjectRoot();
     initializeProject(projectRoot);
 
     expect(() => initializeProject(projectRoot)).toThrow("Refusing to overwrite existing file");
+    const overwriteError = captureThrown(() => initializeProject(projectRoot));
+    expect(overwriteError).not.toBeInstanceOf(UsageError);
+    expect(overwriteError).toBeInstanceOf(Error);
     expect(() => initializeProject(projectRoot, true)).not.toThrow();
   });
 
   it("does not create a second config format", () => {
-    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-project-init-"));
-    temporaryDirectories.push(projectRoot);
+    const projectRoot = tempProjectRoot();
     const configPath = path.join(projectRoot, "framelia.config.mjs");
     fs.writeFileSync(configPath, "export default {};\n");
 
     expect(() => initializeProject(projectRoot)).toThrow("Refusing to overwrite existing file");
     expect(initializeProject(projectRoot, true).configPath).toBe(configPath);
     expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(false);
+  });
+});
+
+describe("projectInitCommand (CLI adapter)", () => {
+  it("resolves projectRoot from the explicit option over the injected runtime's cwd", async () => {
+    const projectRoot = tempProjectRoot();
+    await projectInitCommand(
+      { projectRoot, force: undefined },
+      fakeRuntime({ cwd: () => "/should-not-be-used" }),
+    );
+    expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(true);
+  });
+
+  it("falls back to the injected runtime's cwd when --project-root is not given", async () => {
+    const projectRoot = tempProjectRoot();
+    await projectInitCommand(
+      { projectRoot: undefined, force: undefined },
+      fakeRuntime({ cwd: () => projectRoot }),
+    );
+    expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(true);
+  });
+
+  it("reclassifies overwrite refusal as UsageError at the CLI adapter boundary", async () => {
+    const projectRoot = tempProjectRoot();
+    await projectInitCommand({ projectRoot, force: undefined }, fakeRuntime());
+
+    await expect(
+      projectInitCommand({ projectRoot, force: undefined }, fakeRuntime()),
+    ).rejects.toBeInstanceOf(UsageError);
+    await expect(
+      projectInitCommand({ projectRoot, force: undefined }, fakeRuntime()),
+    ).rejects.toThrow("Refusing to overwrite existing file");
+  });
+
+  it("does not throw when --force is set on an existing config", async () => {
+    const projectRoot = tempProjectRoot();
+    await projectInitCommand({ projectRoot, force: undefined }, fakeRuntime());
+    await expect(
+      projectInitCommand({ projectRoot, force: true }, fakeRuntime()),
+    ).resolves.toBeUndefined();
   });
 });

@@ -1,140 +1,258 @@
-import { suggestMasksForUrl } from "@framelia/verify/cli";
-import { Option, type Command } from "commander";
+import { buildCommand, buildRouteMap, numberParser } from "@stricli/core";
 
 import {
-  runCreateContract,
+  identityParser,
+  projectRootFlag,
   SCOPE_KINDS,
   VIEWPORT_PRESETS,
-  type CreateContractOptions,
-} from "../contract.ts";
-import {
-  emitResult,
-  positiveInteger,
-  requirePairedViewport,
-  resolveProjectRoot,
-  subcommand,
-  validateTargetUrl,
-} from "./shared.ts";
+} from "../cli-constants.ts";
+import type { CliContext } from "../context.ts";
+import { emitResult } from "../output.ts";
 
-type CreateContractFlags = Omit<CreateContractOptions, "projectRoot"> & { projectRoot?: string };
-
-interface SuggestMasksOptions {
-  targetUrl: string;
-  viewportWidth?: number;
-  viewportHeight?: number;
-  storageState?: string;
-  headed?: boolean;
+interface ContractCreateFlags {
+  readonly projectRoot: string | undefined;
+  readonly output: string | undefined;
+  readonly force: boolean | undefined;
+  readonly targetUrl: string | undefined;
+  readonly contractId: string | undefined;
+  readonly name: string | undefined;
+  readonly fileKey: string | undefined;
+  readonly nodeId: string | undefined;
+  readonly viewport: (typeof VIEWPORT_PRESETS)[number] | undefined;
+  readonly viewportName: string | undefined;
+  readonly viewportWidth: number | undefined;
+  readonly viewportHeight: number | undefined;
+  readonly scope: (typeof SCOPE_KINDS)[number] | undefined;
+  readonly pageReason: string | undefined;
+  readonly styleCheckSelector: string | undefined;
+  readonly styleCheckNodeId: string | undefined;
+  readonly selector: string | undefined;
+  readonly regionWidth: number | undefined;
+  readonly regionHeight: number | undefined;
 }
 
-/**
- * `framelia contract suggest-masks` (#42): scans a live page for common
- * dynamic-content signals (see @framelia/verify's mask-suggest.ts) and prints
- * candidate `masks[]` entries. Always proposals only -- this never reads or
- * writes a contract file; accepting a suggestion is a manual edit the caller
- * makes to their own contract.
- */
-export async function suggestMasksCommand(options: SuggestMasksOptions): Promise<void> {
-  validateTargetUrl(options.targetUrl);
-  requirePairedViewport(options.viewportWidth, options.viewportHeight);
-
-  const result = await suggestMasksForUrl({
-    url: options.targetUrl,
-    ...(options.viewportWidth !== undefined && options.viewportHeight !== undefined
-      ? { viewport: { width: options.viewportWidth, height: options.viewportHeight } }
-      : {}),
-    storageStatePath: options.storageState,
-    headless: !options.headed,
-  });
-
-  if (!result.ok) {
-    emitResult({ error: result.error, message: result.message }, false);
-    return;
-  }
-  emitResult(
-    {
-      url: result.url,
-      suggestions: result.suggestions,
-      note: "Proposals only -- nothing was written to any contract. Review and add the selectors you accept to the contract's masks[] yourself.",
+const createCommand = buildCommand({
+  loader: async () => {
+    const { contractCreateCommand } = await import("../internal/contract-create.ts");
+    return function (this: CliContext, flags: ContractCreateFlags) {
+      const { output, ...rest } = flags;
+      return contractCreateCommand({ ...rest, outputPath: output }, this.runtime);
+    };
+  },
+  parameters: {
+    flags: {
+      projectRoot: projectRootFlag,
+      output: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "contract path relative to project root",
+        placeholder: "path",
+      },
+      force: { kind: "boolean", optional: true, brief: "replace existing contract" },
+      targetUrl: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "target application URL",
+        placeholder: "url",
+      },
+      contractId: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "contract id, e.g. home.desktop",
+        placeholder: "id",
+      },
+      name: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "display name for just this contract, e.g. Login",
+        placeholder: "name",
+      },
+      fileKey: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "Figma file key",
+        placeholder: "key",
+      },
+      nodeId: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "Figma node id, e.g. 153:5181",
+        placeholder: "id",
+      },
+      viewport: {
+        kind: "enum",
+        values: VIEWPORT_PRESETS,
+        optional: true,
+        brief: "desktop, mobile, or custom",
+      },
+      viewportName: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "viewport name (with --viewport custom)",
+        placeholder: "name",
+      },
+      viewportWidth: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "viewport width in px (with --viewport custom)",
+        placeholder: "n",
+      },
+      viewportHeight: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "viewport height in px (with --viewport custom)",
+        placeholder: "n",
+      },
+      scope: {
+        kind: "enum",
+        values: SCOPE_KINDS,
+        optional: true,
+        brief: "page or region",
+      },
+      pageReason: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "why the baseline represents the complete page (with --scope page)",
+        placeholder: "text",
+      },
+      styleCheckSelector: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief:
+          "CSS selector for one style check-point (with --scope page; pairs with --style-check-node-id)",
+        placeholder: "css",
+      },
+      styleCheckNodeId: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "Figma node id for the style check-point (with --style-check-selector)",
+        placeholder: "id",
+      },
+      selector: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "CSS selector for the captured region (with --scope region)",
+        placeholder: "css",
+      },
+      regionWidth: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "expected region width in px (with --scope region)",
+        placeholder: "n",
+      },
+      regionHeight: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "expected region height in px (with --scope region)",
+        placeholder: "n",
+      },
     },
-    true,
-  );
+    aliases: {
+      r: "projectRoot",
+      o: "output",
+      f: "force",
+      t: "targetUrl",
+      c: "contractId",
+      k: "fileKey",
+      n: "nodeId",
+      N: "name",
+      v: "viewport",
+      s: "scope",
+    },
+  },
+  docs: {
+    brief: "Create a schema-v5 visual contract. Prompts interactively for any flag left unset.",
+  },
+});
+
+interface SuggestMasksFlags {
+  readonly targetUrl: string;
+  readonly viewportWidth: number | undefined;
+  readonly viewportHeight: number | undefined;
+  readonly storageState: string | undefined;
+  readonly headed: boolean | undefined;
 }
 
-export function registerContractCommands(program: Command): void {
-  const contract = subcommand("contract", "Create and manage visual contracts.");
-
-  contract.addCommand(
-    subcommand(
-      "create",
-      "Create a schema-v5 visual contract. Prompts interactively for any flag left unset.",
-    )
-      .option("--project-root <dir>", "target project root")
-      .option("--output <path>", "contract path relative to project root")
-      .option("--force", "replace existing contract")
-      .option("--target-url <url>", "target application URL")
-      .option("--contract-id <id>", "contract id, e.g. home.desktop")
-      .option("--name <name>", "display name for just this contract, e.g. Login")
-      .option("--file-key <key>", "Figma file key")
-      .option("--node-id <id>", "Figma node id, e.g. 153:5181")
-      .addOption(
-        new Option("--viewport <preset>", "desktop, mobile, or custom").choices(VIEWPORT_PRESETS),
-      )
-      .option("--viewport-name <name>", "viewport name (with --viewport custom)")
-      .option(
-        "--viewport-width <n>",
-        "viewport width in px (with --viewport custom)",
-        positiveInteger,
-      )
-      .option(
-        "--viewport-height <n>",
-        "viewport height in px (with --viewport custom)",
-        positiveInteger,
-      )
-      .addOption(new Option("--scope <kind>", "page or region").choices(SCOPE_KINDS))
-      .option(
-        "--page-reason <text>",
-        "why the baseline represents the complete page (with --scope page)",
-      )
-      .option(
-        "--style-check-selector <css>",
-        "CSS selector for one style check-point (with --scope page; pairs with --style-check-node-id)",
-      )
-      .option(
-        "--style-check-node-id <id>",
-        "Figma node id for the style check-point (with --style-check-selector)",
-      )
-      .option("--selector <css>", "CSS selector for the captured region (with --scope region)")
-      .option(
-        "--region-width <n>",
-        "expected region width in px (with --scope region)",
-        positiveInteger,
-      )
-      .option(
-        "--region-height <n>",
-        "expected region height in px (with --scope region)",
-        positiveInteger,
-      )
-      .action(({ output, ...options }: CreateContractFlags & { output?: string }) =>
-        runCreateContract({
-          ...options,
-          projectRoot: resolveProjectRoot(options.projectRoot),
-          outputPath: output,
-        }),
-      ),
-  );
-
-  contract.addCommand(
-    subcommand(
-      "suggest-masks",
+const suggestMasksCommand = buildCommand({
+  loader: async () => {
+    const { suggestMasksCommand: runSuggestMasksCommand } =
+      await import("../internal/contract-suggest-masks.ts");
+    return async function (this: CliContext, flags: SuggestMasksFlags) {
+      const result = await runSuggestMasksCommand({
+        targetUrl: flags.targetUrl,
+        viewportWidth: flags.viewportWidth,
+        viewportHeight: flags.viewportHeight,
+        storageState: flags.storageState,
+        headed: flags.headed,
+      });
+      emitResult(this, result.body, result.ok);
+    };
+  },
+  parameters: {
+    flags: {
+      targetUrl: {
+        kind: "parsed",
+        parse: identityParser,
+        brief: "page URL to scan",
+        placeholder: "url",
+      },
+      viewportWidth: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "viewport width in px",
+        placeholder: "n",
+      },
+      viewportHeight: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "viewport height in px",
+        placeholder: "n",
+      },
+      storageState: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "Playwright storage-state file for an authenticated scan",
+        placeholder: "path",
+      },
+      headed: {
+        kind: "boolean",
+        optional: true,
+        brief: "run the scan browser headed (defaults to headless)",
+      },
+    },
+    aliases: {
+      t: "targetUrl",
+      w: "viewportWidth",
+      H: "viewportHeight",
+      s: "storageState",
+      e: "headed",
+    },
+  },
+  docs: {
+    brief:
       "Scan a live page for common dynamic-content signals and propose mask selectors. Proposals only -- never writes to a contract.",
-    )
-      .requiredOption("--target-url <url>", "page URL to scan")
-      .option("--viewport-width <n>", "viewport width in px", positiveInteger)
-      .option("--viewport-height <n>", "viewport height in px", positiveInteger)
-      .option("--storage-state <path>", "Playwright storage-state file for an authenticated scan")
-      .option("--headed", "run the scan browser headed (defaults to headless)")
-      .action(suggestMasksCommand),
-  );
+  },
+});
 
-  program.addCommand(contract);
-}
+export const contractRoutes = buildRouteMap({
+  routes: { create: createCommand, "suggest-masks": suggestMasksCommand },
+  docs: { brief: "Create and manage visual contracts." },
+});

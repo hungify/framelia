@@ -72,6 +72,31 @@ describe("startDashboardServer", () => {
     }
   });
 
+  it("closes while an SSE client is still connected, instead of waiting for it to disconnect", async () => {
+    // A real dashboard tab holds `/events` open for the whole session, and Node's
+    // `server.close()` waits for every active connection. Restart ("r"), quit ("q"),
+    // and SIGTERM shutdown all go through this close, so a still-connected client
+    // must not be able to hold any of them open. The awaited signal is the close
+    // promise itself; the per-test timeout below (well under the suite's 60s default)
+    // is only what turns a regression into a fast failure instead of a stalled run.
+    const clientRoot = await clientFixture();
+    const source: DashboardSource = {
+      snapshot: () => emptyRun,
+      files: () => new Map(),
+      subscribe: () => () => undefined,
+    };
+    const server = await startDashboardServer({ source, clientRoot });
+    const streamAbort = new AbortController();
+    const response = await fetch(`${server.url}/events`, { signal: streamAbort.signal });
+    expect(response.status).toBe(200);
+    try {
+      // The stream stays deliberately open (no body cancel) across the close.
+      await expect(server.close()).resolves.toBeUndefined();
+    } finally {
+      streamAbort.abort();
+    }
+  }, 5_000);
+
   it("only serves allowlisted artifact files, rejecting unknown paths", async () => {
     const clientRoot = await clientFixture();
     const evidenceDir = await fs.mkdtemp(

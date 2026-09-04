@@ -1,28 +1,29 @@
-import { JSON_INDENT_SPACES, resolveToken } from "@framelia/verify";
-import type { Command } from "commander";
+import { buildCommand } from "@stricli/core";
 
-import { resolveProjectRoot, subcommand } from "./shared.ts";
+import { projectRootFlag } from "../cli-constants.ts";
+import type { CliContext } from "../context.ts";
+import { emitResult } from "../output.ts";
 
-export function registerStatusCommand(program: Command, packageVersion: string): void {
-  program.addCommand(
-    subcommand("status", "Print CLI capabilities and environment status.")
-      .option("--project-root <dir>", "target project root")
-      .action((options: { projectRoot?: string }) => {
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
-              name: "framelia",
-              version: packageVersion,
-              mode: "cli",
-              baselineKinds: ["figma"],
-              projectRoot: resolveProjectRoot(options.projectRoot),
-              figmaTokenAvailable: Boolean(resolveToken()),
-            },
-            null,
-            JSON_INDENT_SPACES,
-          ),
-        );
-      }),
-  );
+interface StatusFlags {
+  readonly projectRoot: string | undefined;
 }
+
+export const statusCommand = buildCommand({
+  loader: async () => {
+    const { statusCommand: runStatusCommand } = await import("../internal/status.ts");
+    return function (this: CliContext, flags: StatusFlags) {
+      const result = runStatusCommand(
+        { projectRoot: flags.projectRoot, version: this.version },
+        this.runtime,
+      );
+      emitResult(this, result, true);
+    };
+  },
+  parameters: {
+    flags: {
+      projectRoot: projectRootFlag,
+    },
+    aliases: { r: "projectRoot" },
+  },
+  docs: { brief: "Print CLI capabilities and environment status." },
+});

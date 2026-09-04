@@ -11,6 +11,13 @@ const packageVersion = (
     version: string;
   }
 ).version;
+
+/**
+ * Phase 2 update (Stricli application shell): wording/stream assertions below are
+ * updated to Stricli's actual, live-verified diagnostics -- see golden-baseline.test.ts's
+ * header comment for the general rule (scanner-level behavior updated in place, stub-
+ * dependent behavior `.skip`ped with a `TODO(Phase N)`).
+ */
 describe("published CLI", () => {
   it("prints help successfully through the package bin", () => {
     const result = spawnSync(
@@ -20,8 +27,12 @@ describe("published CLI", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("framelia contract create");
-    expect(result.stderr).not.toContain("mcp");
+    // Documented stream change: Stricli's `help` integration writes to stdout (verified
+    // live), not stderr -- see golden-baseline.test.ts's `--version` fixture for the
+    // same, related change.
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("framelia contract create");
+    expect(result.stdout).not.toContain("mcp");
   });
 
   it("reports CLI mode without requiring Figma access", () => {
@@ -68,9 +79,9 @@ describe("published CLI", () => {
     [
       "compare",
       ["--baseline", "missing.png", "--actual", "missing.png", "--profile", "audit"],
-      undefined,
+      'Expected "audit" to be one of (page|component/strict|component/dev)',
     ],
-    ["schema", ["--target", "request"], undefined],
+    ["schema", ["--target", "request"], 'Expected "request" to be one of (contract|artifact)'],
   ])("rejects invalid %s enum flags at usage boundary", (command, args, expectedMessage) => {
     const result = spawnSync(
       process.execPath,
@@ -78,28 +89,32 @@ describe("published CLI", () => {
       { encoding: "utf8" },
     );
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain(expectedMessage ?? "Usage:");
-    expect(result.stderr).toContain("Usage:");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(expectedMessage);
   });
 
+  // Documented wording change from Commander's messages below; Stricli does not echo a
+  // full usage banner alongside a scanner error (see golden-baseline.test.ts's alias-route
+  // fixture for the same point), so these no longer assert a trailing "Usage:" line.
+  // Exit code (2) and stderr-only routing are unchanged, verified live for every case.
   it.each([
     [
       "unknown option",
       ["status", "--project-rooot", packageRoot],
-      "unknown option '--project-rooot'",
+      "No flag registered for --project-rooot",
     ],
-    ["missing required option", ["done-gate"], "required option '--artifact <path>' not specified"],
+    ["missing required option", ["done-gate"], "Expected input for flag --artifact"],
     [
       "missing option value",
       ["status", "--project-root"],
-      "option '--project-root <dir>' argument missing",
+      "Expected input for flag --project-root",
     ],
     [
       "duplicate option",
       ["status", "--project-root", packageRoot, "--project-root", packageRoot],
-      "used more than once",
+      "Too many arguments for --project-root",
     ],
-    ["extra argument", ["status", "unexpected"], "too many arguments"],
+    ["extra argument", ["status", "unexpected"], "Too many arguments, expected 0"],
   ])("rejects unsafe CLI input: %s", (_label, args, message) => {
     const result = spawnSync(
       process.execPath,
@@ -108,7 +123,7 @@ describe("published CLI", () => {
     );
 
     expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
     expect(result.stderr).toContain(message);
-    expect(result.stderr).toContain("Usage:");
   });
 });

@@ -1,126 +1,140 @@
-import * as path from "node:path";
+import { buildCommand, buildRouteMap, numberParser } from "@stricli/core";
 
-import { CONTRACT_ID_PATTERN, visualArtifactPath } from "@framelia/contracts";
-import { captureAndPromotePageBaseline } from "@framelia/verify/cli";
-import type { Command } from "commander";
+import { identityParser, projectRootFlag } from "../cli-constants.ts";
+import type { CliContext } from "../context.ts";
+import { emitResult } from "../output.ts";
 
-import {
-  emitResult,
-  positiveInteger,
-  requirePairedViewport,
-  resolveProjectRoot,
-  subcommand,
-  validateTargetUrl,
-} from "./shared.ts";
-
-interface BaselinePromoteOptions {
-  key: string;
-  targetUrl: string;
-  projectRoot?: string;
-  selector?: string;
-  fullPage?: boolean;
-  viewportWidth?: number;
-  viewportHeight?: number;
-  promotedBy?: string;
-  runId?: string;
-  note?: string;
-  storageState?: string;
-  headed?: boolean;
+interface BaselinePromoteFlags {
+  readonly key: string;
+  readonly targetUrl: string;
+  readonly projectRoot: string | undefined;
+  readonly selector: string | undefined;
+  readonly fullPage: boolean | undefined;
+  readonly viewportWidth: number | undefined;
+  readonly viewportHeight: number | undefined;
+  readonly promotedBy: string | undefined;
+  readonly runId: string | undefined;
+  readonly note: string | undefined;
+  readonly storageState: string | undefined;
+  readonly headed: boolean | undefined;
 }
 
-function validateContractId(value: string): void {
-  if (!CONTRACT_ID_PATTERN.test(value)) {
-    throw new Error(
-      "--key must use lowercase letters, numbers, dots, or hyphens, e.g. home.desktop.",
-    );
-  }
-}
-
-/** Best-effort default so a local `framelia baseline promote` doesn't require typing
- *  --promoted-by every time; CI should still pass it explicitly (e.g. the actor/run id). */
-function defaultPromotedBy(): string {
-  return (
-    process.env.FRAMELIA_PROMOTED_BY ??
-    process.env.GIT_AUTHOR_EMAIL ??
-    process.env.USER ??
-    process.env.USERNAME ??
-    "unknown"
-  );
-}
-
-export async function baselinePromoteCommand(options: BaselinePromoteOptions): Promise<void> {
-  validateContractId(options.key);
-  validateTargetUrl(options.targetUrl);
-  requirePairedViewport(options.viewportWidth, options.viewportHeight);
-
-  const projectRoot = resolveProjectRoot(options.projectRoot);
-  const outDir = path.join(projectRoot, visualArtifactPath(options.key));
-  const promotedBy = options.promotedBy ?? defaultPromotedBy();
-
-  const result = await captureAndPromotePageBaseline({
-    url: options.targetUrl,
-    outDir,
-    promotedBy,
-    runId: options.runId,
-    note: options.note,
-    selector: options.selector,
-    fullPage: options.fullPage,
-    ...(options.viewportWidth !== undefined && options.viewportHeight !== undefined
-      ? { viewport: { width: options.viewportWidth, height: options.viewportHeight } }
-      : {}),
-    storageStatePath: options.storageState,
-    headless: !options.headed,
-  });
-
-  if (!result.ok) {
-    emitResult({ key: options.key, error: result.error, message: result.message }, false);
-    return;
-  }
-  emitResult(
-    {
-      key: options.key,
-      outDir: path.relative(projectRoot, outDir) || ".",
-      baselinePath: result.baselinePath,
-      version: result.meta.current.version,
-      promotedAt: result.meta.current.promotedAt,
-      promotedBy: result.meta.current.promotedBy,
-      ...(result.archivedPath ? { archivedPath: result.archivedPath } : {}),
+const promoteCommand = buildCommand({
+  loader: async () => {
+    const { baselinePromoteCommand } = await import("../internal/baseline-promote.ts");
+    return async function (this: CliContext, flags: BaselinePromoteFlags) {
+      const result = await baselinePromoteCommand(
+        {
+          key: flags.key,
+          targetUrl: flags.targetUrl,
+          projectRoot: flags.projectRoot,
+          selector: flags.selector,
+          fullPage: flags.fullPage,
+          viewportWidth: flags.viewportWidth,
+          viewportHeight: flags.viewportHeight,
+          promotedBy: flags.promotedBy,
+          runId: flags.runId,
+          note: flags.note,
+          storageState: flags.storageState,
+          headed: flags.headed,
+        },
+        this.runtime,
+      );
+      emitResult(this, result.body, result.ok);
+    };
+  },
+  parameters: {
+    flags: {
+      key: { kind: "parsed", parse: identityParser, brief: "baseline key, e.g. home.desktop" },
+      targetUrl: {
+        kind: "parsed",
+        parse: identityParser,
+        brief: "page URL to capture",
+        placeholder: "url",
+      },
+      projectRoot: projectRootFlag,
+      selector: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "CSS selector to scope the capture to (region instead of full page)",
+        placeholder: "css",
+      },
+      fullPage: {
+        kind: "boolean",
+        optional: true,
+        brief: "capture the full scrollable page",
+      },
+      viewportWidth: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "viewport width in px",
+        placeholder: "n",
+      },
+      viewportHeight: {
+        kind: "parsed",
+        parse: numberParser,
+        optional: true,
+        brief: "viewport height in px",
+        placeholder: "n",
+      },
+      promotedBy: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "who is accepting this baseline (defaults to $USER)",
+        placeholder: "who",
+      },
+      runId: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "CI run id/URL to record alongside this promotion",
+        placeholder: "id",
+      },
+      note: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "why this baseline was promoted",
+        placeholder: "text",
+      },
+      storageState: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "Playwright storage-state file for an authenticated capture",
+        placeholder: "path",
+      },
+      headed: {
+        kind: "boolean",
+        optional: true,
+        brief: "run the capture browser headed (defaults to headless)",
+      },
     },
-    true,
-  );
-}
-
-export function registerBaselineCommands(program: Command): void {
-  const baseline = subcommand(
-    "baseline",
-    "Manage promoted page-to-page baselines used by toMatchPageBaseline.",
-  );
-
-  baseline.addCommand(
-    subcommand(
-      "promote",
+    aliases: {
+      k: "key",
+      t: "targetUrl",
+      r: "projectRoot",
+      c: "selector",
+      f: "fullPage",
+      w: "viewportWidth",
+      H: "viewportHeight",
+      b: "promotedBy",
+      i: "runId",
+      n: "note",
+      s: "storageState",
+      e: "headed",
+    },
+  },
+  docs: {
+    brief:
       "Capture the target URL's current state and accept it as the new toMatchPageBaseline baseline.",
-    )
-      .requiredOption("--key <id>", "baseline key, e.g. home.desktop")
-      .requiredOption("--target-url <url>", "page URL to capture")
-      .option("--project-root <dir>", "target project root")
-      .option(
-        "--selector <css>",
-        "CSS selector to scope the capture to (region instead of full page)",
-      )
-      .option("--full-page", "capture the full scrollable page")
-      .option("--viewport-width <n>", "viewport width in px", positiveInteger)
-      .option("--viewport-height <n>", "viewport height in px", positiveInteger)
-      .option("--promoted-by <who>", "who is accepting this baseline (defaults to $USER)")
-      .option("--run-id <id>", "CI run id/URL to record alongside this promotion")
-      .option("--note <text>", "why this baseline was promoted")
-      .option(
-        "--storage-state <path>",
-        "Playwright storage-state file for an authenticated capture",
-      )
-      .option("--headed", "run the capture browser headed (defaults to headless)")
-      .action(baselinePromoteCommand),
-  );
+  },
+});
 
-  program.addCommand(baseline);
-}
+export const baselineRoutes = buildRouteMap({
+  routes: { promote: promoteCommand },
+  docs: { brief: "Manage promoted page-to-page baselines used by toMatchPageBaseline." },
+});

@@ -3,22 +3,24 @@ import * as path from "node:path";
 
 import * as p from "@clack/prompts";
 import {
-  contractDefaultsSchema,
+  captureDefaultsSchema,
   DEFAULT_AUTH_STATE_PATH,
-  type ContractDefaults,
+  type CaptureDefaults,
 } from "@framelia/contracts";
 
-import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "./config.ts";
+import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "../config.ts";
+import { UsageError } from "../errors.ts";
+import type { CliRuntime } from "../runtime-types.ts";
 
 const AUTH_GITIGNORE = "*\n!.gitignore\n";
 
 /**
- * One illustrative literal per ContractDefaults field, rendered into the scaffolded
- * config's commented example block. Typed as Record<keyof ContractDefaults, string> so
- * adding a field to contractDefaultsSchema without adding an example here is a compile
+ * One illustrative literal per CaptureDefaults field, rendered into the scaffolded
+ * config's commented example block. Typed as Record<keyof CaptureDefaults, string> so
+ * adding a field to captureDefaultsSchema without adding an example here is a compile
  * error, not a silently stale `framelia init` template.
  */
-const CONTRACT_DEFAULT_EXAMPLES: Record<keyof ContractDefaults, string> = {
+const CONTRACT_DEFAULT_EXAMPLES: Record<keyof CaptureDefaults, string> = {
   stabilitySamples: "3",
   timeoutMs: "60_000",
   devtoolsSelector: "true",
@@ -29,7 +31,7 @@ const CONTRACT_DEFAULT_EXAMPLES: Record<keyof ContractDefaults, string> = {
   maxMaskedAreaRatio: "0.15",
 };
 
-const CONTRACT_DEFAULTS_COMMENT = contractDefaultsSchema
+const CONTRACT_DEFAULTS_COMMENT = captureDefaultsSchema
   .keyof()
   .options.map((key) => `  // ${key}: ${CONTRACT_DEFAULT_EXAMPLES[key]},`)
   .join("\n");
@@ -46,11 +48,22 @@ ${CONTRACT_DEFAULTS_COMMENT}
 `;
 
 export interface ProjectInitResult {
-  configPath: string;
-  authStatePath: string;
-  authGitignorePath: string;
+  readonly configPath: string;
+  readonly authStatePath: string;
+  readonly authGitignorePath: string;
 }
 
+export interface ProjectInitOptions {
+  readonly projectRoot: string | undefined;
+  readonly force: boolean | undefined;
+}
+
+/**
+ * Library-facing scaffold step: throws an ordinary `Error` on ambiguous/existing
+ * config (see `../config.ts`'s `assertSingleConfigFile`), not `UsageError` --
+ * that reclassification happens only in `projectInitCommand` below, the CLI
+ * adapter boundary, per the plan's Phase 5 instruction.
+ */
 export function initializeProject(projectRoot: string, force = false): ProjectInitResult {
   const root = path.resolve(projectRoot);
   const existingConfigPaths = findConfigFiles(root);
@@ -74,17 +87,28 @@ export function initializeProject(projectRoot: string, force = false): ProjectIn
   return { configPath, authStatePath, authGitignorePath };
 }
 
-export async function runProjectInit(options: {
-  projectRoot: string;
-  force?: boolean;
-}): Promise<void> {
+/**
+ * `framelia init`. No cancellation prompt today -- `p.intro` is written before
+ * the scaffold step runs (and before it can throw), matching the old CLI's
+ * exact output ordering.
+ */
+export async function projectInitCommand(
+  options: ProjectInitOptions,
+  runtime: CliRuntime,
+): Promise<void> {
+  const root = path.resolve(options.projectRoot ?? runtime.cwd());
   p.intro("Initialize Framelia");
-  const result = initializeProject(options.projectRoot, options.force);
+  let result: ProjectInitResult;
+  try {
+    result = initializeProject(root, options.force ?? false);
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
+  }
   p.note(
     [
-      `Config: ${path.relative(options.projectRoot, result.configPath)}`,
+      `Config: ${path.relative(root, result.configPath)}`,
       "Authenticated screens (optional):",
-      `  save Playwright state to ${path.relative(options.projectRoot, result.authStatePath)}`,
+      `  save Playwright state to ${path.relative(root, result.authStatePath)}`,
       "  then uncomment storageStatePath in framelia.config.ts",
       "Auth state directory is ignored by Git.",
       "",

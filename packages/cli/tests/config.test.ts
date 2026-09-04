@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadFrameliaConfig } from "../src/config.ts";
+import { UsageError } from "../src/errors.ts";
+import { loadProjectConfig } from "../src/internal/config.ts";
 
 const temporaryDirectories: string[] = [];
 const originalFrameliaTestEnv = process.env.FRAMELIA_TEST_ENV;
@@ -103,5 +105,89 @@ describe("framelia config boundary", () => {
       "export default { devtoolsSelector: false };\n",
     );
     await expect(loadFrameliaConfig(projectRoot)).rejects.toThrow(/devtoolsSelector/);
+  });
+
+  it("returns an empty config when no config file exists", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-none-"));
+    temporaryDirectories.push(projectRoot);
+
+    await expect(loadFrameliaConfig(projectRoot)).resolves.toEqual({});
+  });
+
+  it("rejects multiple config files as ambiguous", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-multiple-"));
+    temporaryDirectories.push(projectRoot);
+    fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {};\n");
+    fs.writeFileSync(path.join(projectRoot, "framelia.config.js"), "export default {};\n");
+
+    await expect(loadFrameliaConfig(projectRoot)).rejects.toThrow(
+      "Multiple Framelia config files found",
+    );
+  });
+
+  it("rejects a truly unknown (non-screen-specific) config key", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-unknown-key-"));
+    temporaryDirectories.push(projectRoot);
+    fs.writeFileSync(
+      path.join(projectRoot, "framelia.config.mjs"),
+      "export default { totallyMadeUpOption: true };\n",
+    );
+
+    await expect(loadFrameliaConfig(projectRoot)).rejects.toThrow(
+      "Unknown Framelia config option: totallyMadeUpOption.",
+    );
+  });
+
+  it("rejects an envFile path that escapes the project root via parent traversal", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-unsafe-env-"));
+    temporaryDirectories.push(projectRoot);
+    fs.writeFileSync(
+      path.join(projectRoot, "framelia.config.mjs"),
+      'export default { envFile: "../secret.env" };\n',
+    );
+
+    await expect(loadFrameliaConfig(projectRoot)).rejects.toThrow(
+      "must be project-relative without parent traversal",
+    );
+  });
+
+  it("rejects an absolute envFile path", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-absolute-env-"));
+    temporaryDirectories.push(projectRoot);
+    fs.writeFileSync(
+      path.join(projectRoot, "framelia.config.mjs"),
+      'export default { envFile: "/etc/secret.env" };\n',
+    );
+
+    await expect(loadFrameliaConfig(projectRoot)).rejects.toThrow(
+      "must be project-relative without parent traversal",
+    );
+  });
+});
+
+describe("loadProjectConfig (internal CLI adapter)", () => {
+  it("resolves with the same config loadFrameliaConfig would resolve", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-adapter-ok-"));
+    temporaryDirectories.push(projectRoot);
+    fs.writeFileSync(
+      path.join(projectRoot, "framelia.config.mjs"),
+      "export default { stabilitySamples: 5 };\n",
+    );
+
+    await expect(loadProjectConfig(projectRoot)).resolves.toMatchObject({ stabilitySamples: 5 });
+  });
+
+  it("reclassifies a config loading failure as UsageError, preserving the message", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-adapter-fail-"));
+    temporaryDirectories.push(projectRoot);
+    fs.writeFileSync(
+      path.join(projectRoot, "framelia.config.mjs"),
+      "export default { totallyMadeUpOption: true };\n",
+    );
+
+    await expect(loadProjectConfig(projectRoot)).rejects.toBeInstanceOf(UsageError);
+    await expect(loadProjectConfig(projectRoot)).rejects.toThrow(
+      "Unknown Framelia config option: totallyMadeUpOption.",
+    );
   });
 });

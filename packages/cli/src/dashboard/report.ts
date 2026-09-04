@@ -19,14 +19,13 @@ import {
   type DashboardProjection,
   type DashboardSource,
 } from "@framelia/dashboard-server";
-import { JSON_INDENT_SPACES, runWithConcurrency, type ContractDefaults } from "@framelia/verify";
+import { JSON_INDENT_SPACES, runWithConcurrency, type CaptureDefaults } from "@framelia/verify";
 import { nanoid } from "nanoid";
 
 import { loadFrameliaConfig } from "../config.ts";
 
 const MAX_DEFAULT_CONCURRENCY = 4;
 
-/** Bounded default concurrency for parallel per-artifact work: min(4, CPU cores). */
 function defaultConcurrency(): number {
   return Math.min(MAX_DEFAULT_CONCURRENCY, os.availableParallelism?.() ?? 2);
 }
@@ -47,7 +46,7 @@ export async function readVerificationArtifact(filePath: string): Promise<Verifi
 export async function archivedDashboardSource(
   artifact: VerificationArtifact,
   suiteName?: string,
-  defaults?: ContractDefaults,
+  defaults?: CaptureDefaults,
 ): Promise<DashboardSource> {
   const projection = await projectArtifact(artifact, suiteName, defaults);
   return {
@@ -184,7 +183,7 @@ export async function exportDashboardReport(options: {
   suiteName?: string;
   outputDirectory: string;
   clientRoot?: string;
-  defaults?: ContractDefaults;
+  defaults?: CaptureDefaults;
 }): Promise<string> {
   const outputDirectory = path.resolve(options.outputDirectory);
   const clientRoot = options.clientRoot ?? defaultClientRoot();

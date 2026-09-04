@@ -1,24 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import * as p from "@clack/prompts";
 import {
-  contractDefaultsSchema,
+  captureDefaultsSchema,
   DEFAULT_AUTH_STATE_PATH,
-  type ContractDefaults,
+  type CaptureDefaults,
 } from "@framelia/contracts";
 
-import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "./config.ts";
+import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "../config.ts";
+import { UsageError } from "../exit.ts";
+import type { CliRuntime } from "../runtime-types.ts";
+import { openProject } from "./project.ts";
+import type { PromptAdapter } from "./prompts.ts";
 
 const AUTH_GITIGNORE = "*\n!.gitignore\n";
 
-/**
- * One illustrative literal per ContractDefaults field, rendered into the scaffolded
- * config's commented example block. Typed as Record<keyof ContractDefaults, string> so
- * adding a field to contractDefaultsSchema without adding an example here is a compile
- * error, not a silently stale `framelia init` template.
- */
-const CONTRACT_DEFAULT_EXAMPLES: Record<keyof ContractDefaults, string> = {
+const CONTRACT_DEFAULT_EXAMPLES: Record<keyof CaptureDefaults, string> = {
   stabilitySamples: "3",
   timeoutMs: "60_000",
   devtoolsSelector: "true",
@@ -29,7 +26,7 @@ const CONTRACT_DEFAULT_EXAMPLES: Record<keyof ContractDefaults, string> = {
   maxMaskedAreaRatio: "0.15",
 };
 
-const CONTRACT_DEFAULTS_COMMENT = contractDefaultsSchema
+const CONTRACT_DEFAULTS_COMMENT = captureDefaultsSchema
   .keyof()
   .options.map((key) => `  // ${key}: ${CONTRACT_DEFAULT_EXAMPLES[key]},`)
   .join("\n");
@@ -37,7 +34,7 @@ const CONTRACT_DEFAULTS_COMMENT = contractDefaultsSchema
 const CONFIG_SOURCE = `import { defineConfig } from "framelia";
 
 export default defineConfig({
-  // envFile: ".env.playwright",
+  // envFile: ".env.e2e",
   // storageStatePath: "${DEFAULT_AUTH_STATE_PATH}",
 
   // Project-wide capture defaults:
@@ -46,9 +43,14 @@ ${CONTRACT_DEFAULTS_COMMENT}
 `;
 
 export interface ProjectInitResult {
-  configPath: string;
-  authStatePath: string;
-  authGitignorePath: string;
+  readonly configPath: string;
+  readonly authStatePath: string;
+  readonly authGitignorePath: string;
+}
+
+export interface ProjectInitOptions {
+  readonly projectRoot: string | undefined;
+  readonly force: boolean | undefined;
 }
 
 export function initializeProject(projectRoot: string, force = false): ProjectInitResult {
@@ -74,17 +76,24 @@ export function initializeProject(projectRoot: string, force = false): ProjectIn
   return { configPath, authStatePath, authGitignorePath };
 }
 
-export async function runProjectInit(options: {
-  projectRoot: string;
-  force?: boolean;
-}): Promise<void> {
-  p.intro("Initialize Framelia");
-  const result = initializeProject(options.projectRoot, options.force);
-  p.note(
+export async function projectInitCommand(
+  options: ProjectInitOptions,
+  prompts: PromptAdapter,
+  runtime: CliRuntime,
+): Promise<void> {
+  const project = openProject(options.projectRoot, runtime);
+  prompts.intro("Initialize Framelia");
+  let result: ProjectInitResult;
+  try {
+    result = initializeProject(project.root, options.force ?? false);
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
+  }
+  prompts.note(
     [
-      `Config: ${path.relative(options.projectRoot, result.configPath)}`,
+      `Config: ${path.relative(project.root, result.configPath)}`,
       "Authenticated screens (optional):",
-      `  save Playwright state to ${path.relative(options.projectRoot, result.authStatePath)}`,
+      `  save Playwright state to ${path.relative(project.root, result.authStatePath)}`,
       "  then uncomment storageStatePath in framelia.config.ts",
       "Auth state directory is ignored by Git.",
       "",
@@ -92,5 +101,5 @@ export async function runProjectInit(options: {
     ].join("\n"),
     "Project ready",
   );
-  p.outro("Framelia initialized");
+  prompts.outro("Framelia initialized");
 }

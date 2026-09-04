@@ -19,14 +19,13 @@ import {
   type DashboardProjection,
   type DashboardSource,
 } from "@framelia/dashboard-server";
-import { JSON_INDENT_SPACES, runWithConcurrency, type ContractDefaults } from "@framelia/verify";
+import { JSON_INDENT_SPACES, runWithConcurrency, type CaptureDefaults } from "@framelia/verify";
 import { nanoid } from "nanoid";
 
-import { loadFrameliaConfig } from "../config.ts";
+import type { Project } from "../internal/project.ts";
 
 const MAX_DEFAULT_CONCURRENCY = 4;
 
-/** Bounded default concurrency for parallel per-artifact work: min(4, CPU cores). */
 function defaultConcurrency(): number {
   return Math.min(MAX_DEFAULT_CONCURRENCY, os.availableParallelism?.() ?? 2);
 }
@@ -47,7 +46,7 @@ export async function readVerificationArtifact(filePath: string): Promise<Verifi
 export async function archivedDashboardSource(
   artifact: VerificationArtifact,
   suiteName?: string,
-  defaults?: ContractDefaults,
+  defaults?: CaptureDefaults,
 ): Promise<DashboardSource> {
   const projection = await projectArtifact(artifact, suiteName, defaults);
   return {
@@ -86,12 +85,6 @@ export function featureKeyFromArtifactEntry(entry: string): string {
   return parts.join("/") || "root";
 }
 
-/**
- * Replaces every string leaf equal to a known virtual path with its remapped form.
- * Walks generically instead of naming each evidence field, so a contract field that
- * carries a virtual path (present in `remap`) is namespaced automatically -- including
- * ones added to DashboardContractResult after this function was written.
- */
 function remapVirtualPaths<T>(value: T, remap: ReadonlyMap<string, string>): T {
   if (typeof value === "string") return (remap.get(value) ?? value) as T;
   if (Array.isArray(value)) return value.map((item) => remapVirtualPaths(item, remap)) as T;
@@ -123,12 +116,9 @@ function withFeaturePrefix(projection: DashboardProjection, feature: string): Da
   return { files, run: { ...projection.run, contracts } };
 }
 
-export async function aggregateDashboardSource(projectRoot: string): Promise<DashboardSource> {
-  const found = await findVerificationArtifacts(projectRoot);
-  const defaults = await loadFrameliaConfig(projectRoot);
-  // Each artifact is an independent file read + projection; run them concurrently
-  // instead of paying every artifact's latency back to back, but bounded so a
-  // repository with many artifacts can't exhaust file descriptors or memory.
+export async function aggregateDashboardSource(project: Project): Promise<DashboardSource> {
+  const found = await findVerificationArtifacts(project.root);
+  const defaults = await project.loadConfig();
   const projections = await runWithConcurrency(
     found,
     defaultConcurrency(),
@@ -184,7 +174,7 @@ export async function exportDashboardReport(options: {
   suiteName?: string;
   outputDirectory: string;
   clientRoot?: string;
-  defaults?: ContractDefaults;
+  defaults?: CaptureDefaults;
 }): Promise<string> {
   const outputDirectory = path.resolve(options.outputDirectory);
   const clientRoot = options.clientRoot ?? defaultClientRoot();
@@ -194,10 +184,6 @@ export async function exportDashboardReport(options: {
       throw new Error(`Report output may not be inside contract artifact directory: ${sourceRoot}`);
     }
   }
-  // Guard above protects contract evidence. This second guard protects every other
-  // directory: only an absent, empty, or a directory this function itself previously
-  // wrote (identified by a Framelia-specific marker, not by a generic file like
-  // index.html that any unrelated static site could also contain) may be cleared.
   const existing = await fs.readdir(outputDirectory).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return [] as string[];
     throw error;

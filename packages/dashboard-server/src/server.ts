@@ -4,6 +4,7 @@ import type { DashboardEvent, DashboardRun } from "@framelia/contracts";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
+import { DEFAULT_DASHBOARD_PORT } from "./constants.ts";
 import { listenWithPortRetry } from "./port-listener.ts";
 import { assertClientBuildExists, mountArtifactRoute, mountClientRoutes } from "./static-assets.ts";
 
@@ -14,11 +15,11 @@ export interface DashboardSource {
 }
 
 export interface DashboardServer {
-  url: string;
-  close: () => Promise<void>;
+  readonly hostname: string;
+  readonly port: number;
+  readonly url: string;
+  readonly close: () => Promise<void>;
 }
-
-export const DEFAULT_DASHBOARD_PORT = 6789;
 
 /**
  * Where the bundled Vue dashboard client lives by default. Both the CLI's
@@ -125,11 +126,22 @@ export async function startDashboardServer(options: {
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("Could not resolve dashboard server address.");
+  const urlHostname = hostname.includes(":") ? `[${hostname}]` : hostname;
   return {
-    url: `http://${hostname}:${address.port}`,
+    hostname,
+    port: address.port,
+    url: `http://${urlHostname}:${address.port}`,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        // `close()` alone waits for every active connection, and `/events` holds an SSE
+        // stream open for as long as its client is subscribed: one dashboard tab left
+        // open would keep this promise pending forever, stalling the CLI's restart,
+        // quit, and SIGTERM shutdown paths. Dropping live sockets *is* the shutdown
+        // here -- there is no request worth draining once the server stops serving.
+        // `in` narrows @hono/node-server's ServerType union (HTTP/2 servers have no
+        // closeAllConnections); this server is always a plain http.Server.
+        if ("closeAllConnections" in server) server.closeAllConnections();
+      }),
   };
 }

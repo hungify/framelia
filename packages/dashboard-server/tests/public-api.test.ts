@@ -1,5 +1,10 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
+import * as constantsEntry from "../src/constants.ts";
 import * as publicApi from "../src/index.ts";
 // Type-only half of the public surface: importing these here means `tsc
 // --noEmit` fails immediately if any is ever renamed or removed -- these
@@ -44,5 +49,17 @@ const EXPECTED_INDEX_EXPORTS = [
 describe("public API surface", () => {
   it("'.' (src/index.ts) matches the exact expected runtime export-name set", () => {
     expect(Object.keys(publicApi).toSorted()).toEqual(EXPECTED_INDEX_EXPORTS);
+  });
+
+  it("'./constants' stays importable without pulling any other module in", () => {
+    expect(Object.keys(constantsEntry).toSorted()).toEqual(["DEFAULT_DASHBOARD_PORT"]);
+
+    // packages/cli imports this subpath at CLI startup precisely because it is
+    // dependency-free (see that package's architecture/chunk-graph guards).
+    const source = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "constants.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\b(?:import|require)\b/);
   });
 });

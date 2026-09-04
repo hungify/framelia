@@ -43,6 +43,10 @@ let dashboardServerModulePromise: Promise<DashboardServerModule> | undefined;
 
 function loadDashboardServer(): Promise<DashboardServerModule> {
   dashboardServerModulePromise ??= import("@framelia/dashboard-server").catch((error: unknown) => {
+    // Reset the memo on failure so a transient/environment issue (not just a genuinely
+    // missing peer dep) doesn't wedge every later call in this process into the same
+    // rejected promise forever -- the next loadDashboardServer() call gets a fresh attempt.
+    dashboardServerModulePromise = undefined;
     throw new Error(
       'FrameliaReporter requires the optional peer dependency "@framelia/dashboard-server" -- ' +
         "install it in your project to use the reporter.",
@@ -135,7 +139,15 @@ export default class FrameliaReporter implements Reporter {
       record();
       return;
     }
-    this.#pending.push((this.#ready ?? Promise.resolve()).then(record).catch(() => {}));
+    this.#pending.push(
+      (this.#ready ?? Promise.resolve())
+        .then(record)
+        .catch((error: unknown) =>
+          console.error(
+            `framelia reporter: failed to record result for ${sanitizeTestId(test)}: ${String(error)}`,
+          ),
+        ),
+    );
   }
 
   async onEnd(_result: FullResult): Promise<void> {

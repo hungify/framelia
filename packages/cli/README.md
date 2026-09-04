@@ -58,7 +58,7 @@ your own Playwright test and in whatever contract you author separately.
 import { defineConfig } from "framelia";
 
 export default defineConfig({
-  // envFile: ".env.playwright",
+  // envFile: ".env.e2e",
   // storageStatePath: ".framelia/auth/user.json",
   // Project-wide capture defaults:
   // stabilitySamples: 3,

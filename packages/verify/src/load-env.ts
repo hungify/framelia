@@ -9,13 +9,18 @@ const DEFAULT_ENV_FILES = [".env.local", ".env"] as const;
 
 export interface LoadProjectEnvOptions {
   files?: string[];
+  /** Where parsed keys land; defaults to this process's own environment. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export function loadProjectEnv(
   projectRoot: string = process.cwd(),
   options?: LoadProjectEnvOptions,
 ): string[] {
-  return loadEnvFiles(projectRoot, options?.files ?? [...DEFAULT_ENV_FILES], { required: false });
+  return loadEnvFiles(projectRoot, options?.files ?? [...DEFAULT_ENV_FILES], {
+    required: false,
+    ...(options?.env ? { env: options.env } : {}),
+  });
 }
 
 /**
@@ -40,11 +45,12 @@ export function assertProjectRelativePath(root: string, value: string, label: st
 export function loadEnvFiles(
   projectRoot: string,
   envFile: string | string[],
-  options?: { required?: boolean },
+  options?: { required?: boolean; env?: NodeJS.ProcessEnv },
 ): string[] {
   const root = path.resolve(projectRoot);
   const names = Array.isArray(envFile) ? envFile : [envFile];
   const required = options?.required ?? true;
+  const env = options?.env ?? process.env;
   const loaded: string[] = [];
 
   for (const name of names) {
@@ -63,7 +69,7 @@ export function loadEnvFiles(
     if (realFile !== realRoot && !realFile.startsWith(`${realRoot}${path.sep}`)) {
       throw new AppError("PATH_ESCAPES_PROJECT_ROOT", `envFile escapes project root: ${name}`);
     }
-    applyEnvFile(file);
+    applyEnvFile(file, env);
     loaded.push(file);
   }
   return loaded;
@@ -75,7 +81,7 @@ export function loadEnvFiles(
  * a file and writes process.env itself, bypassing this module's own
  * key-name filter and "don't overwrite an already-set key" precedence.
  */
-function applyEnvFile(file: string): void {
+function applyEnvFile(file: string, env: NodeJS.ProcessEnv): void {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
@@ -85,7 +91,7 @@ function applyEnvFile(file: string): void {
   const parsed = parseDotenv(text);
   for (const [key, val] of Object.entries(parsed)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    if (process.env[key] !== undefined) continue;
-    process.env[key] = val;
+    if (env[key] !== undefined) continue;
+    env[key] = val;
   }
 }

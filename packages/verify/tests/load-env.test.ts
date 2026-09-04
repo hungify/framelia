@@ -37,12 +37,12 @@ describe("loadProjectEnv", () => {
   it("lets callers override which env basenames are loaded", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fidelity-env-custom-"));
     fs.writeFileSync(path.join(root, ".env"), "FRAMELIA_LOAD_ENV_TEST=default\n");
-    fs.writeFileSync(path.join(root, ".env.playwright"), "FRAMELIA_LOAD_ENV_TEST=playwright\n");
+    fs.writeFileSync(path.join(root, ".env.e2e"), "FRAMELIA_LOAD_ENV_TEST=playwright\n");
 
     delete process.env.FRAMELIA_LOAD_ENV_TEST;
-    const loaded = loadProjectEnv(root, { files: [".env.playwright"] });
+    const loaded = loadProjectEnv(root, { files: [".env.e2e"] });
 
-    expect(loaded).toEqual([path.join(root, ".env.playwright")]);
+    expect(loaded).toEqual([path.join(root, ".env.e2e")]);
     expect(process.env.FRAMELIA_LOAD_ENV_TEST).toBe("playwright");
     fs.rmSync(root, { recursive: true, force: true });
   });
@@ -58,12 +58,12 @@ describe("loadProjectEnv", () => {
 describe("loadEnvFiles", () => {
   it("loads project-relative custom env files without overwriting existing keys", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fidelity-env-files-"));
-    fs.writeFileSync(path.join(root, ".env.playwright"), "FRAMELIA_LOAD_ENV_TEST=custom\n");
+    fs.writeFileSync(path.join(root, ".env.e2e"), "FRAMELIA_LOAD_ENV_TEST=custom\n");
 
     process.env.FRAMELIA_LOAD_ENV_TEST = "preset";
-    const loaded = loadEnvFiles(root, ".env.playwright");
+    const loaded = loadEnvFiles(root, ".env.e2e");
 
-    expect(loaded).toEqual([path.join(root, ".env.playwright")]);
+    expect(loaded).toEqual([path.join(root, ".env.e2e")]);
     expect(process.env.FRAMELIA_LOAD_ENV_TEST).toBe("preset");
     fs.rmSync(root, { recursive: true, force: true });
   });

@@ -57,19 +57,19 @@
     "@framelia/contracts": "workspace:*",
     "@framelia/dashboard-server": "workspace:*",
     "@framelia/verify": "workspace:*",
-    "commander": "^15.0.0",
+    "@stricli/core": "^1.3.0",
     "nanoid": "3.3.16",
     "open": "^11.0.0",
     "picocolors": "^1.1.1",
     "playwright": "^1.61.1",
-    "tsx": "^4.22.4"
+    "tsx": "^4.22.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "26.0.1",
     "tsup": "^8.5.1",
     "typescript": "6.0.3",
-    "vitest": "^4.1.10",
-    "zod": "^4.4.3"
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=22.13"

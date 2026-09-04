@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { contractDefaultsSchema, type ContractDefaults } from "@framelia/contracts";
+import { captureDefaultsSchema, type CaptureDefaults } from "@framelia/contracts";
 import { assertProjectRelativePath, loadEnvFiles } from "@framelia/verify";
 
-export interface FrameliaConfig extends ContractDefaults {
+export interface FrameliaConfig extends CaptureDefaults {
   storageStatePath?: string;
   envFile?: string | string[];
 }
@@ -15,7 +15,6 @@ export interface ResolvedFrameliaConfig extends FrameliaConfig {
   resolvedStorageStatePath?: string;
 }
 
-/** Canonical config filenames — the one place this list is declared. */
 export const CONFIG_FILE_NAMES = [
   "framelia.config.ts",
   "framelia.config.mts",
@@ -37,16 +36,9 @@ export function assertSingleConfigFile(matches: string[]): void {
   }
 }
 
-/** Derived from the schema, not hand-listed — stays in sync with ContractDefaults by construction. */
-const CONTRACT_DEFAULT_KEYS = contractDefaultsSchema.keyof().options;
+const CONTRACT_DEFAULT_KEYS = captureDefaultsSchema.keyof().options;
 
 const KNOWN_KEYS = new Set<string>(["storageStatePath", "envFile", ...CONTRACT_DEFAULT_KEYS]);
-// Still screen-specific — belongs in visual-contract.json, never framelia.config.
-// Hand-maintained, not derived: these names span the request/contract/baseline
-// schemas plus capture options that aren't unified under one Zod object (see
-// verify/capture/types.ts's ReadyCaptureSpec doc comment), so there's no single
-// schema to call .keyof() on the way CONTRACT_DEFAULT_KEYS does above. Keep this
-// list in sync by hand when the visual-contract.json shape changes.
 const SCREEN_SPECIFIC_KEYS = new Set([
   "target",
   "route",
@@ -86,14 +78,14 @@ function normalizeEnvFile(value: unknown, root: string): string | string[] | und
   throw new Error("framelia.config envFile must be a string or string array.");
 }
 
-function normalizeContractDefaults(config: Record<string, unknown>): ContractDefaults {
+function normalizeContractDefaults(config: Record<string, unknown>): CaptureDefaults {
   const present = Object.fromEntries(
     CONTRACT_DEFAULT_KEYS.filter((key) => config[key] !== undefined).map((key) => [
       key,
       config[key],
     ]),
   );
-  const result = contractDefaultsSchema.safeParse(present);
+  const result = captureDefaultsSchema.safeParse(present);
   if (!result.success) {
     throw new Error(
       `framelia.config: ${result.error.issues
@@ -106,7 +98,10 @@ function normalizeContractDefaults(config: Record<string, unknown>): ContractDef
   return result.data;
 }
 
-export async function loadFrameliaConfig(projectRoot: string): Promise<ResolvedFrameliaConfig> {
+export async function loadFrameliaConfig(
+  projectRoot: string,
+  options?: { env?: NodeJS.ProcessEnv },
+): Promise<ResolvedFrameliaConfig> {
   const root = path.resolve(projectRoot);
   const matches = findConfigFiles(root);
   if (matches.length === 0) return {};
@@ -135,7 +130,7 @@ export async function loadFrameliaConfig(projectRoot: string): Promise<ResolvedF
   }
 
   const envFile = normalizeEnvFile(config.envFile, root);
-  if (envFile) loadEnvFiles(root, envFile);
+  if (envFile) loadEnvFiles(root, envFile, options?.env ? { env: options.env } : undefined);
   const defaults = normalizeContractDefaults(config);
 
   const storageStatePath = config.storageStatePath;

@@ -9,7 +9,8 @@ import {
   type StyleCheckPoint,
   type VerificationRequest,
 } from "@framelia/contracts";
-import { JSON_INDENT_SPACES } from "@framelia/verify";
+
+import { JSON_INDENT_SPACES, UsageError } from "../exit.ts";
 
 export interface ContractAnswers {
   targetUrl: string;
@@ -48,8 +49,6 @@ export function createContractRequest(answers: ContractAnswers): VerificationReq
 
 export type WriteContractRequestOutcome = "created" | "added" | "replaced";
 
-/** A file that fails to parse or validate is unreadable, not "zero contracts to merge with" --
- *  writeContractRequest still requires --force to touch it either way. */
 function readExistingRequest(resolved: string): VerificationRequest | null {
   try {
     return verificationRequestSchema.parse(JSON.parse(fs.readFileSync(resolved, "utf8")));
@@ -58,12 +57,6 @@ function readExistingRequest(resolved: string): VerificationRequest | null {
   }
 }
 
-/**
- * Merges one contract into an existing multi-contract file instead of overwriting it.
- * Adding a new id needs no `--force`; replacing one that's already there still does.
- * A target.url mismatch always errors, `--force` or not -- one file has exactly one
- * target.url (see verificationRequestSchema).
- */
 function mergeContractRequest(
   resolved: string,
   existing: VerificationRequest,
@@ -74,12 +67,12 @@ function mergeContractRequest(
   const existingIndex = existing.contracts.findIndex((contract) => contract.id === newContract.id);
 
   if (existing.target.url !== request.target.url) {
-    throw new Error(
+    throw new UsageError(
       `${resolved} already targets ${existing.target.url}; every contract in one file shares a single target.url (got ${request.target.url}). Pass --output to write a separate file instead.`,
     );
   }
   if (existingIndex !== -1 && !force) {
-    throw new Error(
+    throw new UsageError(
       `Refusing to replace existing contract "${newContract.id}" in ${resolved}. Pass --force to replace it.`,
     );
   }
@@ -115,7 +108,7 @@ export function writeContractRequest(
   if (fileExists) {
     if (!existing) {
       if (!force) {
-        throw new Error(
+        throw new UsageError(
           `Refusing to overwrite existing file: ${resolved}. Pass --force to replace it.`,
         );
       }

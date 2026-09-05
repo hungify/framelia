@@ -17,11 +17,13 @@ import {
   sizeGapIssue,
   ssimIssue,
 } from "./issues.ts";
+import { buildMaskBitmap } from "./mask.ts";
 import {
   clusterFails,
   countRealDiffPixels,
   diffBoundingBox,
-  largestRealDiffCluster,
+  diffClusters,
+  largestCluster,
   pixelCompare,
 } from "./pixel.ts";
 import { detectBorderColor, padTo, readPng, writePng } from "./png.ts";
@@ -61,7 +63,23 @@ function skippedOutcome(input: {
     topIssues: input.topIssues,
     warnings: input.warnings,
     diffPath: null,
+    diffClusters: [],
   };
+}
+
+/**
+ * Drops explicitly-`undefined` keys before merging overrides onto a profile's defaults.
+ * An override object built from optional variables (e.g. `{ minMatch: maybeUndefined }`)
+ * can carry a present-but-`undefined` key; a plain spread would let that `undefined`
+ * clobber the resolved default (comparisons against `undefined` are always false, so
+ * `minMatch: undefined` silently fails the match-ratio check with no diagnostic).
+ * `null` is preserved -- it's a legitimate value (`maxDiffPixels: null` means no cap).
+ */
+function definedOverrides<T extends object>(overrides: T | undefined): Partial<T> {
+  if (!overrides) return {};
+  return Object.fromEntries(
+    Object.entries(overrides).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
 }
 
 export function compare(
@@ -70,7 +88,7 @@ export function compare(
   outDir: string,
   options: CompareOptions,
 ): CompareOutcome {
-  const profile = getProfile(options.profile);
+  const profile = { ...getProfile(options.profile), ...definedOverrides(options.profileOverrides) };
 
   let baseline: PNG;
   let actual: PNG;
@@ -122,14 +140,21 @@ export function compare(
   const baselineAligned = padTo(baseline, width, height, fillColor);
   const actualAligned = padTo(actual, width, height, fillColor);
 
-  const pixel = pixelCompare(baselineAligned, actualAligned, PIXEL_THRESHOLD, false);
+  const maskBitmap = options.maskBounds?.length
+    ? buildMaskBitmap(width, height, options.maskBounds)
+    : null;
+
+  const pixel = pixelCompare(baselineAligned, actualAligned, PIXEL_THRESHOLD, false, maskBitmap);
   const diffPath = path.join(outDir, RUN_ARTIFACT.diff);
   writePng(diffPath, pixel.diff);
 
-  const ssim = ssimCompare(baselineAligned, actualAligned);
+  const ssim = ssimCompare(baselineAligned, actualAligned, maskBitmap);
 
   const bbox = diffBoundingBox(pixel.diff);
-  const avgDeltaE = bbox ? avgDeltaE2000(baselineAligned, actualAligned, bbox) : 0;
+  const avgDeltaE = bbox
+    ? avgDeltaE2000(baselineAligned, actualAligned, bbox, undefined, maskBitmap)
+    : 0;
+  const clusters = diffClusters(pixel.diff);
 
   const clusterOn = options.clusterCheck ?? profile.cluster;
   const clusterFail =
@@ -155,7 +180,7 @@ export function compare(
   const residual = residualSignal({
     pass,
     realDiffs: countRealDiffPixels(pixel.diff),
-    largestCluster: largestRealDiffCluster(pixel.diff),
+    largestCluster: largestCluster(clusters),
     residualBox: bbox,
   });
   if (residual.warning) warnings.push(residual.warning);
@@ -176,5 +201,6 @@ export function compare(
     topIssues,
     warnings,
     diffPath,
+    diffClusters: clusters,
   };
 }

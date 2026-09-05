@@ -1,4 +1,4 @@
-import type { BaselineSource, VisualMask, WebTarget } from "@framelia/contracts";
+import type { BaselineSource, ProfileOverrides, VisualMask, WebTarget } from "@framelia/contracts";
 
 import type { ExpectSize, ProfileName } from "../types.ts";
 import type { SCHEMA_VERSION } from "../types.ts";
@@ -19,6 +19,14 @@ export interface DoneGateViewport {
   pageReason?: string;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
+  /** Per-contract threshold overrides the original Playwright comparison must have run with. */
+  profileOverrides?: ProfileOverrides;
+  /** Explicit override of gate eligibility; unset falls back to the resolved profile's own
+   *  default -- see done-gate/validate.ts and profiles.ts's Profile.gateEligible. */
+  gateEligible?: boolean;
+  /** Explicit override of style-gate eligibility; unset falls back to the resolved profile's
+   *  own default -- see done-gate/validate.ts and profiles.ts's Profile.styleGateEligible. */
+  styleGateEligible?: boolean;
 }
 
 export interface DoneGateOptions {

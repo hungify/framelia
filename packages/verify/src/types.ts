@@ -2,14 +2,26 @@ import {
   SCHEMA_VERSION,
   type ContractDefaults,
   type ProfileName,
+  type ProfileOverrides,
   type RunType,
   type Stability,
+  type StyleToleranceOverrides,
 } from "@framelia/contracts";
 
-import type { MaskEvidence } from "./capture/types.ts";
+import type { MaskBounds, MaskEvidence } from "./capture/types.ts";
+import type { DiffCluster } from "./compare/pixel.ts";
+import type { StyleSnapshot } from "./figma-node-style.ts";
 
 export { SCHEMA_VERSION };
-export type { ContractDefaults, ProfileName, RunType, Stability };
+export type {
+  ContractDefaults,
+  ProfileName,
+  ProfileOverrides,
+  RunType,
+  Stability,
+  StyleToleranceOverrides,
+};
+export type { MaskBounds, MaskEvidence };
 
 export class AppError extends Error {
   readonly code: string;
@@ -56,9 +68,11 @@ export type TopIssueKind =
   | "cluster"
   | "style-typography"
   | "style-color"
+  | "style-check-error"
   | "baseline-stability"
   | "capture-stability"
-  | "residual";
+  | "residual"
+  | "pixel-attribution";
 
 export type TopIssueSeverity = "high" | "medium" | "low";
 
@@ -67,6 +81,9 @@ export interface TopIssue {
   kind: TopIssueKind;
   message: string;
   hint?: string;
+  /** Which page-scope check-point selector this issue came from; unset for region-scope
+   *  and non-style issues, which have exactly one origin per matcher call. */
+  selector?: string;
   /**
    * true: message names one concrete property/value an agent can set (an
    * expectSize/expectStyle mismatch with an explicit expected value).
@@ -124,6 +141,14 @@ export interface CompareOptions {
   profile: ProfileName;
   expectSize?: ExpectSize;
   clusterCheck?: boolean;
+  /** Per-contract author override of specific threshold fields; unset fields keep the resolved profile's own value. */
+  profileOverrides?: ProfileOverrides;
+  /**
+   * Pixel regions (in the aligned comparison canvas's coordinate space) excluded from
+   * matchRatio, SSIM, avgDeltaE, diffPixels, and the cluster-grid denominators.
+   * areaGap is computed from the raw baseline/actual sizes before masking and is unaffected.
+   */
+  maskBounds?: MaskBounds[];
 }
 
 export interface CompareOutcome {
@@ -141,9 +166,16 @@ export interface CompareOutcome {
   topIssues: TopIssue[];
   warnings: string[];
   diffPath: string | null;
+  /** Every 4-connected real-diff region, in the aligned comparison canvas's coordinate
+   *  space -- lets a caller (e.g. toMatchFigma) attribute regions to style-check
+   *  selectors via compare/attribution.ts's attributeDiffRegions. Empty on the
+   *  early-exit paths (size mismatch, unreadable PNG) where no diff was ever computed. */
+  diffClusters: DiffCluster[];
 }
 
 export interface ResolvedBaseline {
   evidence: BaselineEvidence;
   warnings: string[];
+  /** Only set on a fresh Figma fetch (see FigmaBaselineProvider) -- undefined for a cached-baseline fallback. */
+  figmaStyle?: StyleSnapshot;
 }

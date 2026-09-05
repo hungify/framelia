@@ -123,6 +123,20 @@ color) into the contract from the Figma node at authoring time.
 }
 ```
 
+A page contract can also declare one or more `styleChecks` — CSS selectors inside the page, each
+paired with its own Figma node (distinct from the page's own baseline node), for comparing
+individual elements' style. `contract create` offers to add these interactively when scope is
+`page` (or accepts one via `--style-check-selector`/`--style-check-node-id` non-interactively);
+each check-point's `expectStyle` is best-effort baked in the same way region scope's is.
+
+```json
+{
+  "kind": "page",
+  "pageReason": "Supplied node represents complete login screen.",
+  "styleChecks": [{ "selector": "[data-testid='login-form']", "nodeId": "200:10" }]
+}
+```
+
 Print the live JSON Schema for either shape:
 
 ```bash

@@ -7,7 +7,13 @@ export interface Bbox {
   y1: number;
 }
 
-export function avgDeltaE2000(baseline: PNG, actual: PNG, bbox: Bbox, maxPixels = 100_000): number {
+export function avgDeltaE2000(
+  baseline: PNG,
+  actual: PNG,
+  bbox: Bbox,
+  maxPixels = 100_000,
+  maskBitmap: Uint8Array | null = null,
+): number {
   if (baseline.width !== actual.width || baseline.height !== actual.height) {
     throw new Error(
       `avgDeltaE2000 requires equal dimensions: baseline ${baseline.width}x${baseline.height}, actual ${actual.width}x${actual.height}`,
@@ -21,6 +27,10 @@ export function avgDeltaE2000(baseline: PNG, actual: PNG, bbox: Bbox, maxPixels 
   let count = 0;
   for (let y = y0; y < y1; y += stride) {
     for (let x = x0; x < x1; x += stride) {
+      // The diff bbox is computed from the real (non-masked) diff pixels, but
+      // can still span across a masked region when a real diff exists on both
+      // sides of it — skip masked pixels here too, not just at the bbox edges.
+      if (maskBitmap?.[baseline.width * y + x]) continue;
       const i = (baseline.width * y + x) << 2;
       const lab1 = rgbToLab(
         baseline.data[i] as number,
@@ -37,6 +47,27 @@ export function avgDeltaE2000(baseline: PNG, actual: PNG, bbox: Bbox, maxPixels 
     }
   }
   return count === 0 ? 0 : sum / count;
+}
+
+/**
+ * Perceptual (CIEDE2000) distance between two `#rrggbbaa` hex colors, as produced by
+ * StyleSnapshot / captureElementStyle -- the alpha channel is ignored since Lab distance
+ * is a color-only metric. Reuses the same rgbToLab/ciede2000 math as avgDeltaE2000's
+ * per-pixel image comparison, just fed a single parsed color pair instead of a bitmap.
+ */
+export function hexColorDeltaE(hexA: string, hexB: string): number {
+  const [r1, g1, b1] = parseHexRgb(hexA);
+  const [r2, g2, b2] = parseHexRgb(hexB);
+  return ciede2000(rgbToLab(r1, g1, b1), rgbToLab(r2, g2, b2));
+}
+
+function parseHexRgb(hex: string): [number, number, number] {
+  const value = hex.startsWith("#") ? hex.slice(1) : hex;
+  return [
+    Number.parseInt(value.slice(0, 2), 16),
+    Number.parseInt(value.slice(2, 4), 16),
+    Number.parseInt(value.slice(4, 6), 16),
+  ];
 }
 
 type Lab = [number, number, number];

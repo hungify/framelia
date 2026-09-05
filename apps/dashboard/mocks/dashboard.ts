@@ -79,8 +79,50 @@ const contracts: DashboardContractResult[] = [
       avgDeltaE: 2.31,
       sizeMatch: true,
     },
+    resolvedThreshold: {
+      name: "page",
+      minMatch: 0.99,
+      maxDiffPixels: null,
+      minSSIM: 0.97,
+      maxAvgDeltaE: 4.0,
+      maxAreaGapPercent: 5,
+      cluster: true,
+      stabilityMaxDiffRatio: 0.002,
+    },
     blockers: [
       { code: "visual-diff", message: "Residual difference exceeds configured threshold." },
+    ],
+    // Two check-points (#26) on this page-scope contract, so ContractDetails.vue's style
+    // mismatch section renders them as distinct selector-labeled groups (#28) instead of
+    // one undifferentiated list.
+    topIssues: [
+      {
+        severity: "low",
+        kind: "style-color",
+        message: "style mismatch on color: expected #202328ff, actual #23262bff",
+        hint: "Check the rendered element's CSS against the Figma node's style.",
+        repairCandidate: true,
+        blocking: false,
+        selector: "header",
+      },
+      {
+        severity: "low",
+        kind: "style-typography",
+        message: "style mismatch on font-size: expected 28px, actual 26px",
+        hint: "Check the rendered element's CSS against the Figma node's style.",
+        repairCandidate: true,
+        blocking: false,
+        selector: '[data-testid="checkout-summary"]',
+      },
+      {
+        severity: "low",
+        kind: "style-color",
+        message: "style mismatch on background-color: expected #4979d1ff, actual #4a7ad2ff",
+        hint: "Check the rendered element's CSS against the Figma node's style.",
+        repairCandidate: true,
+        blocking: false,
+        selector: '[data-testid="checkout-summary"]',
+      },
     ],
     evidenceHash: `sha256:${"b".repeat(64)}`,
   },
@@ -116,7 +158,29 @@ const contracts: DashboardContractResult[] = [
       avgDeltaE: 0.42,
       sizeMatch: true,
     },
+    resolvedThreshold: {
+      name: "component/strict",
+      minMatch: 0.995,
+      maxDiffPixels: 500,
+      minSSIM: 0.985,
+      maxAvgDeltaE: 3.0,
+      maxAreaGapPercent: 2,
+      cluster: false,
+      stabilityMaxDiffRatio: 0.002,
+    },
     blockers: [],
+    // Region-scope contract: no check-point selector, so this renders as the original
+    // single unlabeled list (unchanged from before #28).
+    topIssues: [
+      {
+        severity: "low",
+        kind: "style-color",
+        message: "style mismatch on color: expected #202328ff, actual #23262bff",
+        hint: "Check the rendered element's CSS against the Figma node's style.",
+        repairCandidate: true,
+        blocking: false,
+      },
+    ],
     evidenceHash: `sha256:${"a".repeat(64)}`,
   },
   {

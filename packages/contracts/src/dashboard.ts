@@ -1,9 +1,11 @@
 import type * as z from "zod";
 
+import type { ProfileName } from "./contract.ts";
 import type {
   CaptureEvidenceArtifact,
   captureEvidenceSchema,
   captureMaskEvidenceSchema,
+  topIssueSchema,
   visualDiagnosticSchema,
 } from "./score.ts";
 
@@ -24,8 +26,29 @@ export interface DashboardImageEvidence {
   height?: number;
 }
 
+/**
+ * The concrete threshold values a comparison actually ran against -- structurally identical
+ * to @framelia/verify's Profile, duplicated here (not imported) because this package sits
+ * below @framelia/verify in the dependency graph (contracts has no workspace deps of its
+ * own). Callers on the verify/playwright/dashboard-server side pass a Profile value straight
+ * through; it satisfies this type structurally.
+ */
+export interface DashboardResolvedThreshold {
+  name: ProfileName;
+  minMatch: number;
+  maxDiffPixels: number | null;
+  minSSIM: number;
+  maxAvgDeltaE: number;
+  maxAreaGapPercent: number;
+  cluster: boolean;
+  stabilityMaxDiffRatio: number;
+}
+
 /** Same shape score.ts's visualDiagnosticSchema validates in visual-score.json's diagnostics. */
 export type DashboardDiagnostic = z.infer<typeof visualDiagnosticSchema>;
+
+/** Same shape score.ts's topIssueSchema validates in visual-score.json's topIssues. */
+export type DashboardTopIssue = z.infer<typeof topIssueSchema>;
 
 /** Same shape capture writes into visual-score.json's maskEvidence field. */
 export type DashboardMaskEvidence = z.infer<typeof captureMaskEvidenceSchema>;
@@ -50,7 +73,15 @@ export interface DashboardContractResult {
   status: DashboardVerdict;
   phase: DashboardPhase;
   baselineKind: "figma" | "page";
-  baseline?: DashboardImageEvidence & { revision?: string; provenance: string };
+  baseline?: DashboardImageEvidence & {
+    revision?: string;
+    provenance: string;
+    /** Set only for a toMatchPageBaseline result -- who/when/from-what-run accepted
+     *  this baseline via `framelia baseline promote` (see #41). */
+    promotedAt?: string;
+    promotedBy?: string;
+    runId?: string;
+  };
   actual?: DashboardImageEvidence & { url: string };
   diff?: DashboardImageEvidence;
   capture: {
@@ -77,8 +108,19 @@ export interface DashboardContractResult {
   blockers: Array<{ code: string; message: string }>;
   /** Evidence caveats; blocking diagnostics cannot be projected as passed. */
   diagnostics?: DashboardDiagnostic[];
+  /** Field-level mismatches vs. the Figma baseline's style (color, typography, spacing,
+   * corner radius) -- never affects `status` (the live dashboard verdict). May still block
+   * the separate CI done-gate when `styleGateEligible` is true. See compareStyles() in
+   * @framelia/verify. */
+  topIssues?: DashboardTopIssue[];
+  /** This contract's resolved style-gate eligibility (explicit override or profile default,
+   * see @framelia/verify's resolveStyleGateEligible) -- lets the dashboard show whether style
+   * mismatches above are informational-only or enforced at the CI merge gate. */
+  styleGateEligible?: boolean;
   maskEvidence?: DashboardMaskEvidence;
   captureEvidence?: DashboardCaptureEvidence;
+  /** Set whenever the comparison resolved a profile (i.e. a score attachment/artifact exists). */
+  resolvedThreshold?: DashboardResolvedThreshold;
   evidenceHash?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -348,8 +390,11 @@ export interface ContractResultAssemblyInput {
   comparison?: DashboardContractResult["comparison"];
   maskEvidence?: DashboardMaskEvidence;
   captureEvidence?: DashboardCaptureEvidence;
+  resolvedThreshold?: DashboardResolvedThreshold;
   blockers: Array<{ code: string; message: string }>;
   diagnostics: DashboardDiagnostic[];
+  topIssues: DashboardTopIssue[];
+  styleGateEligible?: boolean;
   evidenceHash?: string;
   finishedAt: string;
 }
@@ -378,8 +423,13 @@ export function assembleContractResult(
     ...(input.comparison ? { comparison: input.comparison } : {}),
     ...(input.maskEvidence ? { maskEvidence: input.maskEvidence } : {}),
     ...(input.captureEvidence ? { captureEvidence: input.captureEvidence } : {}),
+    ...(input.resolvedThreshold ? { resolvedThreshold: input.resolvedThreshold } : {}),
     blockers: input.blockers,
     ...(input.diagnostics.length ? { diagnostics: input.diagnostics } : {}),
+    ...(input.topIssues.length ? { topIssues: input.topIssues } : {}),
+    ...(input.styleGateEligible !== undefined
+      ? { styleGateEligible: input.styleGateEligible }
+      : {}),
     ...(input.evidenceHash ? { evidenceHash: input.evidenceHash } : {}),
     finishedAt: input.finishedAt,
   };

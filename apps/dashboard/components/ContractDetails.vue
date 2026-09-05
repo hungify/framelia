@@ -2,6 +2,12 @@
 import type { DashboardContractResult } from "@framelia/contracts";
 import { computed } from "vue";
 
+import {
+  groupPixelAttributions,
+  groupStyleMismatches,
+  hasEvidenceNotes,
+  styleMismatchGateLabel,
+} from "../lib/contract-evidence";
 import { formatRatio } from "../lib/format";
 import StatusBadge from "./StatusBadge.vue";
 
@@ -42,6 +48,12 @@ const fontStatusLabel = computed(() => {
   return fonts.failed.length ? `${label} · ${fonts.failed.join(", ")}` : label;
 });
 
+const styleMismatchGroups = computed(() => groupStyleMismatches(props.contract.topIssues));
+
+const styleMismatchLabel = computed(() => styleMismatchGateLabel(props.contract.styleGateEligible));
+
+const pixelAttributionGroups = computed(() => groupPixelAttributions(props.contract.topIssues));
+
 const actionsSummary = computed(() => {
   const actions = props.contract.captureEvidence?.actions ?? [];
   if (!actions.length) return "none";
@@ -49,6 +61,20 @@ const actionsSummary = computed(() => {
   const failed = actions.filter((action) => action.status === "failed").length;
   const attempts = actions.reduce((total, action) => total + action.attempts, 0);
   return `${passed} passed / ${failed} failed / ${attempts} attempts`;
+});
+
+const resolvedThresholdTooltip = computed(() => {
+  const threshold = props.contract.resolvedThreshold;
+  if (!threshold) return "";
+  return [
+    `profile: ${threshold.name}`,
+    `minMatch: ${threshold.minMatch}`,
+    `minSSIM: ${threshold.minSSIM}`,
+    `maxAvgDeltaE: ${threshold.maxAvgDeltaE}`,
+    `maxDiffPixels: ${threshold.maxDiffPixels ?? "unbounded"}`,
+    `maxAreaGapPercent: ${threshold.maxAreaGapPercent}`,
+    `cluster: ${threshold.cluster}`,
+  ].join("\n");
 });
 </script>
 
@@ -110,6 +136,37 @@ const actionsSummary = computed(() => {
         </dd>
       </div>
     </dl>
+    <div
+      v-if="contract.resolvedThreshold"
+      class="mx-3.5 mb-3 border-t border-line-soft pt-3"
+      data-testid="resolved-threshold"
+    >
+      <span class="block text-muted text-xs"
+        >Resolved threshold — {{ contract.resolvedThreshold.name }}</span
+      >
+      <div class="mt-1.5 flex flex-wrap gap-1.5" :title="resolvedThresholdTooltip">
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >match ≥ {{ formatRatio(contract.resolvedThreshold.minMatch) }}</UBadge
+        >
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >SSIM ≥ {{ formatRatio(contract.resolvedThreshold.minSSIM) }}</UBadge
+        >
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >ΔE ≤ {{ contract.resolvedThreshold.maxAvgDeltaE.toFixed(2) }}</UBadge
+        >
+        <UBadge variant="subtle" color="neutral" size="sm" class="font-mono! text-xs!"
+          >px ≤
+          {{ contract.resolvedThreshold.maxDiffPixels?.toLocaleString() ?? "unbounded" }}</UBadge
+        >
+        <UBadge
+          variant="subtle"
+          :color="contract.resolvedThreshold.cluster ? 'info' : 'neutral'"
+          size="sm"
+          class="font-mono! text-xs!"
+          >cluster {{ contract.resolvedThreshold.cluster ? "on" : "off" }}</UBadge
+        >
+      </div>
+    </div>
     <div v-if="contract.capture.target" class="mx-3.5 mb-3 border-t border-line-soft pt-3">
       <span class="block text-muted text-xs">Region / selector evidence</span>
       <div class="mt-1.5 overflow-x-auto">
@@ -158,10 +215,7 @@ const actionsSummary = computed(() => {
     </div>
     <div
       v-if="
-        contract.blockers.length ||
-        contract.diagnostics?.length ||
-        contract.baseline?.provenance ||
-        contract.evidenceHash
+        hasEvidenceNotes(contract) || styleMismatchGroups.length || pixelAttributionGroups.length
       "
       class="flex flex-col gap-2.5 mx-3.5 mt-1 pt-3 border-t border-line-soft"
     >
@@ -191,11 +245,60 @@ const actionsSummary = computed(() => {
           </li>
         </ul>
       </div>
+      <div v-if="styleMismatchGroups.length" class="min-w-0" data-testid="style-mismatches">
+        <span class="block text-muted text-xs" data-testid="style-mismatch-gate-label">{{
+          styleMismatchLabel
+        }}</span>
+        <template
+          v-for="group in styleMismatchGroups"
+          :key="group.selector !== null ? `selector:${group.selector}` : 'unscoped'"
+        >
+          <code
+            v-if="group.selector"
+            class="block mt-1.5 text-amber text-xs font-mono"
+            data-testid="style-mismatch-group-selector"
+            >{{ group.selector }}</code
+          >
+          <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
+            <li
+              v-for="(issue, index) in group.issues"
+              :key="`${issue.kind}-${index}`"
+              class="min-w-0 text-xs leading-snug"
+            >
+              <code class="text-amber text-xs">{{ issue.kind }}</code>
+              <span class="text-text-soft"> — {{ issue.message }}</span>
+            </li>
+          </ul>
+        </template>
+      </div>
+      <div v-if="pixelAttributionGroups.length" class="min-w-0" data-testid="pixel-attributions">
+        <span class="block text-muted text-xs">Pixel-diff regions attributed to check-points</span>
+        <template
+          v-for="group in pixelAttributionGroups"
+          :key="group.selector !== null ? `selector:${group.selector}` : 'unscoped'"
+        >
+          <code
+            v-if="group.selector"
+            class="block mt-1.5 text-amber text-xs font-mono"
+            data-testid="pixel-attribution-group-selector"
+            >{{ group.selector }}</code
+          >
+          <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
+            <li
+              v-for="(issue, index) in group.issues"
+              :key="`${issue.kind}-${index}`"
+              class="min-w-0 text-xs leading-snug"
+            >
+              <span class="text-text-soft">{{ issue.message }}</span>
+            </li>
+          </ul>
+        </template>
+      </div>
       <div v-if="contract.maskEvidence" class="min-w-0">
         <span class="block text-muted text-xs"
           >Masks — {{ contract.maskEvidence.status }} ·
           {{ contract.maskEvidence.matchedCount }} region(s),
-          {{ (contract.maskEvidence.maskedAreaRatio * 100).toFixed(2) }}% area</span
+          {{ formatRatio(contract.maskEvidence.maskedAreaRatio) }} area</span
         >
         <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
           <li
@@ -225,6 +328,18 @@ const actionsSummary = computed(() => {
         <code
           class="block overflow-hidden text-ellipsis whitespace-nowrap mt-0.75 text-text-soft text-xs"
           >{{ contract.baseline.provenance }}</code
+        >
+      </div>
+      <div v-if="contract.baseline?.promotedAt" class="min-w-0">
+        <span class="block overflow-hidden text-ellipsis whitespace-nowrap text-muted text-xs"
+          >Baseline promoted</span
+        >
+        <code
+          class="block overflow-hidden text-ellipsis whitespace-nowrap mt-0.75 text-text-soft text-xs"
+          >{{ contract.baseline.revision ? `${contract.baseline.revision} ` : "" }}by
+          {{ contract.baseline.promotedBy ?? "unknown" }} at
+          {{ new Date(contract.baseline.promotedAt).toLocaleString()
+          }}{{ contract.baseline.runId ? ` (run ${contract.baseline.runId})` : "" }}</code
         >
       </div>
       <div v-if="contract.evidenceHash" class="min-w-0">

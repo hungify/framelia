@@ -1,6 +1,8 @@
+import { DEFAULT_MAX_MASKED_AREA_RATIO } from "@framelia/contracts";
 import type { VisualMask } from "@framelia/contracts";
 import type { ProfileName } from "@framelia/verify";
 import { compare } from "@framelia/verify";
+import { checkMaskAreaRatio, readPng, unionArea } from "@framelia/verify/internal";
 import type { MatcherReturnType, Page } from "@playwright/test";
 
 import {
@@ -95,7 +97,42 @@ export async function runComparePages(
 
     const aPath = captureA.capturePaths[0]!;
     const bPath = captureB.capturePaths[0]!;
-    const outcome = compare(bPath, aPath, workDir, { profile });
+    // Both sides share the same selector/mask config, but each resolves its own
+    // bounds against its own page -- union them so either side's masked pixels
+    // are excluded from scoring, not just whichever side happened to match first.
+    const maskBounds = [
+      ...(captureA.maskEvidence?.bounds ?? []),
+      ...(captureB.maskEvidence?.bounds ?? []),
+    ];
+    const unionMaskedArea = unionArea(maskBounds);
+    let combinedMaskEvidence = captureA.maskEvidence;
+    if (maskBounds.length) {
+      // Each side already validated its own ratio against its own image, but
+      // the union can still exceed the cap when corresponding masked elements
+      // sit at different positions on the two pages -- check the combined
+      // ratio against the canvas compare() will actually align both images to.
+      const cap = options.maxMaskedAreaRatio ?? DEFAULT_MAX_MASKED_AREA_RATIO;
+      const canvasWidth = Math.max(readPng(aPath).width, readPng(bPath).width);
+      const canvasHeight = Math.max(readPng(aPath).height, readPng(bPath).height);
+      const combinedRatio = unionMaskedArea / (canvasWidth * canvasHeight);
+      const areaReject = checkMaskAreaRatio(combinedRatio, cap);
+      if (areaReject) {
+        return {
+          pass: false,
+          message: () => `${matcherLabel}: combined mask area exceeds cap -- ${areaReject.message}`,
+        };
+      }
+      // Reflect the bounds compare() actually excluded (both sides' union),
+      // not just captureA's own -- captureA.maskEvidence alone would
+      // under-report what scoring ignored.
+      combinedMaskEvidence = captureA.maskEvidence && {
+        ...captureA.maskEvidence,
+        bounds: maskBounds,
+        unionMaskedArea,
+        maskedAreaRatio: combinedRatio,
+      };
+    }
+    const outcome = compare(bPath, aPath, workDir, { profile, maskBounds });
 
     await attachDiffTriplet(context.attach, baseName, {
       expected: bPath,
@@ -112,7 +149,7 @@ export async function runComparePages(
         : { kind: "page", fullPage: options.fullPage ?? false },
       masks: options.masks,
       maxMaskedAreaRatio: options.maxMaskedAreaRatio,
-      captureEvidence: captureA,
+      captureEvidence: { ...captureA, maskEvidence: combinedMaskEvidence },
     });
     await context.attachJson(`${baseName}${SCORE_ATTACHMENT_SUFFIX}`, scoreAttachment);
 

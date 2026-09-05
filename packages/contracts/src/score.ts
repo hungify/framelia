@@ -1,6 +1,7 @@
 import * as z from "zod";
 
 import { SCHEMA_VERSION } from "./constants.ts";
+import { profileSchema } from "./contract.ts";
 import { httpUrlSchema } from "./primitives.ts";
 
 const scoreSizeSchema = z
@@ -109,6 +110,36 @@ export const visualDiagnosticSchema = z
   })
   .strict();
 
+/** Mirrors @framelia/verify's TopIssue -- contracts can't import it (verify depends on
+ * contracts, not the reverse), so this schema restates the same shape independently. */
+export const topIssueSchema = z
+  .object({
+    severity: z.enum(["high", "medium", "low"]),
+    kind: z.enum([
+      "size",
+      "expect-size",
+      "pixel",
+      "ssim",
+      "color",
+      "cluster",
+      "style-typography",
+      "style-color",
+      "style-check-error",
+      "baseline-stability",
+      "capture-stability",
+      "residual",
+      "pixel-attribution",
+    ]),
+    message: z.string().min(1),
+    hint: z.string().optional(),
+    repairCandidate: z.boolean(),
+    blocking: z.boolean(),
+    /** Which page-scope check-point selector this issue came from; absent for
+     *  region-scope and non-style issues. */
+    selector: z.string().optional(),
+  })
+  .strict();
+
 export const visualScoreArtifactSchema = z
   .object({
     schemaVersion: z.literal(SCHEMA_VERSION),
@@ -149,11 +180,21 @@ export const visualScoreArtifactSchema = z
       })
       .loose(),
     diagnostics: z.array(visualDiagnosticSchema).optional(),
+    topIssues: z.array(topIssueSchema).optional(),
     captureEvidence: captureEvidenceSchema.optional().catch(undefined),
     baselineCaptureEvidence: captureEvidenceSchema.optional().catch(undefined),
+    /** The profile/clusterCheck the comparison actually resolved to and ran with (see #4's
+     * resolveFigmaCompareOptions) -- dashboard-server's model.ts reads these back to derive
+     * DashboardContractResult["resolvedThreshold"] without re-deriving the resolution logic. */
+    profile: profileSchema.optional().catch(undefined),
+    clusterCheck: z.boolean().optional().catch(undefined),
+    /** Explicit styleGateEligible override the matcher call was given, if any -- read back by
+     *  dashboard-server's model.ts to resolve DashboardContractResult["styleGateEligible"]. */
+    styleGateEligible: z.boolean().optional().catch(undefined),
   })
   .loose();
 
 export type VisualScoreArtifact = z.infer<typeof visualScoreArtifactSchema>;
 export type CaptureEvidenceArtifact = z.infer<typeof captureEvidenceSchema>;
 export type VisualDiagnostic = z.infer<typeof visualDiagnosticSchema>;
+export type VisualTopIssue = z.infer<typeof topIssueSchema>;

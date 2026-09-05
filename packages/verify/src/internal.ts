@@ -12,6 +12,8 @@ export { avgDeltaE2000 } from "./compare/delta-e.ts";
 export {
   countRealDiffPixels,
   diffBoundingBox,
+  diffClusters,
+  largestCluster,
   largestRealDiffCluster,
   pixelCompare,
 } from "./compare/pixel.ts";
@@ -28,6 +30,8 @@ export { ssimCompare } from "./compare/ssim.ts";
 
 export { resolveSelector } from "./capture/readiness.ts";
 export { captureReadyPage } from "./capture/core.ts";
+export { checkMaskAreaRatio } from "./capture/domain/capture-rules.ts";
+export { unionArea } from "./capture/masks.ts";
 export { settle } from "./capture/settle.ts";
 export { MASK_COLOR } from "./capture/types.ts";
 export type {

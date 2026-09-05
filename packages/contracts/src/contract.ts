@@ -1,7 +1,7 @@
 import * as z from "zod";
 
 import { baselineSchema } from "./baseline.ts";
-import { CONTRACT_ID_PATTERN, MAX_MASK_SELECTORS } from "./constants.ts";
+import { CONTRACT_ID_PATTERN, FIGMA_NODE_ID, MAX_MASK_SELECTORS } from "./constants.ts";
 import { VISUAL_ARTIFACT_DIR_PATTERN, visualArtifactPath } from "./paths.ts";
 import { nonEmptyTrimmed } from "./primitives.ts";
 
@@ -53,10 +53,26 @@ export const expectStyleSchema = z
   })
   .strict();
 
+/**
+ * One page-scope style check-point: an element inside the page identified by a CSS
+ * selector, verified against its own Figma node (necessarily distinct from the page
+ * contract's own baseline node) -- see #27's per-checkpoint style comparison.
+ * `expectStyle` is best-effort baked in from that node at `framelia contract create`
+ * time, the same way region scope's single selector already bakes its own.
+ */
+export const styleCheckPointSchema = z
+  .object({
+    selector: nonEmptyTrimmed,
+    nodeId: z.string().regex(FIGMA_NODE_ID),
+    expectStyle: expectStyleSchema.optional(),
+  })
+  .strict();
+
 export const pageScopeSchema = z
   .object({
     kind: z.literal("page"),
     pageReason: nonEmptyTrimmed,
+    styleChecks: z.array(styleCheckPointSchema).min(1).optional(),
   })
   .strict();
 
@@ -64,7 +80,7 @@ export const regionScopeSchema = z
   .object({
     kind: z.literal("region"),
     selector: nonEmptyTrimmed,
-    expectSize: expectSizeSchema,
+    expectSize: expectSizeSchema.optional(),
     expectStyle: expectStyleSchema.optional(),
   })
   .strict();
@@ -80,6 +96,54 @@ export const contractScopeSchema = z.discriminatedUnion("kind", [
 // ordinary selectors like ".approval-count" or ".appointment-badge" get rejected as false positives.
 const BROAD_MASK_SELECTOR =
   /^(?:html|body|#root|#app|\[data-(?:testid|framelia)[^\]]*\b(?:app|shell)\b[^\]]*\]|\.[\w-]*\b(?:app|shell)\b[\w-]*)(?:\s|>|$)/i;
+
+/**
+ * Practically-overridable subset of verify's Profile: the fields consumed directly by
+ * compare()'s pass/fail computation and its early-exit size-gap check. `cluster` is
+ * deliberately excluded -- it's already a dedicated `clusterCheck` field on this same
+ * contract (see resolveFigmaCompareOptions), and `stabilityMaxDiffRatio` is excluded
+ * because nothing in the compare pipeline currently reads it.
+ */
+export const profileOverridesSchema = z
+  .object({
+    minMatch: z.number().min(0).max(1).optional(),
+    maxDiffPixels: z.number().int().nonnegative().nullable().optional(),
+    minSSIM: z.number().min(0).max(1).optional(),
+    maxAvgDeltaE: z.number().nonnegative().optional(),
+    maxAreaGapPercent: z.number().nonnegative().optional(),
+  })
+  .strict();
+
+/**
+ * Practically-overridable tolerances compareStyles() applies when diffing a region
+ * contract's captured DOM style against its Figma-side StyleSnapshot -- mirrors
+ * profileOverridesSchema's pattern (git-committed, PR-reviewed, no dashboard UI).
+ * Style mismatches stay informational-only (TopIssue.blocking: false) regardless
+ * of this override -- see style-compare.ts.
+ */
+export const styleToleranceOverridesSchema = z
+  .object({
+    /** Perceptual (CIEDE2000) distance a color/backgroundColor pair may differ by before flagging. */
+    maxColorDeltaE: z.number().nonnegative().optional(),
+    /** Pixel epsilon a spacing side may differ by before flagging. */
+    maxSpacingDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon fontSize may differ by before flagging. */
+    maxFontSizeDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon lineHeightPx may differ by before flagging. */
+    maxLineHeightDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon letterSpacingPx may differ by before flagging. */
+    maxLetterSpacingDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon borderWidth may differ by before flagging. */
+    maxBorderWidthDeltaPx: z.number().nonnegative().optional(),
+    /** Pixel epsilon gap (flex/grid) may differ by before flagging. */
+    maxGapDeltaPx: z.number().nonnegative().optional(),
+    /** Epsilon opacity (0-1) may differ by before flagging. */
+    maxOpacityDelta: z.number().nonnegative().optional(),
+    /** Shared pixel epsilon for box-shadow's offsetX/offsetY/blurRadius/spreadRadius before
+     *  flagging; its color component uses maxColorDeltaE like every other color field. */
+    maxBoxShadowDeltaPx: z.number().nonnegative().optional(),
+  })
+  .strict();
 
 export const visualMaskSchema = z
   .object({
@@ -100,6 +164,22 @@ export const verificationContractSchema = z
     outDir: z.string().regex(VISUAL_ARTIFACT_DIR_PATTERN).optional(),
     scope: contractScopeSchema,
     profile: componentProfileSchema.optional(),
+    /** Resolved clusterCheck override compare() ran with -- see resolveFigmaCompareOptions. */
+    clusterCheck: z.boolean().optional(),
+    /** Explicit per-contract threshold overrides, merged on top of the resolved profile's own defaults. */
+    profileOverrides: profileOverridesSchema.optional(),
+    /** Explicit per-contract style-comparison tolerance overrides, merged on top of compareStyles()'s own defaults. */
+    styleToleranceOverrides: styleToleranceOverridesSchema.optional(),
+    /** Explicit override of whether this contract's resolved threshold blocks the CI merge
+     *  gate; unset falls back to the resolved profile's own gateEligible default. Lets a
+     *  deliberately loose custom threshold opt out of gating without naming a "dev" preset,
+     *  and lets an explicitly-loose preset opt back in -- see done-gate/validate.ts. */
+    gateEligible: z.boolean().optional(),
+    /** Explicit override of whether style mismatches (color/typography/etc.) block the CI
+     *  merge gate; unset falls back to the resolved profile's own styleGateEligible default
+     *  (false everywhere by default -- style stays informational-only unless opted in). See
+     *  done-gate/validate.ts. */
+    styleGateEligible: z.boolean().optional(),
     masks: z.array(visualMaskSchema).min(1).max(MAX_MASK_SELECTORS).optional(),
   })
   .strict()
@@ -121,3 +201,6 @@ export type VerificationContract = z.infer<typeof verificationContractSchema>;
 export type ContractScope = z.infer<typeof contractScopeSchema>;
 export type VisualMask = z.infer<typeof visualMaskSchema>;
 export type ExpectStyle = z.infer<typeof expectStyleSchema>;
+export type StyleCheckPoint = z.infer<typeof styleCheckPointSchema>;
+export type ProfileOverrides = z.infer<typeof profileOverridesSchema>;
+export type StyleToleranceOverrides = z.infer<typeof styleToleranceOverridesSchema>;

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { profileOverridesSchema } from "@framelia/contracts";
 import type { PNG } from "pngjs";
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -152,6 +153,30 @@ describe("compare pipeline", () => {
     expect(bad.topIssues.length).toBeGreaterThan(0);
   });
 
+  it("passes despite a broken region when that region is declared as a mask", () => {
+    const baseline = write(makeSolidPng(200, 100, [240, 240, 240, 255]), "baseline");
+    const broken = withRect(
+      makeSolidPng(200, 100, [240, 240, 240, 255]),
+      { x: 20, y: 20, w: 100, h: 50 },
+      [200, 30, 30, 255],
+    );
+    const actual = write(broken, "actual");
+
+    const unmasked = compare(baseline, actual, outDir(), { profile: "component/strict" });
+    expect(unmasked.pass).toBe(false);
+
+    const masked = compare(baseline, actual, outDir(), {
+      profile: "component/strict",
+      maskBounds: [{ x: 20, y: 20, width: 100, height: 50 }],
+    });
+    expect(masked.pass).toBe(true);
+    expect(masked.matchRatio).toBe(1);
+    expect(masked.ssim).toBe(1);
+    expect(masked.avgDeltaE).toBe(0);
+    expect(masked.clusterFail).toBe(false);
+    expect(masked.topIssues).toHaveLength(0);
+  });
+
   it("flags color mismatch via deltaE on recolor", () => {
     const baseline = write(makeSolidPng(200, 100, [0, 120, 220, 255]), "baseline");
     const actual = write(makeSolidPng(200, 100, [50, 170, 120, 255]), "actual");
@@ -204,5 +229,125 @@ describe("compare pipeline", () => {
     expect(
       r.topIssues.some((issue) => issue.kind === "residual" && issue.severity === "medium"),
     ).toBe(true);
+  });
+
+  it("clusterCheck override fails a component whose defect is concentrated in one region, even though every other signal passes", () => {
+    const baselinePng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    let actualPng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    actualPng = withRect(actualPng, { x: 10, y: 10, w: 16, h: 16 }, [150, 150, 150, 255]);
+    // Stray pixel far from the concentrated block: stretches the diff bounding box across
+    // most of the image, diluting avgDeltaE (computed over the whole bbox, not just the
+    // diffing pixels) so this test isolates the cluster signal from the color signal.
+    actualPng = withRect(actualPng, { x: 299, y: 299, w: 1, h: 1 }, [150, 150, 150, 255]);
+
+    const baseline = write(baselinePng, "baseline");
+    const actual = write(actualPng, "actual");
+    // component/strict's own `cluster` setting is false -- this proves the `clusterCheck`
+    // override (what resolveFigmaCompareOptions uses for the component default) independently
+    // fails a concentrated defect that clears matchRatio, maxDiffPixels, SSIM, and avgDeltaE.
+    const r = compare(baseline, actual, outDir(), {
+      profile: "component/strict",
+      clusterCheck: true,
+    });
+
+    expect(r.matchRatio).not.toBeNull();
+    expect(r.matchRatio as number).toBeGreaterThanOrEqual(0.995);
+    expect(r.avgDeltaE).not.toBeNull();
+    expect(r.avgDeltaE as number).toBeLessThan(3.0);
+    expect(r.ssim).toBeGreaterThanOrEqual(0.985);
+    expect(r.diffPixels).not.toBeNull();
+    expect(r.diffPixels as number).toBeLessThanOrEqual(500);
+    expect(r.clusterFail).toBe(true);
+    expect(r.pass).toBe(false);
+  });
+
+  it("profileOverrides.minMatch tightens pass/fail beyond component/strict's own default", () => {
+    const baselinePng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    let actualPng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    actualPng = withRect(actualPng, { x: 10, y: 10, w: 16, h: 16 }, [150, 150, 150, 255]);
+    // Stray pixel far from the block, same dilution trick as the clusterCheck fixture above:
+    // stretches the diff bounding box so avgDeltaE/SSIM stay well inside profile defaults and
+    // only matchRatio is in play.
+    actualPng = withRect(actualPng, { x: 299, y: 299, w: 1, h: 1 }, [150, 150, 150, 255]);
+
+    const baseline = write(baselinePng, "baseline");
+    const actual = write(actualPng, "actual");
+
+    const withoutOverride = compare(baseline, actual, outDir(), { profile: "component/strict" });
+    expect(withoutOverride.matchRatio).not.toBeNull();
+    expect(withoutOverride.matchRatio as number).toBeGreaterThanOrEqual(0.995);
+    expect(withoutOverride.matchRatio as number).toBeLessThan(0.999);
+    expect(withoutOverride.pass).toBe(true);
+
+    // Same fixture, only minMatch raised past the default -- proves the override, not the
+    // fixture, is what flips pass/fail.
+    const withOverride = compare(baseline, actual, outDir(), {
+      profile: "component/strict",
+      profileOverrides: { minMatch: 0.999 },
+    });
+    expect(withOverride.matchRatio).toBe(withoutOverride.matchRatio);
+    expect(withOverride.pass).toBe(false);
+    expect(withOverride.topIssues.some((issue) => issue.kind === "pixel")).toBe(true);
+  });
+
+  it("profileOverrides.maxDiffPixels adds a hard cap where the page profile has none by default", () => {
+    const baselinePng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    let actualPng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    actualPng = withRect(actualPng, { x: 10, y: 10, w: 4, h: 4 }, [150, 150, 150, 255]);
+    actualPng = withRect(actualPng, { x: 299, y: 299, w: 1, h: 1 }, [150, 150, 150, 255]);
+
+    const baseline = write(baselinePng, "baseline");
+    const actual = write(actualPng, "actual");
+
+    const withoutOverride = compare(baseline, actual, outDir(), { profile: "page" });
+    expect(withoutOverride.diffPixels).not.toBeNull();
+    expect(withoutOverride.diffPixels as number).toBeGreaterThan(10);
+    expect(withoutOverride.pass).toBe(true);
+
+    // page's own maxDiffPixels default is null (no cap) -- proves the override adds a cap
+    // that wasn't there, not just tightens an existing one.
+    const withOverride = compare(baseline, actual, outDir(), {
+      profile: "page",
+      profileOverrides: { maxDiffPixels: 10 },
+    });
+    expect(withOverride.diffPixels).toBe(withoutOverride.diffPixels);
+    expect(withOverride.pass).toBe(false);
+  });
+
+  it("profileOverrides with an explicit undefined value keeps the profile's own default", () => {
+    // Regression guard: a plain `{...profile, ...overrides}` spread lets a present-but-
+    // `undefined` key (e.g. built from `{ minMatch: maybeUndefinedVar }`) clobber the
+    // resolved default with `undefined`. Every numeric threshold comparison against
+    // `undefined` is false, so the comparison both fails pass *and* silently omits the
+    // diagnostic that would normally explain a maxDiffPixels/minMatch failure.
+    const baselinePng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    let actualPng = makeSolidPng(300, 300, [235, 235, 235, 255]);
+    actualPng = withRect(actualPng, { x: 10, y: 10, w: 4, h: 4 }, [150, 150, 150, 255]);
+    actualPng = withRect(actualPng, { x: 299, y: 299, w: 1, h: 1 }, [150, 150, 150, 255]);
+
+    const baseline = write(baselinePng, "baseline");
+    const actual = write(actualPng, "actual");
+
+    const withoutOverride = compare(baseline, actual, outDir(), { profile: "page" });
+    expect(withoutOverride.pass).toBe(true);
+
+    const withUndefinedOverride = compare(baseline, actual, outDir(), {
+      profile: "page",
+      profileOverrides: { minMatch: undefined, maxDiffPixels: undefined },
+    });
+    expect(withUndefinedOverride.pass).toBe(true);
+    expect(withUndefinedOverride.matchRatio).toBe(withoutOverride.matchRatio);
+    expect(withUndefinedOverride.topIssues.some((issue) => issue.kind === "pixel")).toBe(false);
+  });
+
+  it("profileOverrides schema rejects cluster and stabilityMaxDiffRatio overrides", () => {
+    // Regression guard: profileOverridesSchema is the contract-level type that
+    // packages/verify's CompareOptions.profileOverrides and packages/playwright's
+    // matcher options are typed against. cluster already has its own dedicated
+    // clusterCheck field, and nothing in the compare pipeline reads stabilityMaxDiffRatio
+    // -- both must stay rejected, not silently accepted as pass-through threshold fields.
+    expect(profileOverridesSchema.safeParse({ cluster: true }).success).toBe(false);
+    expect(profileOverridesSchema.safeParse({ stabilityMaxDiffRatio: 0.01 }).success).toBe(false);
+    expect(profileOverridesSchema.safeParse({ minMatch: 0.999 }).success).toBe(true);
   });
 });

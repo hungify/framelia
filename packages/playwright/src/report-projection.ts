@@ -20,13 +20,15 @@ import {
 import {
   FIGMA_BASELINE_ARTIFACT,
   JSON_INDENT_SPACES,
+  resolveDisplayThreshold,
+  resolveStyleGateEligible,
   RUN_ARTIFACT,
   SCHEMA_VERSION,
+  WEB_BASELINE_ARTIFACT,
 } from "@framelia/verify";
 import type { TestCase, TestResult } from "@playwright/test/reporter";
 
 import { SCORE_ATTACHMENT_SUFFIX } from "./attach.ts";
-import { defaultFigmaProfile } from "./figma-profile.ts";
 import type { FrameliaScoreAttachment } from "./score-attachment.ts";
 
 export const FALLBACK_TARGET_URL = "http://localhost/";
@@ -135,7 +137,9 @@ export interface DerivedContract {
    */
   verificationContract?: VerificationContract;
   verificationResult?: VerificationArtifact["results"][number];
-  /** Figma matcher evidence is durable; web-to-web remains dashboard/runtime-only under R9. */
+  /** Figma matcher evidence is durable; live two-page (toMatchPage/toMatchUrl) results
+   *  remain dashboard/runtime-only under R9 -- there is no stable baseline artifact to
+   *  persist a pointer to. */
   writeEvidence?: {
     outDir: string;
     expectedPath?: string;
@@ -144,6 +148,19 @@ export interface DerivedContract {
     score: FrameliaScoreAttachment;
     baseline: BaselineSource;
     targetUrl: string;
+  };
+  /** Set only for a toMatchPageBaseline result (baselineKind "web" with a promoted
+   *  baseline) -- unlike live two-page results, this one does have a stable baseline
+   *  artifact (see @framelia/verify's page-baseline.ts), so its image evidence is
+   *  worth persisting durably too. Deliberately skips the schema-v4
+   *  VerificationArtifact/done-gate pipeline (R9 still applies to that part) -- this
+   *  only lets the dashboard keep showing expected/actual/diff and who/when promoted
+   *  the baseline after the live run ends. */
+  writePageBaselineEvidence?: {
+    outDir: string;
+    expectedPath?: string;
+    actualPath?: string;
+    diffPath?: string;
   };
 }
 
@@ -234,10 +251,77 @@ export function deriveContract(
           },
         ],
     ...(primary ? { comparison: deriveComparisonSummary(primary) } : {}),
+    ...(primary ? { resolvedThreshold: resolveDisplayThreshold(primary) } : {}),
+    ...(primary
+      ? {
+          styleGateEligible: resolveStyleGateEligible({
+            profile: primary.profile,
+            styleGateEligible: primary.styleGateEligible,
+          }),
+        }
+      : {}),
     diagnostics,
+    topIssues: primary?.topIssues ?? [],
     ...(captureEvidence?.maskEvidence ? { maskEvidence: captureEvidence.maskEvidence } : {}),
     finishedAt: new Date().toISOString(),
   });
+
+  // A toMatchPageBaseline result carries the same expected/actual/diff triplet a
+  // Figma result does, plus who/when promoted the baseline it matched -- worth
+  // persisting for the dashboard (#41) even though it skips the schema-v4
+  // VerificationArtifact/done-gate pipeline below (R9 still applies to that part).
+  if (primary?.baselineKind === "web" && primary.baselinePromotedAt != null) {
+    const expectedPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-expected");
+    const actualAttachmentPath = attachmentPath(
+      result,
+      primary.attachmentBaseName ?? "",
+      "-actual",
+    );
+    const diffAttachmentPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-diff");
+    const imageEvidence: Pick<DashboardContractResult, "baseline" | "actual" | "diff"> = {
+      ...(expectedPath
+        ? {
+            baseline: {
+              path: dashboardArtifactPath(id, WEB_BASELINE_ARTIFACT.image),
+              width: primary.baselineSize.width,
+              height: primary.baselineSize.height,
+              provenance: "promoted",
+              ...(primary.baselineVersion !== undefined
+                ? { revision: `v${primary.baselineVersion}` }
+                : {}),
+              promotedAt: primary.baselinePromotedAt,
+              ...(primary.baselinePromotedBy !== undefined
+                ? { promotedBy: primary.baselinePromotedBy }
+                : {}),
+              ...(primary.baselineRunId !== undefined ? { runId: primary.baselineRunId } : {}),
+            },
+          }
+        : {}),
+      ...(actualAttachmentPath
+        ? {
+            actual: {
+              path: dashboardArtifactPath(id, RUN_ARTIFACT.actual),
+              width: primary.actualSize.width,
+              height: primary.actualSize.height,
+              url: targetUrl,
+            },
+          }
+        : {}),
+      ...(diffAttachmentPath
+        ? { diff: { path: dashboardArtifactPath(id, RUN_ARTIFACT.diff) } }
+        : {}),
+    };
+    return {
+      id,
+      dashboardResult: { ...dashboardResult, ...imageEvidence },
+      writePageBaselineEvidence: {
+        outDir: absoluteOutDir,
+        expectedPath,
+        actualPath: actualAttachmentPath,
+        diffPath: diffAttachmentPath,
+      },
+    };
+  }
 
   if (primary?.baselineKind !== "figma") return { id, dashboardResult };
 
@@ -247,7 +331,10 @@ export function deriveContract(
     nodeId: primary.nodeId ?? "0:0",
   };
 
-  const profile = defaultFigmaProfile(primary.profile, scope.kind === "region");
+  // primary.profile/clusterCheck are already resolved (set at matcher time by
+  // resolveFigmaCompareOptions) -- re-running resolveFigmaCompareOptions on the resolved
+  // profile would hit its `explicit` branch and silently drop a forced clusterCheck default.
+  const profile = primary.profile ?? "page";
   const verificationContract: VerificationContract = {
     id,
     baseline,
@@ -262,10 +349,25 @@ export function deriveContract(
         ? {
             kind: "region",
             selector: scope.selector,
-            expectSize: regionExpectedSize ?? primary.actualSize,
+            // Only the author's declared options.expectSize counts here -- an omitted expectSize
+            // must stay absent so validate.ts's "gate-eligible component contract requires
+            // expectSize" check can actually catch it. Observed capture dimensions
+            // (regionExpectedSize) are for dashboard display only (see the capture region above).
+            ...(scope.expectedSize ? { expectSize: scope.expectedSize } : {}),
           }
         : { kind: "page", pageReason: SYNTHETIC_PAGE_REASON },
     ...(profile === "page" ? {} : { profile }),
+    ...(primary.clusterCheck !== undefined ? { clusterCheck: primary.clusterCheck } : {}),
+    // profileOverrides is an explicit author choice, not a computed default -- there is
+    // nothing to re-derive it from, so it's read straight off the persisted score attachment.
+    ...(primary.profileOverrides ? { profileOverrides: primary.profileOverrides } : {}),
+    // gateEligible is boolean, unlike profileOverrides -- `false` (the "deliberately not
+    // gate-eligible" case) is the value most worth preserving, so this must guard on
+    // `!== undefined`, not truthiness, same as clusterCheck above.
+    ...(primary.gateEligible !== undefined ? { gateEligible: primary.gateEligible } : {}),
+    ...(primary.styleGateEligible !== undefined
+      ? { styleGateEligible: primary.styleGateEligible }
+      : {}),
     ...(primary.masks?.length ? { masks: primary.masks } : {}),
   };
 
@@ -388,11 +490,19 @@ export function writeEvidence(
   );
   const captureEvidence = score.captureEvidence;
   const scope = score.scope ?? { kind: "page" as const, fullPage: false };
-  const profile = defaultFigmaProfile(score.profile, scope.kind === "region");
-  const expectedSize =
-    scope.kind === "region"
-      ? (scope.expectedSize ?? captureEvidence?.elementRect ?? score.actualSize)
-      : null;
+  // Same reasoning as deriveContract: score.profile is already resolved, so read
+  // score.clusterCheck directly instead of re-deriving it from the resolved profile.
+  const profile = score.profile ?? "page";
+  const clusterCheck = score.clusterCheck;
+  // profileOverrides is an explicit author choice with nothing to re-derive it from --
+  // same reasoning as clusterCheck above, read straight off the persisted score.
+  const profileOverrides = score.profileOverrides;
+  const gateEligible = score.gateEligible;
+  const styleGateEligible = score.styleGateEligible;
+  // Only the author's declared options.expectSize counts here -- an omitted expectSize must
+  // stay absent (not backfilled from observed capture dimensions) so validate.ts's
+  // "gate-eligible component contract requires expectSize" check can actually catch it.
+  const expectedSize = scope.kind === "region" ? (scope.expectedSize ?? null) : null;
 
   // Validated against visualScoreArtifactSchema here (write time), not left to be
   // caught later by model.ts's readScore parsing it back (read time) -- drift from
@@ -425,6 +535,10 @@ export function writeEvidence(
     baselineSize: score.baselineSize,
     actualSize: score.actualSize,
     artifacts: { baseline: baselinePath, actual: actualPath, diff: diffPath ?? null },
+    ...(clusterCheck !== undefined ? { clusterCheck } : {}),
+    ...(profileOverrides ? { profileOverrides } : {}),
+    ...(gateEligible !== undefined ? { gateEligible } : {}),
+    ...(styleGateEligible !== undefined ? { styleGateEligible } : {}),
     ...(score.topIssues?.length ? { topIssues: score.topIssues } : {}),
     ...(score.warnings?.length ? { warnings: score.warnings } : {}),
     ...(captureEvidence ? { captureEvidence } : {}),
@@ -445,6 +559,10 @@ export function writeEvidence(
         profile,
         runType: "final",
         pageReason: SYNTHETIC_PAGE_REASON,
+        ...(clusterCheck !== undefined ? { clusterCheck } : {}),
+        ...(profileOverrides ? { profileOverrides } : {}),
+        ...(gateEligible !== undefined ? { gateEligible } : {}),
+        ...(styleGateEligible !== undefined ? { styleGateEligible } : {}),
         ...(score.masks?.length ? { masks: score.masks } : {}),
         // Recorded from the project's config default, not score.maxMaskedAreaRatio (the
         // matcher's per-call capture option) -- contractToDoneGate compares against the same
@@ -466,6 +584,27 @@ export function writeEvidence(
   );
 }
 
+/**
+ * Copies a toMatchPageBaseline result's expected/actual/diff triplet into the
+ * contract's own durable outDir -- same reasoning as writeEvidence (Playwright's own
+ * test-results/attachments aren't guaranteed to survive past the next run), but no
+ * visual-score.json/VerificationArtifact: those belong to the schema-v4 done-gate
+ * pipeline, which stays Figma-only (R9). This only keeps the dashboard's image
+ * evidence and promotion provenance alive after the live run ends.
+ */
+export function writePageBaselineEvidence(
+  evidence: NonNullable<DerivedContract["writePageBaselineEvidence"]>,
+): void {
+  fs.mkdirSync(evidence.outDir, { recursive: true });
+  const copy = (source: string | undefined, destName: string): void => {
+    if (!source) return;
+    fs.copyFileSync(source, path.join(evidence.outDir, destName));
+  };
+  copy(evidence.expectedPath, WEB_BASELINE_ARTIFACT.image);
+  copy(evidence.actualPath, RUN_ARTIFACT.actual);
+  copy(evidence.diffPath, RUN_ARTIFACT.diff);
+}
+
 export interface TestEndProjection {
   dashboardId: string;
   dashboardResult: DashboardContractResult;
@@ -479,6 +618,39 @@ const DURABLE_EVIDENCE_NAMES = [
   FIGMA_BASELINE_ARTIFACT.image,
   RUN_ARTIFACT.score,
 ];
+
+const PAGE_BASELINE_EVIDENCE_NAMES = [
+  RUN_ARTIFACT.actual,
+  RUN_ARTIFACT.diff,
+  WEB_BASELINE_ARTIFACT.image,
+];
+
+/**
+ * Shared by finalizeTestEnd's figma and toMatchPageBaseline branches: runs a durable
+ * evidence writer, then registers whichever of `names` actually landed in `outDir` into
+ * the live file map -- a failed write logs and leaves `files` untouched rather than
+ * throwing (matches writeEvidence's own best-effort contract: missing evidence must
+ * never crash the reporter).
+ */
+function collectWrittenFiles(
+  contractId: string,
+  outDir: string,
+  names: readonly string[],
+  write: () => void,
+  files: Array<[string, string]>,
+): void {
+  try {
+    write();
+    for (const name of names) {
+      const filePath = path.join(outDir, name);
+      if (fs.existsSync(filePath)) files.push([dashboardArtifactPath(contractId, name), filePath]);
+    }
+  } catch (error: unknown) {
+    console.error(
+      `framelia reporter: failed to write evidence for ${contractId}: ${String(error)}`,
+    );
+  }
+}
 
 /**
  * Everything one Playwright onTestEnd callback needs to do: derive each contract the test's
@@ -500,24 +672,33 @@ export function finalizeTestEnd(
 
   const files: Array<[string, string]> = [];
   for (const derived of derivedContracts) {
-    if (!derived.writeEvidence) continue;
-    try {
-      writeEvidence(derived.writeEvidence, maxMaskedAreaRatio);
-      const outDir = derived.writeEvidence.outDir;
-      for (const name of DURABLE_EVIDENCE_NAMES) {
-        const filePath = path.join(outDir, name);
-        if (fs.existsSync(filePath))
-          files.push([dashboardArtifactPath(derived.id, name), filePath]);
-      }
-    } catch (error: unknown) {
-      console.error(
-        `framelia reporter: failed to write evidence for ${derived.id}: ${String(error)}`,
+    if (derived.writePageBaselineEvidence) {
+      collectWrittenFiles(
+        derived.id,
+        derived.writePageBaselineEvidence.outDir,
+        PAGE_BASELINE_EVIDENCE_NAMES,
+        () => writePageBaselineEvidence(derived.writePageBaselineEvidence!),
+        files,
       );
+      continue;
     }
+    if (!derived.writeEvidence) continue;
+    collectWrittenFiles(
+      derived.id,
+      derived.writeEvidence.outDir,
+      DURABLE_EVIDENCE_NAMES,
+      () => writeEvidence(derived.writeEvidence!, maxMaskedAreaRatio),
+      files,
+    );
   }
 
   const primary = derivedContracts[0]!;
   const dashboardId = sanitizeTestId(test);
+  // The live dashboard collapses every matcher call in a test into this one row (unlike the
+  // durable artifact, which gets a separate contract per call -- see the id `-1`/`-2` suffixing
+  // above) -- a style issue from any matcher but the first would otherwise silently vanish from
+  // the live view even though it's still on disk.
+  const topIssues = derivedContracts.flatMap((derived) => derived.dashboardResult.topIssues ?? []);
 
   const artifacts: VerificationArtifact[] = [];
   for (const derived of derivedContracts) {
@@ -540,7 +721,11 @@ export function finalizeTestEnd(
 
   return {
     dashboardId,
-    dashboardResult: { ...primary.dashboardResult, id: dashboardId },
+    dashboardResult: {
+      ...primary.dashboardResult,
+      id: dashboardId,
+      ...(topIssues.length ? { topIssues } : {}),
+    },
     files,
     artifacts,
   };

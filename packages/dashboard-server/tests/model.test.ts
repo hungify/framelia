@@ -126,6 +126,87 @@ describe("projectArtifact (relocated to @framelia/dashboard-server, U5)", () => 
     });
   });
 
+  it("projects style-comparison topIssues onto the contract result", async () => {
+    const { artifact } = await fixture();
+    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
+    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
+    score.topIssues = [
+      {
+        severity: "low",
+        kind: "style-color",
+        message: "style mismatch on color: expected #000000ff, actual #111111ff",
+        hint: "Check the rendered element's CSS against the Figma node's style.",
+        repairCandidate: true,
+        blocking: false,
+      },
+    ];
+    await fs.writeFile(scorePath, JSON.stringify(score));
+
+    const projection = await projectArtifact(artifact);
+    expect(projection.run.contracts[0]).toMatchObject({
+      status: "passed",
+      topIssues: [expect.objectContaining({ kind: "style-color" })],
+    });
+  });
+
+  it("carries each style issue's originating check-point selector through the projection", async () => {
+    const { artifact } = await fixture();
+    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
+    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
+    score.topIssues = [
+      {
+        severity: "low",
+        kind: "style-color",
+        message: "style mismatch on color: expected #000000ff, actual #111111ff",
+        repairCandidate: true,
+        blocking: false,
+        selector: "header",
+      },
+      {
+        severity: "low",
+        kind: "style-typography",
+        message: "style mismatch on font-size: expected 16px, actual 14px",
+        repairCandidate: true,
+        blocking: false,
+        selector: ".hero",
+      },
+    ];
+    await fs.writeFile(scorePath, JSON.stringify(score));
+
+    const projection = await projectArtifact(artifact);
+    expect(projection.run.contracts[0]?.topIssues).toEqual([
+      expect.objectContaining({ kind: "style-color", selector: "header" }),
+      expect.objectContaining({ kind: "style-typography", selector: ".hero" }),
+    ]);
+  });
+
+  it("omits topIssues from the contract result when the score has none", async () => {
+    const { artifact } = await fixture();
+    const projection = await projectArtifact(artifact);
+    expect(projection.run.contracts[0]?.topIssues).toBeUndefined();
+  });
+
+  it("derives resolvedThreshold from the persisted profile/clusterCheck (#8)", async () => {
+    const { artifact } = await fixture();
+    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
+    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
+    score.profile = "component/strict";
+    score.clusterCheck = true;
+    await fs.writeFile(scorePath, JSON.stringify(score));
+
+    const projection = await projectArtifact(artifact);
+    expect(projection.run.contracts[0]).toMatchObject({
+      resolvedThreshold: {
+        name: "component/strict",
+        minMatch: 0.995,
+        maxDiffPixels: 500,
+        minSSIM: 0.985,
+        maxAvgDeltaE: 3.0,
+        cluster: true,
+      },
+    });
+  });
+
   it("keeps masked-pass contracts out of the clean passed count", async () => {
     const { artifact } = await fixture();
     const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");

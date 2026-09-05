@@ -126,4 +126,56 @@ describe("runToMatchPage", () => {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
   });
+
+  it("masks a diverging element so its real captured bounds (from both pages) are excluded from the score", async () => {
+    const base = (top: number, left: number) =>
+      `<style>html,body{margin:0}body{width:${SIZE.width}px;height:${SIZE.height}px;background:rgb(50,80,110)}#glitch{position:absolute;top:${top}px;left:${left}px;width:20px;height:15px}</style><div id="glitch"></div>`;
+    // #glitch diverges between the two pages (red vs blue) AND sits at
+    // different coordinates on each -- without a mask this fails the page
+    // profile's 0.99 minMatch, and the masked assertion below only passes if
+    // runComparePages() unions bounds from *both* captures, not just one.
+    const appA = await server(base(10, 10).replace("#glitch{", "#glitch{background:red;"));
+    const appB = await server(base(50, 60).replace("#glitch{", "#glitch{background:blue;"));
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-page-"));
+    try {
+      const pageA = await context.newPage();
+      const pageB = await context.newPage();
+      await pageA.goto(appA.url);
+      await pageB.goto(appB.url);
+
+      const unmasked = await runToMatchPage(
+        pageA,
+        pageB,
+        "page",
+        {},
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async () => undefined,
+        },
+      );
+      expect(unmasked.pass).toBe(false);
+
+      const masked = await runToMatchPage(
+        pageA,
+        pageB,
+        "page",
+        { masks: [{ selector: "#glitch", reason: "dynamic content" }] },
+        {
+          timeoutMs: 5_000,
+          workDir,
+          attach: async () => undefined,
+          attachJson: async () => undefined,
+        },
+      );
+      expect(masked.pass).toBe(true);
+    } finally {
+      await context.close();
+      await appA.close();
+      await appB.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
 });

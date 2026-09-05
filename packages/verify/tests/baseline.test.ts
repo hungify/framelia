@@ -1,3 +1,7 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { FigmaBaselineProvider } from "../src/baseline.ts";
@@ -24,6 +28,7 @@ describe("baseline providers", () => {
           apiCallLog: [],
         },
         warnings: [],
+        figmaStyle: { color: "#000000ff" },
       });
     const provider = new FigmaBaselineProvider(
       fetchBaseline,
@@ -42,7 +47,54 @@ describe("baseline providers", () => {
       ok: true,
       baseline: {
         evidence: { kind: "figma", fileKey: "file", nodeId: "1:2" },
+        figmaStyle: { color: "#000000ff" },
       },
     });
+  });
+
+  it("leaves figmaStyle undefined on a cached-baseline fallback (no fresh document fetched)", async () => {
+    const fetchBaseline = vi
+      .fn<(options: FetchBaselineOptions) => Promise<FetchBaselineOutcome>>()
+      .mockResolvedValue({
+        ok: true,
+        fetched: false,
+        errorClass: "retryable",
+        message: "Figma API unavailable (500)",
+        warnings: [],
+      });
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-baseline-cache-"));
+    const baselinePath = path.join(tmp, "figma-baseline.png");
+    fs.writeFileSync(baselinePath, "cached-png");
+    fs.writeFileSync(
+      path.join(tmp, "figma-baseline.meta.json"),
+      JSON.stringify({
+        fileKey: "file",
+        nodeId: "1:2",
+        fetchedAt: "2026-08-01T00:00:00.000Z",
+        lastModified: null,
+        apiCallCount: 1,
+        apiCallLog: [],
+      }),
+    );
+
+    const provider = new FigmaBaselineProvider(
+      fetchBaseline,
+      vi
+        .fn<(baselinePath: string, options?: StalenessOptions) => Promise<string[]>>()
+        .mockResolvedValue([]),
+    );
+    const result = await provider.resolve({
+      source: baselineSource,
+      outDir: tmp,
+      profile: "page",
+      stabilitySamples: 3,
+      defaults: {},
+    });
+
+    let figmaStyle: unknown;
+    if (result.ok) figmaStyle = result.baseline.figmaStyle;
+    expect(result.ok).toBe(true);
+    expect(figmaStyle).toBeUndefined();
+    fs.rmSync(tmp, { recursive: true, force: true });
   });
 });

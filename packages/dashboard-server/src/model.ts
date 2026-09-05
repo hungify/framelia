@@ -20,7 +20,13 @@ import {
   type DashboardSummary,
   type DashboardVerdict,
 } from "@framelia/contracts";
-import { FIGMA_BASELINE_ARTIFACT, RUN_ARTIFACT, type ContractDefaults } from "@framelia/verify";
+import {
+  FIGMA_BASELINE_ARTIFACT,
+  resolveDisplayThreshold,
+  resolveStyleGateEligible,
+  RUN_ARTIFACT,
+  type ContractDefaults,
+} from "@framelia/verify";
 
 type DashboardFileMap = Map<string, string>;
 
@@ -239,6 +245,15 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
           : undefined,
     }),
     ...(score ? { comparison: deriveComparisonSummary(score) } : {}),
+    ...(score ? { resolvedThreshold: resolveDisplayThreshold(score) } : {}),
+    ...(score
+      ? {
+          styleGateEligible: resolveStyleGateEligible({
+            profile: score.profile,
+            styleGateEligible: score.styleGateEligible,
+          }),
+        }
+      : {}),
     ...(maskEvidence ? { maskEvidence } : {}),
     ...(projectedCaptureEvidence ? { captureEvidence: projectedCaptureEvidence } : {}),
     blockers: result.ok
@@ -250,6 +265,7 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
           },
         ],
     diagnostics,
+    topIssues: score?.topIssues ?? [],
     ...(evidenceHash ? { evidenceHash } : {}),
     finishedAt: createdAt,
   });

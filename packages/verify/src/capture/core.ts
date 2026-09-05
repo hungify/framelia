@@ -84,6 +84,12 @@ export async function captureReadyPage(
     try {
       await locator.screenshot({
         path: spec.outPath,
+        // "css" (one PNG pixel per CSS px), not Playwright's own "device" default --
+        // boundingBox()-derived coordinates (masks.ts's scope/mask bounds,
+        // capture-style.ts's captureElementBounds for pixel-diff attribution) are
+        // always CSS px, so the screenshot must share that space or a
+        // deviceScaleFactor > 1 context silently misaligns every one of them.
+        scale: "css",
         animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
         mask: maskLocators,
         ...(maskLocators.length ? { maskColor: MASK_COLOR } : {}),
@@ -99,6 +105,8 @@ export async function captureReadyPage(
     try {
       await page.screenshot({
         path: spec.outPath,
+        // See the locator.screenshot() branch above for why "css", not "device".
+        scale: "css",
         fullPage: spec.scope.kind === "page" ? spec.scope.fullPage : false,
         animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
         mask: maskLocators,

@@ -7,6 +7,9 @@ export type {
   BaselineResolveOutcome,
 } from "./baseline.ts";
 export { compare } from "./compare/index.ts";
+export { attributeDiffRegions } from "./compare/attribution.ts";
+export type { DiffRegionAttribution, SelectorBounds } from "./compare/attribution.ts";
+export type { DiffCluster } from "./compare/pixel.ts";
 export {
   checkDoneGate,
   DEFAULT_MAX_BASELINE_AGE_MS,
@@ -25,8 +28,13 @@ export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";
 export { checkBaselineStaleness, DEFAULT_MAX_BASELINE_AGE_DAYS } from "./staleness.ts";
 export type { StalenessOptions } from "./staleness.ts";
-export { getProfile, PROFILES } from "./profiles.ts";
-export type { Profile } from "./profiles.ts";
+export {
+  getProfile,
+  PROFILES,
+  resolveDisplayThreshold,
+  resolveStyleGateEligible,
+} from "./profiles.ts";
+export type { Profile, ThresholdOverrideSource, StyleGateEligibleSource } from "./profiles.ts";
 export { doneGateFromArtifact, writeVerificationArtifact } from "./verify.ts";
 export { SCHEMA_VERSION, AppError } from "./types.ts";
 export { RUN_ARTIFACT, FIGMA_BASELINE_ARTIFACT, WEB_BASELINE_ARTIFACT } from "./artifacts.ts";
@@ -47,7 +55,9 @@ export type {
   FidelityErrorCode,
   BaselineEvidence,
   FigmaBaselineEvidence,
+  MaskBounds,
   ProfileName,
+  ProfileOverrides,
   RejectResult,
   RunType,
   Stability,
@@ -78,6 +88,7 @@ export type {
   WebTarget,
   ContractScope,
   ExpectStyle,
+  StyleToleranceOverrides,
 } from "@framelia/contracts";
 export {
   clearNodeMetaCache,
@@ -87,3 +98,29 @@ export {
   resolveToken,
 } from "./figma-api.ts";
 export type { NodeMetadata, ResolveNodeSpecOutcome } from "./figma-api.ts";
+export { extractFigmaStyle, expectStyleToSnapshot } from "./figma-node-style.ts";
+export type { BoxShadow, CornerRadius, StyleSnapshot } from "./figma-node-style.ts";
+export { compareStyles } from "./style-compare.ts";
+export {
+  pageBaselineImagePath,
+  pageBaselineMetaPath,
+  promotePageBaseline,
+  readPageBaselineMeta,
+  resolvePageBaseline,
+} from "./page-baseline.ts";
+export type {
+  PageBaselineMeta,
+  PageBaselinePromotion,
+  PromotePageBaselineOptions,
+  PromotePageBaselineResult,
+  ResolvePageBaselineOutcome,
+} from "./page-baseline.ts";
+export { captureAndPromotePageBaseline } from "./promote-page-baseline.ts";
+export type {
+  CaptureAndPromotePageBaselineOptions,
+  CaptureAndPromotePageBaselineOutcome,
+} from "./promote-page-baseline.ts";
+export { DEFAULT_MASK_SUGGESTION_HEURISTICS, suggestMasks } from "./mask-suggest.ts";
+export type { MaskSuggestion, MaskSuggestionHeuristic } from "./mask-suggest.ts";
+export { suggestMasksForUrl } from "./suggest-masks.ts";
+export type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "./suggest-masks.ts";

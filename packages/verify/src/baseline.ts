@@ -98,6 +98,7 @@ export class FigmaBaselineProvider implements BaselineProvider<FigmaBaselineSour
           lastModified: fetched.meta.lastModified,
         },
         warnings: [...fetched.warnings, ...stalenessWarnings],
+        figmaStyle: fetched.figmaStyle,
       },
     };
   }

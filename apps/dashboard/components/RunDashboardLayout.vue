@@ -65,7 +65,7 @@ const workspaceStyle = computed(() => {
       </div>
       <div v-if="hasRun" class="hidden md:flex items-baseline gap-2">
         <span class="text-xs font-semibold">{{ title }}</span>
-        <code class="text-muted text-xs">{{ subtitle }}</code>
+        <code v-if="subtitle !== title" class="text-muted text-xs">{{ subtitle }}</code>
       </div>
       <div class="justify-self-end flex items-center gap-1.75 text-muted text-xs">
         <span class="w-1.5 h-1.5 rounded-full" :class="mode.dotClass" />

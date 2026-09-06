@@ -5,8 +5,9 @@ import {
   MIN_CONTRACTS_PER_REQUEST,
   SCHEMA_VERSION,
 } from "./constants.ts";
-import { verificationContractSchema } from "./contract.ts";
+import { assertUniqueIds } from "./shared/unique-ids.ts";
 import { webTargetSchema } from "./target.ts";
+import { verificationContractSchema } from "./visual-contract.ts";
 
 export const verificationRequestSchema = z
   .object({
@@ -19,16 +20,9 @@ export const verificationRequestSchema = z
   })
   .strict()
   .superRefine((request, context) => {
-    const ids = new Set<string>();
-    request.contracts.forEach((contract, index) => {
-      if (ids.has(contract.id)) {
-        context.addIssue({
-          code: "custom",
-          path: ["contracts", index, "id"],
-          message: `duplicate contract id: ${contract.id}`,
-        });
-      }
-      ids.add(contract.id);
+    assertUniqueIds(request.contracts, (contract) => contract.id, context, {
+      path: (index) => ["contracts", index, "id"],
+      message: (id) => `duplicate contract id: ${id}`,
     });
   });
 

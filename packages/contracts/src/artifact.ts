@@ -6,6 +6,7 @@ import {
   SCHEMA_VERSION,
 } from "./constants.ts";
 import { verificationRequestSchema } from "./request.ts";
+import { assertUniqueIds } from "./shared/unique-ids.ts";
 
 const verificationResultSchema = z
   .object({
@@ -35,7 +36,6 @@ export const verificationArtifactSchema = z
   .strict()
   .superRefine((artifact, context) => {
     const requestIds = new Set(artifact.request.contracts.map((contract) => contract.id));
-    const resultIds = new Set<string>();
     artifact.results.forEach((result, index) => {
       if (!requestIds.has(result.id)) {
         context.addIssue({
@@ -44,14 +44,10 @@ export const verificationArtifactSchema = z
           message: `result has no matching contract: ${result.id}`,
         });
       }
-      if (resultIds.has(result.id)) {
-        context.addIssue({
-          code: "custom",
-          path: ["results", index, "id"],
-          message: `duplicate result id: ${result.id}`,
-        });
-      }
-      resultIds.add(result.id);
+    });
+    const resultIds = assertUniqueIds(artifact.results, (result) => result.id, context, {
+      path: (index) => ["results", index, "id"],
+      message: (id) => `duplicate result id: ${id}`,
     });
     if (resultIds.size !== requestIds.size) {
       context.addIssue({

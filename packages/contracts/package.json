@@ -32,8 +32,11 @@
   },
   "scripts": {
     "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm run build && pnpm run typecheck"
+    "check:zero-deps": "node scripts/check-zero-deps.mjs",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test && pnpm run check:zero-deps"
   },
   "dependencies": {
     "zod": "^4.4.3"
@@ -41,7 +44,8 @@
   "devDependencies": {
     "@types/node": "26.0.1",
     "tsup": "^8.5.1",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=22.13"

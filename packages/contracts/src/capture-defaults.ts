@@ -14,7 +14,7 @@ import { nonEmptyTrimmed } from "./primitives.ts";
  * Schema-v4 contracts no longer carry these fields — every contract in a
  * project run behaves the same way.
  */
-export const contractDefaultsSchema = z
+export const captureDefaultsSchema = z
   .object({
     stabilitySamples: z
       .number()
@@ -47,4 +47,4 @@ export const contractDefaultsSchema = z
   })
   .strict();
 
-export type ContractDefaults = z.infer<typeof contractDefaultsSchema>;
+export type CaptureDefaults = z.infer<typeof captureDefaultsSchema>;

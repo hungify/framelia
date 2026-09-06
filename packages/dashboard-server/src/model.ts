@@ -5,7 +5,6 @@ import * as path from "node:path";
 import {
   assembleContractResult,
   deriveCaptureEvidenceDiagnostics,
-  deriveComparisonSummary,
   deriveDashboardVerdict,
   projectCapture,
   projectCaptureEvidence,
@@ -20,7 +19,7 @@ import {
   type DashboardSummary,
   type DashboardVerdict,
 } from "@framelia/contracts";
-import { FIGMA_BASELINE_ARTIFACT, RUN_ARTIFACT, type ContractDefaults } from "@framelia/verify";
+import { FIGMA_BASELINE_ARTIFACT, RUN_ARTIFACT, type CaptureDefaults } from "@framelia/verify";
 
 type DashboardFileMap = Map<string, string>;
 
@@ -195,8 +194,8 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
     : undefined;
   const dashboardResult = assembleContractResult({
     id: contract.id,
-    name: contract.id,
-    tags: [contract.viewport.name, contract.scope.kind],
+    name: contract.name,
+    tags: [contract.viewport.preset, contract.scope.kind],
     status,
     baselineKind: contract.baseline.kind,
     ...(score && baselinePath
@@ -238,7 +237,7 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
             }
           : undefined,
     }),
-    ...(score ? { comparison: deriveComparisonSummary(score) } : {}),
+    ...(score ? { score } : {}),
     ...(maskEvidence ? { maskEvidence } : {}),
     ...(projectedCaptureEvidence ? { captureEvidence: projectedCaptureEvidence } : {}),
     blockers: result.ok
@@ -250,6 +249,7 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
           },
         ],
     diagnostics,
+    topIssues: score?.topIssues ?? [],
     ...(evidenceHash ? { evidenceHash } : {}),
     finishedAt: createdAt,
   });
@@ -259,7 +259,7 @@ function deriveContractResult(input: ContractResultInput): ContractResultProject
 export async function projectArtifact(
   artifact: VerificationArtifact,
   suiteName?: string,
-  defaults: ContractDefaults = {},
+  defaults: CaptureDefaults = {},
 ): Promise<DashboardProjection> {
   const resultById = new Map(artifact.results.map((result) => [result.id, result]));
   const rawTargetUrl = artifact.request.target.url;

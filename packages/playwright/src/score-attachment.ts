@@ -17,20 +17,40 @@ export interface FrameliaScoreAttachment {
   baselineKind: "figma" | "web";
   attachmentBaseName?: string;
   profile?: ProfileName;
+  /** Resolved clusterCheck override compare() actually ran with -- see resolveFigmaCompareOptions. */
+  clusterCheck?: boolean;
+  /** Explicit per-contract threshold overrides compare() actually ran with. */
+  profileOverrides?: ProfileOverrides;
+  /** Explicit gateEligible override the matcher call was given, if any. */
+  gateEligible?: boolean;
+  /** Explicit styleGateEligible override the matcher call was given, if any. */
+  styleGateEligible?: boolean;
   scope?: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
   captureEvidence?: CaptureEvidence;
   baselineFetchedAt?: string;
   baselineLastModified?: string | null;
-  topIssues?: Array<{ kind: string; severity: string; message: string }>;
+  topIssues?: TopIssue[];
   warnings?: string[];
   /** Set only for baselineKind "figma" -- lets the Reporter rebuild a real baseline pointer. */
   fileKey?: string;
   nodeId?: string;
+  /** Set only when this comparison ran against a promoted baseline (toMatchPageBaseline) --
+   *  lets the Reporter surface who/when/from-what-run accepted the current baseline (#41). */
+  baselinePromotedAt?: string;
+  baselinePromotedBy?: string;
+  baselineVersion?: number;
+  baselineRunId?: string;
 }
 import type { VisualMask } from "@framelia/contracts";
-import type { CompareOutcome, ExpectSize, ProfileName } from "@framelia/verify";
+import type {
+  CompareOutcome,
+  ExpectSize,
+  ProfileName,
+  ProfileOverrides,
+  TopIssue,
+} from "@framelia/verify";
 import type { CaptureEvidence } from "@framelia/verify/internal";
 
 export type MatcherScope =
@@ -43,6 +63,10 @@ export interface ScoreAttachmentBase {
   baselineKind: "figma" | "web";
   attachmentBaseName: string;
   profile: ProfileName;
+  clusterCheck?: boolean;
+  profileOverrides?: ProfileOverrides;
+  gateEligible?: boolean;
+  styleGateEligible?: boolean;
   scope: MatcherScope;
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;

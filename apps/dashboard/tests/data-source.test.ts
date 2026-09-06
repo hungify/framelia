@@ -128,4 +128,18 @@ describe("refresh", () => {
     await firstRefresh;
     expect(current.value?.runId).toBe("second");
   });
+
+  it("surfaces an error instead of adopting a run that fails the wire schema", async () => {
+    const malformed = { ...run("bad"), status: "exploded" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(malformed), { status: 200 })),
+    );
+
+    const { run: current, error, refresh } = useRunArtifact();
+    await refresh();
+
+    expect(current.value).toBeUndefined();
+    expect(error.value).toContain("does not match the dashboard schema");
+  });
 });

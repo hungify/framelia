@@ -1,10 +1,20 @@
-import type { DashboardEvent, DashboardRun } from "@framelia/contracts";
+import { dashboardRunSchema, type DashboardEvent, type DashboardRun } from "@framelia/contracts";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
+/**
+ * The one place a DashboardRun enters this app. Parsing here rather than casting means a
+ * server on a different projection version surfaces as a readable error in the UI's error
+ * slot, instead of as a property access on `undefined` deep in a component.
+ */
 async function fetchJson(url: string): Promise<DashboardRun> {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return response.json() as Promise<DashboardRun>;
+  const payload: unknown = await response.json();
+  // Validated for shape, then handed back as the richer interface: the schema deliberately
+  // leaves each contract's optional evidence detail loose (see dashboard/wire.ts).
+  if (!dashboardRunSchema.safeParse(payload).success)
+    throw new Error(`${url}: run payload does not match the dashboard schema`);
+  return payload as DashboardRun;
 }
 
 /** A live run only stops taking further updates once it has actually finished. */

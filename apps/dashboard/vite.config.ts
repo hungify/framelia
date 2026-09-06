@@ -3,16 +3,17 @@ import vue from "@vitejs/plugin-vue";
 import { defineConfig, type Plugin } from "vite";
 import vueRouter from "vue-router/vite";
 
-import { dashboardMockArtifacts, dashboardMockRun } from "./mocks/dashboard.ts";
-
 const apiOrigin = process.env.FRAMELIA_API_ORIGIN;
 
 function dashboardMockPlugin(): Plugin {
   return {
     name: "framelia-dashboard-mock",
     apply: "serve",
-    configureServer(server) {
+    async configureServer(server) {
       if (apiOrigin) return;
+      // Resolve mocks through Vite after its source conditions exist, not during config loading.
+      const { dashboardMockArtifacts, dashboardMockRun } =
+        await server.ssrLoadModule("/mocks/dashboard.ts");
       server.middlewares.use((request, response, next) => {
         const pathname = new URL(request.url ?? "/", "http://dashboard.test").pathname;
         if (pathname === "/api/run") {
@@ -42,6 +43,11 @@ function dashboardMockPlugin(): Plugin {
 
 export default defineConfig({
   base: "./",
+  resolve: { conditions: ["framelia-dev"] },
+  ssr: {
+    noExternal: ["@framelia/contracts"],
+    resolve: { conditions: ["framelia-dev"] },
+  },
   plugins: [
     dashboardMockPlugin(),
     vueRouter({

@@ -87,21 +87,24 @@ importers:
       '@framelia/verify':
         specifier: workspace:*
         version: link:../verify
-      commander:
-        specifier: ^15.0.0
-        version: 15.0.0
+      '@stricli/core':
+        specifier: ^1.3.0
+        version: 1.3.0
       nanoid:
         specifier: 3.3.16
         version: 3.3.16
       open:
         specifier: ^11.0.0
         version: 11.0.0
-      playwright:
-        specifier: ^1.61.1
-        version: 1.62.1
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
       tsx:
         specifier: ^4.22.4
         version: 4.23.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: 26.0.1
@@ -115,9 +118,6 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.0.1)(vite@8.2.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
 
   packages/contracts:
     dependencies:
@@ -134,6 +134,9 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.0.1)(vite@8.2.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
 
   packages/dashboard-server:
     dependencies:
@@ -214,6 +217,9 @@ importers:
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.62.1
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       nanoid:
         specifier: 3.3.16
         version: 3.3.16
@@ -1216,6 +1222,9 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
+  '@stricli/core@1.3.0':
+    resolution: {integrity: sha512-LnBe2HntygaLDU5trtjiC3J4C/YkmIZuM0XB52IF4qaLqJH09kgD1fnZiS2gaYUnt0nAN2a+1b4PSOBcfPrN4Q==}
+
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
 
@@ -1850,10 +1859,6 @@ packages:
 
   colortranslator@5.0.0:
     resolution: {integrity: sha512-Z3UPUKasUVDFCDYAjP2fmlVRf1jFHJv1izAmPjiOa0OCIw1W7iC8PZ2GsoDa8uZv+mKyWopxxStT9q05+27h7w==}
-
-  commander@15.0.0:
-    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
-    engines: {node: '>=22.12.0'}
 
   commander@4.1.1:
     resolution: {integrity: sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA==}
@@ -4299,6 +4304,8 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
+  '@stricli/core@1.3.0': {}
+
   '@swc/helpers@0.5.23':
     dependencies:
       tslib: 2.8.1
@@ -4939,8 +4946,6 @@ snapshots:
       consola: 3.4.2
 
   colortranslator@5.0.0: {}
-
-  commander@15.0.0: {}
 
   commander@4.1.1: {}
 

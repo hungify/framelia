@@ -55,7 +55,7 @@ function passingScoreDir(outDir: string, contract: VerificationContract): void {
       schemaVersion: SCHEMA_VERSION,
       target,
       baseline: baselineEvidence,
-      viewport: contract.viewport.name,
+      viewport: contract.viewport.preset,
       viewportSize: { width: contract.viewport.width, height: contract.viewport.height },
       profile,
       pageReason: scope.kind === "page" ? scope.pageReason : null,
@@ -75,7 +75,7 @@ function passingScoreDir(outDir: string, contract: VerificationContract): void {
       capturedAt: timestamp,
       target,
       baseline: baselineEvidence,
-      viewport: contract.viewport.name,
+      viewport: contract.viewport.preset,
       profile,
       pageReason: scope.kind === "page" ? scope.pageReason : null,
       selector: scope.kind === "region" ? scope.selector : null,
@@ -104,8 +104,9 @@ function makeArtifact(options: {
   const outDir = `.framelia/visual-verifications/${id}`;
   const contract: VerificationContract = {
     id,
+    name: id,
     baseline: figmaBaseline,
-    viewport: { name: "desktop", width: 1440, height: 1024 },
+    viewport: { preset: "desktop", width: 1440, height: 1024 },
     outDir,
     scope: options.scope,
     profile: options.scope.kind === "region" ? "component/strict" : undefined,

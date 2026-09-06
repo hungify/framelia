@@ -1,6 +1,6 @@
 import { FIGMA_BASELINE_ARTIFACT } from "./artifacts.ts";
+import { readBaselineMeta } from "./baseline/figma-fetch.ts";
 import { DEFAULT_MAX_BASELINE_AGE_DAYS, MS_PER_DAY } from "./constants.ts";
-import { readBaselineMeta } from "./fetch-baseline.ts";
 import { getNodeMetadata, resolveToken } from "./figma-api.ts";
 
 export { DEFAULT_MAX_BASELINE_AGE_DAYS };

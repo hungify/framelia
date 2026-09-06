@@ -60,7 +60,6 @@ function checkScore(
 
 type LoadedScore = { ok: true; score: ScoreFile } | { ok: false; message: string };
 
-/** Load and surface visual-score.json; failure is a reason string, not an exception. */
 function loadScore(outDir: string): LoadedScore {
   const scorePath = path.join(outDir, RUN_ARTIFACT.score);
   if (!fs.existsSync(scorePath)) {

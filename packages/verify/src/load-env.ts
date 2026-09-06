@@ -1,17 +1,26 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { parse as parseDotenv } from "dotenv";
+
+import { AppError } from "./types.ts";
+
 const DEFAULT_ENV_FILES = [".env.local", ".env"] as const;
 
 export interface LoadProjectEnvOptions {
   files?: string[];
+  /** Where parsed keys land; defaults to this process's own environment. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export function loadProjectEnv(
   projectRoot: string = process.cwd(),
   options?: LoadProjectEnvOptions,
 ): string[] {
-  return loadEnvFiles(projectRoot, options?.files ?? [...DEFAULT_ENV_FILES], { required: false });
+  return loadEnvFiles(projectRoot, options?.files ?? [...DEFAULT_ENV_FILES], {
+    required: false,
+    ...(options?.env ? { env: options.env } : {}),
+  });
 }
 
 /**
@@ -22,30 +31,35 @@ export function loadProjectEnv(
  */
 export function assertProjectRelativePath(root: string, value: string, label: string): void {
   if (path.isAbsolute(value) || value.split(/[\\/]/).includes("..")) {
-    throw new Error(`${label} must be project-relative without parent traversal.`);
+    throw new AppError(
+      "INVALID_PROJECT_RELATIVE_PATH",
+      `${label} must be project-relative without parent traversal.`,
+    );
   }
   const resolved = path.resolve(root, value);
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
-    throw new Error(`${label} escapes project root: ${value}`);
+    throw new AppError("PATH_ESCAPES_PROJECT_ROOT", `${label} escapes project root: ${value}`);
   }
 }
 
 export function loadEnvFiles(
   projectRoot: string,
   envFile: string | string[],
-  options?: { required?: boolean },
+  options?: { required?: boolean; env?: NodeJS.ProcessEnv },
 ): string[] {
   const root = path.resolve(projectRoot);
   const names = Array.isArray(envFile) ? envFile : [envFile];
   const required = options?.required ?? true;
+  const env = options?.env ?? process.env;
   const loaded: string[] = [];
 
   for (const name of names) {
-    if (!name.trim()) throw new Error("envFile entries must be non-empty strings.");
+    if (!name.trim())
+      throw new AppError("ENV_FILE_ENTRY_INVALID", "envFile entries must be non-empty strings.");
     assertProjectRelativePath(root, name, "envFile");
     const file = path.resolve(root, name);
     if (!fs.existsSync(file)) {
-      if (required) throw new Error(`envFile not found: ${name}`);
+      if (required) throw new AppError("ENV_FILE_NOT_FOUND", `envFile not found: ${name}`);
       continue;
     }
     // path.resolve doesn't follow symlinks; realpath before trusting the file
@@ -53,33 +67,31 @@ export function loadEnvFiles(
     const realRoot = fs.realpathSync(root);
     const realFile = fs.realpathSync(file);
     if (realFile !== realRoot && !realFile.startsWith(`${realRoot}${path.sep}`)) {
-      throw new Error(`envFile escapes project root: ${name}`);
+      throw new AppError("PATH_ESCAPES_PROJECT_ROOT", `envFile escapes project root: ${name}`);
     }
-    applyEnvFile(file);
+    applyEnvFile(file, env);
     loaded.push(file);
   }
   return loaded;
 }
 
-function applyEnvFile(file: string): void {
+/**
+ * Parse-only: `dotenv.parse(text)` is a pure string-to-object function with
+ * no side effects on `process.env` -- never `dotenv.config()`, which reads
+ * a file and writes process.env itself, bypassing this module's own
+ * key-name filter and "don't overwrite an already-set key" precedence.
+ */
+function applyEnvFile(file: string, env: NodeJS.ProcessEnv): void {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
   } catch {
     return;
   }
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim();
+  const parsed = parseDotenv(text);
+  for (const [key, val] of Object.entries(parsed)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    if (process.env[key] !== undefined) continue;
-    let val = line.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    process.env[key] = val;
+    if (env[key] !== undefined) continue;
+    env[key] = val;
   }
 }

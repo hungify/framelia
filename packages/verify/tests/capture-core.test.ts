@@ -86,6 +86,46 @@ describe("captureReadyPage", () => {
     }
   });
 
+  it("rebases a region scope's mask bounds onto the captured crop's own origin, not the viewport", async () => {
+    const app = await server();
+    // Override the fixture body so #region sits away from the viewport
+    // origin (unlike the fixture server's default markup, which happens to
+    // place #region at (0,0) and would hide an unrebased-bounds bug).
+    const context = await browser.newContext();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      await page.setContent(`
+        <style>
+          body { margin: 0; }
+          #region { position: relative; margin: 70px 0 0 40px; width: 200px; height: 100px; }
+          #secret { position: absolute; top: 20px; left: 30px; width: 40px; height: 40px; background: red; }
+        </style>
+        <div id="region"><div id="secret"></div></div>
+      `);
+
+      const outcome = await captureReadyPage(page, {
+        outPath: path.join(tmpDir, "capture.png"),
+        scope: { kind: "region", selector: "#region" },
+        screenshot: { masks: [{ selector: "#secret", reason: "sensitive" }] },
+        timeoutMs: 2_000,
+      });
+
+      if (!outcome.ok) throw new Error(`capture failed: ${outcome.error} ${outcome.message}`);
+      // #region itself sits at viewport (40, 70); #secret sits at (30, 20)
+      // relative to #region. The captured PNG is cropped to #region's own
+      // bounding box, so the mask bound must be reported relative to that
+      // crop's origin ((30, 20)) -- not #secret's raw viewport position
+      // ((70, 90)), which would misplace the mask entirely off a smaller canvas.
+      expect(outcome.maskEvidence?.bounds).toEqual([{ x: 30, y: 20, width: 40, height: 40 }]);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects with CAPTURE_PAGE_CLOSED when the passed Page is already closed", async () => {
     const context = await browser.newContext();
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));

@@ -1,4 +1,4 @@
-import { verificationRequestSchema } from "@framelia/contracts";
+import { SCHEMA_VERSION, verificationRequestSchema } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
 import { unionArea } from "../src/capture/masks.ts";
@@ -6,8 +6,9 @@ import { unionArea } from "../src/capture/masks.ts";
 const target = { kind: "web" as const, url: "http://localhost:3000" };
 const base = {
   id: "mask.desktop",
+  name: "Mask · Desktop",
   baseline: { kind: "figma" as const, fileKey: "file", nodeId: "1:2" },
-  viewport: { name: "desktop", width: 100, height: 100 },
+  viewport: { preset: "desktop", width: 100, height: 100 },
   outDir: ".framelia/visual-verifications/mask",
   scope: { kind: "page" as const, pageReason: "full page" },
 };
@@ -16,7 +17,7 @@ describe("visual mask contract", () => {
   it("accepts typed mask", () => {
     expect(
       verificationRequestSchema.parse({
-        schemaVersion: 4,
+        schemaVersion: SCHEMA_VERSION,
         target,
         contracts: [
           {
@@ -31,21 +32,21 @@ describe("visual mask contract", () => {
   it("rejects missing reason, invalid maxMatches, and broad selectors", () => {
     expect(() =>
       verificationRequestSchema.parse({
-        schemaVersion: 4,
+        schemaVersion: SCHEMA_VERSION,
         target,
         contracts: [{ ...base, masks: [{ selector: ".clock" }] }],
       }),
     ).toThrow(/expected string|reason/i);
     expect(() =>
       verificationRequestSchema.parse({
-        schemaVersion: 4,
+        schemaVersion: SCHEMA_VERSION,
         target,
         contracts: [{ ...base, masks: [{ selector: ".clock", reason: "time", maxMatches: 0 }] }],
       }),
     ).toThrow(/too small|must be >0|positive/i);
     expect(() =>
       verificationRequestSchema.parse({
-        schemaVersion: 4,
+        schemaVersion: SCHEMA_VERSION,
         target,
         contracts: [{ ...base, masks: [{ selector: "body", reason: "too broad" }] }],
       }),
@@ -57,7 +58,7 @@ describe("visual mask contract", () => {
     for (const selector of stillBroad) {
       expect(() =>
         verificationRequestSchema.parse({
-          schemaVersion: 4,
+          schemaVersion: SCHEMA_VERSION,
           target,
           contracts: [{ ...base, masks: [{ selector, reason: "still broad" }] }],
         }),
@@ -74,7 +75,7 @@ describe("visual mask contract", () => {
     for (const selector of legitimate) {
       expect(
         verificationRequestSchema.parse({
-          schemaVersion: 4,
+          schemaVersion: SCHEMA_VERSION,
           target,
           contracts: [{ ...base, masks: [{ selector, reason: "dynamic content" }] }],
         }),

@@ -1,5 +1,6 @@
+import type { Profile } from "@framelia/contracts";
+
 import { CLUSTER_GRID, EXPECT_SIZE_TOLERANCE_PX, RESIDUAL_CLUSTER_BLOCK } from "../constants.ts";
-import type { Profile } from "../profiles.ts";
 import type { ExpectSize, TopIssue } from "../types.ts";
 import type { AreaGapResult } from "./area-gap.ts";
 import type { DiffCluster, PixelResult } from "./pixel.ts";

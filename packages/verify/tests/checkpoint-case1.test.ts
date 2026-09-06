@@ -4,8 +4,8 @@ import * as path from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+import { makeSolidPng, writePng } from "../src/compare/png.ts";
 import { compare } from "../src/index.ts";
-import { makeSolidPng, writePng } from "../src/internal.ts";
 
 const fixtures = path.join(import.meta.dirname, "fixtures");
 const EXPECT_SIZE = { width: 544, height: 464 };

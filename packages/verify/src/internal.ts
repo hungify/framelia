@@ -1,38 +1,20 @@
 /**
- * Low-level building blocks behind the primary compare()/done-gate pipeline.
- * Real callers: @framelia/playwright's capture.ts and score-attachment.ts
- * depend on captureReadyPage/CaptureCoreOutcome/CaptureEvidence for every
- * matcher run, not just diagnostic tooling — everything here bypasses the
- * gating logic that the primary entry points apply on top of it, so treat
- * it as a second real interface (capture primitives), not a scratch space.
+ * The capture seam: everything a matcher runner needs to drive a page capture
+ * and enforce the masked-area cap, and nothing else.
+ *
+ * Callers here bypass the gating logic the primary entry point applies on top
+ * of capture, so this is a second real interface -- not a scratch space. Keep
+ * it at the union of what crosses the package line; compare and PNG maths stay
+ * private behind `compare()`. Test fixtures live at `./testing`.
  */
 
-export { areaGap } from "./compare/area-gap.ts";
-export { avgDeltaE2000 } from "./compare/delta-e.ts";
-export {
-  countRealDiffPixels,
-  diffBoundingBox,
-  largestRealDiffCluster,
-  pixelCompare,
-} from "./compare/pixel.ts";
-export {
-  compositeOnCanvas,
-  makeSolidPng,
-  padTo,
-  parseHexRgb,
-  parsePng,
-  readPng,
-  writePng,
-} from "./compare/png.ts";
-export { ssimCompare } from "./compare/ssim.ts";
-
-export { resolveSelector } from "./capture/readiness.ts";
 export { captureReadyPage } from "./capture/core.ts";
-export { settle } from "./capture/settle.ts";
-export { MASK_COLOR } from "./capture/types.ts";
+export { checkMaskAreaRatio } from "./capture/domain/capture-rules.ts";
+export { unionArea } from "./capture/masks.ts";
+export { readPng } from "./compare/png.ts";
 export type {
-  CaptureEvidence,
   CaptureCoreOutcome,
+  CaptureEvidence,
   FontReadiness,
   MaskBounds,
   MaskEvidence,

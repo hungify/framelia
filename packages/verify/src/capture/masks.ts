@@ -23,6 +23,23 @@ export async function resolveMasks(page: Page, spec: MaskResolutionSpec): Promis
     maxMatches: mask.maxMatches ?? 1,
     matchedCount: 0,
   }));
+  const scope = await captureScopeBounds(page, spec);
+  // A region-scope screenshot (locator.screenshot()) crops the PNG to the
+  // scope element's own bounding box, so pixel (0,0) in that image is the
+  // scope's (box.x, box.y) in viewport space -- rebase mask bounds onto that
+  // origin so they land in the captured image's own coordinate space (what
+  // compare()'s maskBounds documents it expects). Page scope needs no rebase:
+  // a full-page screenshot's (0,0) is already document origin (which
+  // scrollOffset below maps mask bounds onto), and a viewport screenshot's
+  // (0,0) is already viewport origin (where boundingBox() already reports).
+  const regionOrigin = spec.scope.kind === "region" ? { x: scope.x, y: scope.y } : { x: 0, y: 0 };
+  const toImageSpace = (rects: MaskBounds[]): MaskBounds[] =>
+    rects.map((rect) => ({
+      x: rect.x - regionOrigin.x,
+      y: rect.y - regionOrigin.y,
+      width: rect.width,
+      height: rect.height,
+    }));
   const fail = (
     code: Extract<RejectResult["error"], `MASK_${string}`>,
     message: string,
@@ -35,7 +52,7 @@ export async function resolveMasks(page: Page, spec: MaskResolutionSpec): Promis
       maskEvidence: {
         requested,
         matchedCount,
-        bounds,
+        bounds: toImageSpace(bounds),
         unionMaskedArea: unionArea(bounds),
         maskedAreaRatio: 0,
         maskColor: MASK_COLOR,
@@ -46,7 +63,6 @@ export async function resolveMasks(page: Page, spec: MaskResolutionSpec): Promis
       },
     },
   });
-  const scope = await captureScopeBounds(page, spec);
   if (scope.width <= 0 || scope.height <= 0)
     return fail("MASK_SCOPE_INVALID", "Capture scope has no positive area.");
   // boundingBox() is viewport-relative, but captureScopeBounds() reports
@@ -137,7 +153,7 @@ export async function resolveMasks(page: Page, spec: MaskResolutionSpec): Promis
     evidence: {
       requested,
       matchedCount: bounds.length,
-      bounds,
+      bounds: toImageSpace(bounds),
       unionMaskedArea,
       maskedAreaRatio,
       maskColor: MASK_COLOR,

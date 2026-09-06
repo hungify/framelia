@@ -29,6 +29,21 @@
       "framelia-dev": "./src/internal.ts",
       "types": "./dist/internal.d.ts",
       "default": "./dist/internal.js"
+    },
+    "./cli": {
+      "framelia-dev": "./src/cli.ts",
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    },
+    "./env": {
+      "framelia-dev": "./src/load-env.ts",
+      "types": "./dist/env.d.ts",
+      "default": "./dist/env.js"
+    },
+    "./testing": {
+      "framelia-dev": "./src/testing.ts",
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     }
   },
   "publishConfig": {
@@ -39,14 +54,15 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
-    "check:domain-boundary": "node scripts/check-domain-boundary.mjs",
-    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test && pnpm run check:domain-boundary"
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test"
   },
   "dependencies": {
     "@figma/rest-api-spec": "^0.41.0",
     "@framelia/contracts": "workspace:*",
     "@playwright/test": "^1.61.1",
+    "dotenv": "^17.4.2",
     "nanoid": "3.3.16",
     "p-map": "^7.0.6",
     "pixelmatch": "^7.2.0",

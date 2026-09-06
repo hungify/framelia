@@ -12,7 +12,7 @@ import { JSON_INDENT_SPACES } from "./constants.ts";
 import { checkDoneGate, type DoneGateVerdict, type DoneGateViewport } from "./done-gate/index.ts";
 import { writeFileAtomic } from "./fs-atomic.ts";
 import { resolveArtifactPath } from "./paths.ts";
-import type { ContractDefaults, ExpectSize, ProfileName } from "./types.ts";
+import type { CaptureDefaults, ExpectSize, ProfileName } from "./types.ts";
 
 /** Fields derived from a contract's page/region scope; identical for the verify pipeline and done-gate. */
 interface ContractScopeFields {
@@ -49,7 +49,7 @@ export function doneGateFromArtifact(
     maxBaselineAgeMs?: number;
     now?: () => number;
     /** Project-wide capture-tuning defaults resolved from framelia.config.ts. */
-    defaults?: ContractDefaults;
+    defaults?: CaptureDefaults;
   } = {},
 ): DoneGateVerdict {
   const viewports = artifact.request.contracts.map((contract) =>
@@ -95,12 +95,12 @@ function contractToDoneGate(
   contract: VerificationContract,
   target: VerificationRequest["target"],
   projectRoot: string,
-  defaults: ContractDefaults,
+  defaults: CaptureDefaults,
 ): DoneGateViewport {
   const scope = resolveContractScope(contract);
   return {
     id: contract.id,
-    viewport: contract.viewport.name,
+    viewport: contract.viewport.preset,
     outDir: resolveArtifactPath(contract.outDir, projectRoot),
     baseline: contract.baseline,
     target,
@@ -110,5 +110,8 @@ function contractToDoneGate(
     pageReason: scope.pageReason,
     masks: contract.masks,
     maxMaskedAreaRatio: defaults.maxMaskedAreaRatio,
+    profileOverrides: contract.profileOverrides,
+    gateEligible: contract.gateEligible,
+    styleGateEligible: contract.styleGateEligible,
   };
 }

@@ -1,10 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { GetFileNodesResponse, GetImagesResponse } from "@figma/rest-api-spec";
+import type {
+  GetFileNodesResponse,
+  GetImagesResponse,
+  GetLocalVariablesResponse,
+} from "@figma/rest-api-spec";
+import * as z from "zod";
 
-import { FIGMA_BASELINE_ARTIFACT } from "./artifacts.ts";
-import { compositeOnCanvas, parsePng, writePng } from "./compare/png.ts";
+import { FIGMA_BASELINE_ARTIFACT } from "../artifacts.ts";
+import { compositeOnCanvas, parsePng, writePng } from "../compare/png.ts";
 import {
   DEFAULT_IMAGE_SCALE,
   DEFAULT_RETRY_AFTER_MS,
@@ -14,8 +19,10 @@ import {
   MAX_RETRY_AFTER_MS,
   MIN_RETRY_AFTER_MS,
   MS_PER_SECOND,
-} from "./constants.ts";
-import { resolveToken } from "./figma-api.ts";
+} from "../constants.ts";
+import { resolveToken } from "../figma-api.ts";
+import { boundColorVariableId, extractFigmaStyle } from "../figma-node-style.ts";
+import type { FigmaVariablesData, StyleSnapshot } from "../figma-node-style.ts";
 
 export interface FetchBaselineOptions {
   fileKey: string;
@@ -43,6 +50,21 @@ export interface BaselineMeta {
   apiCallLog: ApiCallLogEntry[];
 }
 
+const baselineMetaSchema = z.object({
+  nodeId: z.string().min(1),
+  fileKey: z.string().min(1),
+  lastModified: z.string().nullable(),
+  fetchedAt: z.string(),
+  apiCallCount: z.number().int().nonnegative(),
+  apiCallLog: z.array(
+    z.object({
+      endpoint: z.string(),
+      timestamp: z.string(),
+      status: z.number(),
+    }),
+  ),
+});
+
 export type FetchBaselineOutcome =
   | {
       ok: true;
@@ -51,6 +73,8 @@ export type FetchBaselineOutcome =
       metaPath: string;
       meta: BaselineMeta;
       warnings: string[];
+      /** Extracted from the node document fetched alongside the image; {} when the response carried no document. */
+      figmaStyle: StyleSnapshot;
     }
   | { ok: true; fetched: false; errorClass: "retryable"; message: string; warnings: string[] }
   | { ok: false; fetched: false; errorClass: "auth" | "config"; message: string };
@@ -164,6 +188,34 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
         message: `nodeId not found in file; Figma returned no node for "${options.nodeId}" (not an auth problem).`,
       };
     }
+    // Only pay for the (Enterprise-plan-gated) variables/local call when the node's fill is
+    // actually bound to a variable -- the common case never touches this endpoint.
+    const variableId = nodeEntry.document ? boundColorVariableId(nodeEntry.document) : undefined;
+    let variablesData: FigmaVariablesData | undefined;
+    if (variableId) {
+      const varsRes = await call(
+        `/v1/files/${encodeURIComponent(options.fileKey)}/variables/local`,
+      );
+      if (varsRes.ok) {
+        const varsJson = (await varsRes.json()) as GetLocalVariablesResponse;
+        variablesData = {
+          variables: varsJson.meta.variables,
+          variableCollections: varsJson.meta.variableCollections,
+        };
+      } else {
+        // Non-fatal: the style snapshot falls back to the fill's literal color, same as
+        // when a node has no bound variable at all.
+        warnings.push(
+          `could not resolve bound color variable (Figma Variables API returned HTTP ${varsRes.status}); using the fill's literal color instead.`,
+        );
+      }
+    }
+
+    // Real Figma responses always carry a document; test doubles and edge-case
+    // responses may not -- never let a missing document throw inside extraction.
+    const figmaStyle = nodeEntry.document
+      ? extractFigmaStyle(nodeEntry.document, variablesData)
+      : {};
 
     const useAbsoluteBounds = options.useAbsoluteBounds ?? true;
     const imgRes = await call(
@@ -237,7 +289,15 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
     tempBaselinePath = undefined;
     tempMetaPath = undefined;
 
-    return { ok: true, fetched: true, baselinePath: options.outPath, metaPath, meta, warnings };
+    return {
+      ok: true,
+      fetched: true,
+      baselinePath: options.outPath,
+      metaPath,
+      meta,
+      warnings,
+      figmaStyle,
+    };
   } catch (err) {
     if (baselineCommitted) {
       if (previousBaseline) fs.writeFileSync(options.outPath, previousBaseline);
@@ -264,7 +324,8 @@ export function readBaselineMeta(baselinePath: string): BaselineMeta | null {
   const p = baselineMetaPath(baselinePath);
   if (!fs.existsSync(p)) return null;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8")) as BaselineMeta;
+    const result = baselineMetaSchema.safeParse(JSON.parse(fs.readFileSync(p, "utf8")));
+    return result.success ? result.data : null;
   } catch {
     return null;
   }

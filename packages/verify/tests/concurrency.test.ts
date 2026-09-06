@@ -43,6 +43,19 @@ describe("runWithConcurrency", () => {
     expect(overlapping).toBe(true);
   });
 
+  it("treats positive infinity as unbounded rather than serial", async () => {
+    let active = 0;
+    let observedMax = 0;
+    await runWithConcurrency([1, 2, 3], Number.POSITIVE_INFINITY, async (item) => {
+      active += 1;
+      observedMax = Math.max(observedMax, active);
+      await deferred(undefined, 5);
+      active -= 1;
+      return item;
+    });
+    expect(observedMax).toBe(3);
+  });
+
   it("clamps limit to item count and to a minimum of 1", async () => {
     await expect(
       runWithConcurrency([1, 2, 3], 100, (item) => Promise.resolve(item)),

@@ -6,7 +6,7 @@ import * as path from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { makeSolidPng, writePng } from "../src/internal.ts";
+import { makeSolidPng, writePng } from "../src/compare/png.ts";
 
 const packageRoot = path.resolve(import.meta.dirname, "..");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-scripts-"));

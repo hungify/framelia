@@ -6,12 +6,18 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { UsageError } from "../src/exit.ts";
 import {
-  createContractRequest,
-  runCreateContract,
-  writeContractRequest,
+  contractCreateCommand,
+  type ContractCreateOptions,
+} from "../src/internal/contract-create.ts";
+import {
+  nonInteractivePrompts,
+  PROMPT_CANCELLED,
   type PromptAdapter,
-} from "../src/contract.ts";
+  type PromptResult,
+} from "../src/internal/prompts.ts";
+import type { CliRuntime } from "../src/runtime-types.ts";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryDirectories: string[] = [];
@@ -22,109 +28,65 @@ afterEach(() => {
   }
 });
 
-describe("contract scaffold", () => {
-  it("creates a schema-valid Figma page contract", () => {
-    const request = createContractRequest({
-      targetUrl: "http://127.0.0.1:3000/login",
-      contractId: "login.desktop",
-      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
-      scope: { kind: "page", pageReason: "Complete login page." },
-    });
+function fakeRuntime(overrides: Partial<CliRuntime> = {}): CliRuntime {
+  return {
+    cwd: () => "/project",
+    env: {},
+    stdin: process.stdin,
+    stdout: { write: vi.fn<(text: string) => void>() },
+    stderr: { write: vi.fn<(text: string) => void>() },
+    exitCode: undefined,
+    ...overrides,
+  };
+}
 
-    expect(request).toMatchObject({
-      schemaVersion: 4,
-      target: { kind: "web", url: "http://127.0.0.1:3000/login" },
-      contracts: [{ id: "login.desktop", outDir: ".framelia/visual-verifications/login/desktop" }],
-    });
-  });
+function baseOptions(overrides: Partial<ContractCreateOptions> = {}): ContractCreateOptions {
+  return {
+    projectRoot: undefined,
+    output: undefined,
+    force: undefined,
+    targetUrl: undefined,
+    contractId: undefined,
+    name: undefined,
+    fileKey: undefined,
+    nodeId: undefined,
+    viewport: undefined,
+    viewportName: undefined,
+    viewportWidth: undefined,
+    viewportHeight: undefined,
+    scope: undefined,
+    pageReason: undefined,
+    styleCheckSelector: undefined,
+    styleCheckNodeId: undefined,
+    selector: undefined,
+    regionWidth: undefined,
+    regionHeight: undefined,
+    ...overrides,
+  };
+}
 
-  it("writes nested output and refuses accidental overwrite", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-init-"));
-    temporaryDirectories.push(directory);
-    const outputPath = path.join(directory, ".framelia", "visual-contract.json");
-    const request = createContractRequest({
-      targetUrl: "https://preview.example.com/card",
-      contractId: "card.mobile",
-      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "mobile", width: 390, height: 844 },
-      scope: {
-        kind: "region",
-        selector: "[data-testid=card]",
-        expectSize: { width: 320, height: 240 },
-      },
-    });
-
-    writeContractRequest(outputPath, request);
-
-    expect(JSON.parse(fs.readFileSync(outputPath, "utf8"))).toMatchObject({
-      contracts: [{ profile: "component/strict" }],
-    });
-    expect(() => writeContractRequest(outputPath, request)).toThrow(
-      "Refusing to overwrite existing file",
-    );
-    expect(() => writeContractRequest(outputPath, request, true)).not.toThrow();
-  });
-
-  it("accepts a region contract with expectStyle baked in from Figma", () => {
-    const request = createContractRequest({
-      targetUrl: "http://127.0.0.1:3000/login",
-      contractId: "login.form.desktop",
-      baseline: { kind: "figma", fileKey: "abc123", nodeId: "153:5181" },
-      viewport: { name: "desktop", width: 1440, height: 1024 },
-      scope: {
-        kind: "region",
-        selector: "[data-testid=login-form]",
-        expectSize: { width: 480, height: 560 },
-        expectStyle: {
-          fontWeight: 500,
-          fontSizePx: 16,
-          color: { r: 17, g: 17, b: 17, a: 1 },
-          colorProperty: "color",
-        },
-      },
-    });
-
-    expect(request.contracts[0]?.scope).toMatchObject({
-      expectStyle: { fontWeight: 500, fontSizePx: 16 },
-    });
-  });
-});
-
-describe("contract create --target-url and friends (non-interactive)", () => {
-  it("skips prompts entirely and writes the contract when every flag is supplied", () => {
+describe("contractCreateCommand: non-interactive (every flag supplied)", () => {
+  it("skips prompts entirely and writes the contract when every flag is supplied", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-create-"));
     temporaryDirectories.push(directory);
 
-    const result = spawnSync(
-      process.execPath,
-      [
-        path.join(packageRoot, "bin", "framelia.js"),
-        "contract",
-        "create",
-        "--project-root",
-        directory,
-        "--output",
-        ".framelia/visual-verifications/login/visual-contract.json",
-        "--target-url",
-        "http://localhost:8888/login",
-        "--contract-id",
-        "login.desktop",
-        "--file-key",
-        "abc123",
-        "--node-id",
-        "1037:71575",
-        "--viewport",
-        "desktop",
-        "--scope",
-        "page",
-        "--page-reason",
-        "Baseline node represents complete page.",
-      ],
-      { encoding: "utf8", env: { ...process.env, FIGMA_ACCESS_TOKEN: "" } },
+    await contractCreateCommand(
+      baseOptions({
+        projectRoot: directory,
+        output: ".framelia/visual-verifications/login/visual-contract.json",
+        targetUrl: "http://localhost:8888/login",
+        contractId: "login.desktop",
+        name: "Desktop",
+        fileKey: "abc123",
+        nodeId: "1037:71575",
+        viewport: "desktop",
+        scope: "page",
+        pageReason: "Baseline node represents complete page.",
+      }),
+      nonInteractivePrompts,
+      fakeRuntime(),
     );
 
-    expect(result.status).toBe(0);
     const written = JSON.parse(
       fs.readFileSync(
         path.join(directory, ".framelia/visual-verifications/login/visual-contract.json"),
@@ -137,39 +99,27 @@ describe("contract create --target-url and friends (non-interactive)", () => {
     });
   });
 
-  it("writes to --output even when it diverges from the derived default path", () => {
+  it("writes to --output even when it diverges from the derived default path", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-create-"));
     temporaryDirectories.push(directory);
 
-    const result = spawnSync(
-      process.execPath,
-      [
-        path.join(packageRoot, "bin", "framelia.js"),
-        "contract",
-        "create",
-        "--project-root",
-        directory,
-        "--output",
-        "custom/path/mycontract.json",
-        "--target-url",
-        "http://localhost:8888/login",
-        "--contract-id",
-        "login.desktop",
-        "--file-key",
-        "abc123",
-        "--node-id",
-        "1037:71575",
-        "--viewport",
-        "desktop",
-        "--scope",
-        "page",
-        "--page-reason",
-        "Baseline node represents complete page.",
-      ],
-      { encoding: "utf8", env: { ...process.env, FIGMA_ACCESS_TOKEN: "" } },
+    await contractCreateCommand(
+      baseOptions({
+        projectRoot: directory,
+        output: "custom/path/mycontract.json",
+        targetUrl: "http://localhost:8888/login",
+        contractId: "login.desktop",
+        name: "Desktop",
+        fileKey: "abc123",
+        nodeId: "1037:71575",
+        viewport: "desktop",
+        scope: "page",
+        pageReason: "Baseline node represents complete page.",
+      }),
+      nonInteractivePrompts,
+      fakeRuntime(),
     );
 
-    expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(directory, "custom/path/mycontract.json"))).toBe(true);
     expect(
       fs.existsSync(
@@ -178,41 +128,213 @@ describe("contract create --target-url and friends (non-interactive)", () => {
     ).toBe(false);
   });
 
-  it("rejects an invalid --target-url without launching an interactive prompt", () => {
-    const result = spawnSync(
-      process.execPath,
-      [
-        path.join(packageRoot, "bin", "framelia.js"),
-        "contract",
-        "create",
-        "--project-root",
-        os.tmpdir(),
-        "--target-url",
-        "not-a-url",
-        "--contract-id",
-        "login.desktop",
-        "--file-key",
-        "abc123",
-        "--node-id",
-        "1037:71575",
-        "--viewport",
-        "desktop",
-        "--scope",
-        "page",
-        "--page-reason",
-        "Baseline node represents complete page.",
-      ],
-      { encoding: "utf8" },
+  it("builds one style check-point from flags on a page-scope contract, no prompt needed", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-create-"));
+    temporaryDirectories.push(directory);
+
+    await contractCreateCommand(
+      baseOptions({
+        projectRoot: directory,
+        output: ".framelia/visual-verifications/home/visual-contract.json",
+        targetUrl: "http://localhost:8888/home",
+        contractId: "home.desktop",
+        name: "Desktop",
+        fileKey: "abc123",
+        nodeId: "1037:71575",
+        viewport: "desktop",
+        scope: "page",
+        pageReason: "Baseline node represents complete page.",
+        styleCheckSelector: "[data-testid=hero-heading]",
+        styleCheckNodeId: "200:10",
+      }),
+      nonInteractivePrompts,
+      fakeRuntime(),
     );
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr + result.stdout).toContain("--target-url");
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/home/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({
+      kind: "page",
+      styleChecks: [{ selector: "[data-testid=hero-heading]", nodeId: "200:10" }],
+    });
+  });
+
+  it("rejects a lone --style-check-selector without its paired --style-check-node-id", async () => {
+    await expect(
+      contractCreateCommand(
+        baseOptions({
+          projectRoot: os.tmpdir(),
+          targetUrl: "http://localhost:8888/home",
+          contractId: "home.desktop",
+          name: "Desktop",
+          fileKey: "abc123",
+          nodeId: "1037:71575",
+          viewport: "desktop",
+          scope: "page",
+          pageReason: "Baseline node represents complete page.",
+          styleCheckSelector: "[data-testid=hero-heading]",
+        }),
+        nonInteractivePrompts,
+        fakeRuntime(),
+      ),
+    ).rejects.toThrow(
+      /--style-check-selector and --style-check-node-id must be supplied together\./,
+    );
+  });
+
+  it("rejects an empty --style-check-selector as a usage error, not a raw schema failure", async () => {
+    await expect(
+      contractCreateCommand(
+        baseOptions({
+          projectRoot: os.tmpdir(),
+          targetUrl: "http://localhost:8888/home",
+          contractId: "home.desktop",
+          name: "Desktop",
+          fileKey: "abc123",
+          nodeId: "1037:71575",
+          viewport: "desktop",
+          scope: "page",
+          pageReason: "Baseline node represents complete page.",
+          styleCheckSelector: "",
+          styleCheckNodeId: "200:10",
+        }),
+        nonInteractivePrompts,
+        fakeRuntime(),
+      ),
+    ).rejects.toThrow(/--style-check-selector: Enter a CSS selector\./);
+  });
+
+  it("rejects style-check flags on a region-scope contract instead of silently dropping them", async () => {
+    await expect(
+      contractCreateCommand(
+        baseOptions({
+          projectRoot: os.tmpdir(),
+          targetUrl: "http://localhost:8888/login",
+          contractId: "login.desktop",
+          name: "Desktop",
+          fileKey: "abc123",
+          nodeId: "1037:71575",
+          viewport: "desktop",
+          scope: "region",
+          selector: "[data-testid=card]",
+          regionWidth: 320,
+          regionHeight: 240,
+          styleCheckSelector: "[data-testid=hero-heading]",
+          styleCheckNodeId: "200:10",
+        }),
+        nonInteractivePrompts,
+        fakeRuntime(),
+      ),
+    ).rejects.toThrow(/--style-check-selector.*--scope page/);
+  });
+
+  it("rejects an invalid --target-url without launching an interactive prompt", async () => {
+    await expect(
+      contractCreateCommand(
+        baseOptions({
+          projectRoot: os.tmpdir(),
+          targetUrl: "not-a-url",
+          contractId: "login.desktop",
+          fileKey: "abc123",
+          nodeId: "1037:71575",
+          viewport: "desktop",
+          scope: "page",
+          pageReason: "Baseline node represents complete page.",
+        }),
+        nonInteractivePrompts,
+        fakeRuntime(),
+      ),
+    ).rejects.toThrow(UsageError);
+  });
+
+  it("rejects --viewport-width without its paired --viewport-height before any prompt (deliberate new pairing rule -- see internal/contract-create.ts)", async () => {
+    await expect(
+      contractCreateCommand(
+        baseOptions({
+          projectRoot: os.tmpdir(),
+          targetUrl: "http://localhost:8888/login",
+          contractId: "login.desktop",
+          name: "Desktop",
+          fileKey: "abc123",
+          nodeId: "1037:71575",
+          viewport: "custom",
+          viewportName: "tablet",
+          viewportWidth: 834,
+          scope: "page",
+          pageReason: "Baseline node represents complete page.",
+        }),
+        nonInteractivePrompts,
+        fakeRuntime(),
+      ),
+    ).rejects.toThrow(/--viewport-width and --viewport-height must be supplied together\./);
+  });
+
+  it("rejects custom viewport flags for a named viewport preset", async () => {
+    await expect(
+      contractCreateCommand(
+        baseOptions({
+          projectRoot: os.tmpdir(),
+          targetUrl: "http://localhost:8888/login",
+          contractId: "login.desktop",
+          name: "Desktop",
+          fileKey: "abc123",
+          nodeId: "1037:71575",
+          viewport: "desktop",
+          viewportName: "wide",
+          viewportWidth: 1920,
+          viewportHeight: 1080,
+          scope: "page",
+          pageReason: "Baseline node represents complete page.",
+        }),
+        nonInteractivePrompts,
+        fakeRuntime(),
+      ),
+    ).rejects.toThrow(/require --viewport custom/);
+  });
+
+  it("rejects region flags for a page scope", async () => {
+    await expect(
+      contractCreateCommand(
+        baseOptions({
+          projectRoot: os.tmpdir(),
+          targetUrl: "http://localhost:8888/login",
+          contractId: "login.desktop",
+          name: "Desktop",
+          fileKey: "abc123",
+          nodeId: "1037:71575",
+          viewport: "desktop",
+          scope: "page",
+          pageReason: "Baseline node represents complete page.",
+          selector: "[data-testid=card]",
+          regionWidth: 320,
+          regionHeight: 240,
+        }),
+        nonInteractivePrompts,
+        fakeRuntime(),
+      ),
+    ).rejects.toThrow(/require --scope region/);
   });
 });
 
-/** Scripts a PromptAdapter from a queue of answers; running past the end of the queue cancels. */
-const PROMPT_CANCEL = Symbol("prompt-cancelled");
-function scriptedPrompts(answers: unknown[]): {
+describe("schema --target contract", () => {
+  it("reflects the page scope's styleChecks shape", () => {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(packageRoot, "bin", "framelia.js"), "schema", "--target", "contract"],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(0);
+    const schema = JSON.parse(result.stdout);
+    expect(JSON.stringify(schema)).toContain("styleChecks");
+  });
+});
+
+function scriptedPrompts(answers: string[]): {
   adapter: PromptAdapter;
   warnings: string[];
   cancelCalls: string[];
@@ -220,46 +342,48 @@ function scriptedPrompts(answers: unknown[]): {
   let index = 0;
   const warnings: string[] = [];
   const cancelCalls: string[] = [];
-  const next = () => (index < answers.length ? answers[index++] : PROMPT_CANCEL);
+  const next = (): PromptResult<string> =>
+    index < answers.length ? answers[index++]! : PROMPT_CANCELLED;
   const adapter: PromptAdapter = {
-    text: async () => next() as never,
-    select: async () => next() as never,
-    isCancel: (value) => value === PROMPT_CANCEL,
+    interactive: true,
+    text: async () => next(),
+    select: async <T extends string>() => {
+      const answer = next();
+      return answer === PROMPT_CANCELLED ? answer : (answer as T);
+    },
+    confirm: async () => PROMPT_CANCELLED,
     cancel: (message) => cancelCalls.push(message),
     intro: () => undefined,
     outro: () => undefined,
+    note: () => undefined,
     warn: (message) => warnings.push(message),
   };
   return { adapter, warnings, cancelCalls };
 }
 
-describe("runCreateContract (scripted prompt adapter)", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    process.exitCode = 0;
-  });
-
+describe("contractCreateCommand (scripted prompt adapter)", () => {
   it("walks the custom-viewport and region-scope branches end to end", async () => {
-    vi.stubEnv("FIGMA_ACCESS_TOKEN", undefined);
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
     temporaryDirectories.push(directory);
+    const runtime = fakeRuntime({ cwd: () => directory, env: {} });
 
     const { adapter, warnings } = scriptedPrompts([
-      "http://127.0.0.1:3000/login", // target URL
-      "login.tablet", // contract ID
-      "abc123", // Figma file key
-      "153:5181", // Figma node ID
-      "custom", // viewport preset
-      "tablet", // custom viewport name
-      "834", // custom viewport width
-      "1194", // custom viewport height
-      "region", // capture scope
-      "[data-testid=card]", // selector
-      "320", // region width
-      "240", // region height
+      "http://127.0.0.1:3000/login",
+      "login.tablet",
+      "Login · Tablet",
+      "abc123",
+      "153:5181",
+      "custom",
+      "tablet",
+      "834",
+      "1194",
+      "region",
+      "[data-testid=card]",
+      "320",
+      "240",
     ]);
 
-    await runCreateContract({ projectRoot: directory }, adapter);
+    await contractCreateCommand(baseOptions({ projectRoot: directory }), adapter, runtime);
 
     const written = JSON.parse(
       fs.readFileSync(
@@ -272,47 +396,54 @@ describe("runCreateContract (scripted prompt adapter)", () => {
       contracts: [
         {
           id: "login.tablet",
-          viewport: { name: "tablet", width: 834, height: 1194 },
+          viewport: { preset: "tablet", width: 834, height: 1194 },
           scope: { kind: "region", selector: "[data-testid=card]" },
         },
       ],
     });
-    // No Figma token in this test env, so the expectStyle bake-in is skipped, not attempted.
-    expect(warnings).toEqual([
-      "Skipping expected-style bake-in: contract create skipped: no Figma token to fetch the expected component style.",
-    ]);
+    expect(warnings).toEqual(["Skipping expected-style bake-in: FIGMA_ACCESS_TOKEN is not set."]);
   });
 
-  it("stops and cancels on the first unanswered prompt", async () => {
+  it("returns one cancellation result without mutating the runtime", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
     temporaryDirectories.push(directory);
-    const { adapter, cancelCalls } = scriptedPrompts([]); // cancel immediately
+    const runtime = fakeRuntime({ cwd: () => directory });
+    const { adapter, cancelCalls } = scriptedPrompts([]);
 
-    await runCreateContract({ projectRoot: directory }, adapter);
+    const result = await contractCreateCommand(
+      baseOptions({ projectRoot: directory }),
+      adapter,
+      runtime,
+    );
 
+    expect(result).toEqual({ ok: false, body: { cancelled: true } });
     expect(cancelCalls).toEqual(["Setup cancelled."]);
-    expect(process.exitCode).toBe(1);
+    expect(runtime.exitCode).toBeUndefined();
     expect(fs.existsSync(path.join(directory, ".framelia/visual-verifications"))).toBe(false);
   });
 
   it("resolves prompt-driven fields around flag overrides", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
     temporaryDirectories.push(directory);
+    const runtime = fakeRuntime({ cwd: () => directory });
     const { adapter } = scriptedPrompts([
-      "desktop", // viewport preset (only remaining prompt)
-      "page", // capture scope
-      "Baseline node represents complete page.", // page reason
+      "desktop",
+      "page",
+      "Baseline node represents complete page.",
+      "done",
     ]);
 
-    await runCreateContract(
-      {
+    await contractCreateCommand(
+      baseOptions({
         projectRoot: directory,
         targetUrl: "http://127.0.0.1:3000/login",
         contractId: "login.desktop",
+        name: "Desktop",
         fileKey: "abc123",
         nodeId: "153:5181",
-      },
+      }),
       adapter,
+      runtime,
     );
 
     const written = JSON.parse(
@@ -323,8 +454,143 @@ describe("runCreateContract (scripted prompt adapter)", () => {
     );
     expect(written.contracts[0]).toMatchObject({
       id: "login.desktop",
-      viewport: { name: "desktop", width: 1440, height: 1024 },
+      viewport: { preset: "desktop", width: 1440, height: 1024 },
       scope: { kind: "page" },
     });
+    expect(written.contracts[0].scope).not.toHaveProperty("styleChecks");
+  });
+
+  it("still offers the style check-point loop when --page-reason is a flag but other fields are still prompted", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+    const runtime = fakeRuntime({ cwd: () => directory });
+    const { adapter } = scriptedPrompts(["desktop", "page", "done"]);
+
+    await contractCreateCommand(
+      baseOptions({
+        projectRoot: directory,
+        targetUrl: "http://127.0.0.1:3000/login",
+        contractId: "login.desktop",
+        name: "Desktop",
+        fileKey: "abc123",
+        nodeId: "153:5181",
+        pageReason: "Baseline node represents complete page.",
+      }),
+      adapter,
+      runtime,
+    );
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/login/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({ kind: "page" });
+    expect(written.contracts[0].scope).not.toHaveProperty("styleChecks");
+  });
+
+  it("skips the style check-point loop only when the entire invocation is flag-driven", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+    const runtime = fakeRuntime({ cwd: () => directory });
+    const { adapter } = scriptedPrompts([]);
+
+    await contractCreateCommand(
+      baseOptions({
+        projectRoot: directory,
+        targetUrl: "http://127.0.0.1:3000/login",
+        contractId: "login.desktop",
+        name: "Desktop",
+        fileKey: "abc123",
+        nodeId: "153:5181",
+        viewport: "desktop",
+        scope: "page",
+        pageReason: "Baseline node represents complete page.",
+      }),
+      adapter,
+      runtime,
+    );
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/login/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({ kind: "page" });
+    expect(written.contracts[0].scope).not.toHaveProperty("styleChecks");
+  });
+
+  it("collects a single page style check-point through the interactive loop", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+    const runtime = fakeRuntime({ cwd: () => directory, env: {} });
+
+    const { adapter, warnings } = scriptedPrompts([
+      "http://127.0.0.1:3000/home",
+      "home.desktop",
+      "Desktop",
+      "abc123",
+      "153:5181",
+      "desktop",
+      "page",
+      "Baseline node represents complete home page.",
+      "add",
+      "[data-testid=hero-heading]",
+      "200:10",
+      "done",
+    ]);
+
+    await contractCreateCommand(baseOptions({ projectRoot: directory }), adapter, runtime);
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/home/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope).toMatchObject({
+      kind: "page",
+      styleChecks: [{ selector: "[data-testid=hero-heading]", nodeId: "200:10" }],
+    });
+    expect(warnings).toEqual(["Skipping expected-style bake-in: FIGMA_ACCESS_TOKEN is not set."]);
+  });
+
+  it("collects multiple page style check-points through the interactive loop", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-contract-prompt-"));
+    temporaryDirectories.push(directory);
+    const runtime = fakeRuntime({ cwd: () => directory });
+
+    const { adapter } = scriptedPrompts([
+      "http://127.0.0.1:3000/home",
+      "home.desktop",
+      "Desktop",
+      "abc123",
+      "153:5181",
+      "desktop",
+      "page",
+      "Baseline node represents complete home page.",
+      "add",
+      "[data-testid=hero-heading]",
+      "200:10",
+      "add",
+      "[data-testid=cta-button]",
+      "200:11",
+      "done",
+    ]);
+
+    await contractCreateCommand(baseOptions({ projectRoot: directory }), adapter, runtime);
+
+    const written = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, ".framelia/visual-verifications/home/visual-contract.json"),
+        "utf8",
+      ),
+    );
+    expect(written.contracts[0].scope.styleChecks).toEqual([
+      { selector: "[data-testid=hero-heading]", nodeId: "200:10" },
+      { selector: "[data-testid=cta-button]", nodeId: "200:11" },
+    ]);
   });
 });

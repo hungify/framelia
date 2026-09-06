@@ -12,7 +12,7 @@ that, not the matchers themselves.
 ## Requirements
 
 - Node.js 22.13 or newer.
-- `FIGMA_ACCESS_TOKEN` for any command touching a Figma node (`contract create`, `fetch-gold`).
+- `FIGMA_ACCESS_TOKEN` for any command touching a Figma node (`contract create`, `capture`).
 
 ## Install
 
@@ -25,24 +25,27 @@ npx framelia status --project-root "$PWD"
 
 ## Commands
 
-| Command                    | Purpose                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------------ |
-| `framelia init`            | Initialize project config and an ignored auth-state directory.                             |
-| `framelia auth`            | Record Playwright storage state through a headed login browser.                            |
-| `framelia contract create` | Interactively author a schema-v4, Figma-baselined visual contract.                         |
-| `framelia status`          | Show CLI version, project root, and Figma token availability.                              |
-| `framelia schema`          | Print the live JSON Schema for a contract or verification artifact.                        |
-| `framelia` (no arguments)  | Open a dashboard aggregating every artifact found under `.framelia/visual-verifications/`. |
-| `framelia dashboard`       | Same aggregated dashboard, explicit form; supports `--project-root` and `--no-open`.       |
-| `framelia open`            | Open one archived artifact in the dashboard without rerunning.                             |
-| `framelia report`          | Export a portable static dashboard for CI artifacts.                                       |
-| `framelia done-gate`       | Revalidate a persisted artifact's identity, freshness, and evidence integrity.             |
-| `framelia fetch-gold`      | Fetch one Figma PNG for diagnosis.                                                         |
-| `framelia compare`         | Compare two existing PNG files without source provenance gates.                            |
+| Command                           | Purpose                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `framelia init`                   | Initialize project config and an ignored auth-state directory.                                  |
+| `framelia auth`                   | Record Playwright storage state through a headed login browser.                                 |
+| `framelia contract create`        | Interactively author a schema-v5, Figma-baselined visual contract.                              |
+| `framelia contract suggest-masks` | Scan a live page and propose mask selectors without modifying a contract.                       |
+| `framelia baseline promote`       | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                         |
+| `framelia status`                 | Show CLI version, project root, and Figma token availability.                                   |
+| `framelia schema`                 | Print the live JSON Schema for a contract or verification artifact.                             |
+| `framelia` (no arguments)         | Open a dashboard aggregating every artifact found under `.framelia/visual-verifications/`.      |
+| `framelia dashboard`              | Same aggregated dashboard, explicit form; supports `--project-root`, `--host`, and `--no-open`. |
+| `framelia open`                   | Open one archived artifact in the dashboard without rerunning; supports `--host`.               |
+| `framelia report`                 | Export a portable static dashboard for CI artifacts.                                            |
+| `framelia done-gate`              | Revalidate a persisted artifact's identity, freshness, and evidence integrity.                  |
+| `framelia capture`                | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                                         |
+| `framelia compare`                | Compare two existing PNG files without source provenance gates.                                 |
 
 `verify`, `doctor`, and `discover` — plus the navigation action DSL underneath them — are retired.
-There is no CLI command that captures a browser or executes navigation; that ownership moved
-entirely to `@framelia/playwright`'s matchers, called from your own test.
+Visual verification runs in `@framelia/playwright`'s matchers, called from your own test.
+The CLI still launches standalone browsers for `auth`, `contract suggest-masks`, and
+`baseline promote`; these helpers do not run visual verification.
 
 ## Setup
 
@@ -58,7 +61,7 @@ your own Playwright test and in whatever contract you author separately.
 import { defineConfig } from "framelia";
 
 export default defineConfig({
-  // envFile: ".env.playwright",
+  // envFile: ".env.e2e",
   // storageStatePath: ".framelia/auth/user.json",
   // Project-wide capture defaults:
   // stabilitySamples: 3,
@@ -72,7 +75,7 @@ export default defineConfig({
 });
 ```
 
-Set the Figma token used by `contract create` and `fetch-gold`:
+Set the Figma token used by `contract create` and `capture` (alias `fetch-gold`):
 
 ```bash
 export FIGMA_ACCESS_TOKEN="your-token"
@@ -85,20 +88,23 @@ npx framelia contract create
 ```
 
 An interactive wizard asks for a target URL (identity only — recorded for evidence, not
-navigated by this command), contract ID, Figma `fileKey`/`nodeId`, viewport, and capture scope. It
-writes `.framelia/visual-verifications/<feature>/visual-contract.json`, where `<feature>` is the
-first segment of the contract ID. Use `--output <path>` for another location; an existing file
-requires `--force`.
+navigated by this command), contract ID, display name, Figma `fileKey`/`nodeId`, viewport, and
+capture scope. It writes `.framelia/visual-verifications/<feature>/visual-contract.json`, where
+`<feature>` is the first segment of the contract ID. Use `--output <path>` for another location.
+New contract IDs merge into an existing file without `--force`; replacing an existing ID requires
+`--force` and preserves the other contracts. All contracts in one file share `target.url`: a
+different target URL errors even with `--force`, so use a separate output file for another target.
 
 ```json
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "target": { "kind": "web", "url": "http://127.0.0.1:3000/login" },
   "contracts": [
     {
       "id": "login.desktop",
+      "name": "Desktop",
       "baseline": { "kind": "figma", "fileKey": "abc123", "nodeId": "153:5181" },
-      "viewport": { "name": "desktop", "width": 1440, "height": 1024 },
+      "viewport": { "preset": "desktop", "width": 1440, "height": 1024 },
       "outDir": ".framelia/visual-verifications/login/desktop",
       "scope": {
         "kind": "page",
@@ -120,6 +126,20 @@ color) into the contract from the Figma node at authoring time.
   "kind": "region",
   "selector": "[data-testid='login-form']",
   "expectSize": { "width": 480, "height": 560 }
+}
+```
+
+A page contract can also declare one or more `styleChecks` — CSS selectors inside the page, each
+paired with its own Figma node (distinct from the page's own baseline node), for comparing
+individual elements' style. `contract create` offers to add these interactively when scope is
+`page` (or accepts one via `--style-check-selector`/`--style-check-node-id` non-interactively);
+each check-point's `expectStyle` is best-effort baked in the same way region scope's is.
+
+```json
+{
+  "kind": "page",
+  "pageReason": "Supplied node represents complete login screen.",
+  "styleChecks": [{ "selector": "[data-testid='login-form']", "nodeId": "200:10" }]
 }
 ```
 
@@ -173,11 +193,11 @@ checks evidence freshness, hash integrity, and that every contract's result actu
 ## Diagnosis commands
 
 ```bash
-npx framelia fetch-gold --file-key abc123 --node-id 153:5181 --out figma-gold.png
-npx framelia compare --gold figma-gold.png --actual actual.png --out-dir ./diff
+npx framelia capture --file-key abc123 --node-id 153:5181 --out figma-gold.png
+npx framelia compare --baseline figma-gold.png --actual actual.png --out-dir ./diff
 ```
 
-`fetch-gold` captures one Figma node render for inspection. `compare` diffs two existing PNGs
+`capture` (alias `fetch-gold`) captures one Figma node render for inspection. `compare` diffs two existing PNGs
 directly with framelia's compare engine, without resolving a baseline or checking provenance.
 
 ## Evidence layout

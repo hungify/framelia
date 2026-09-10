@@ -469,7 +469,7 @@ async function runInterview(
     },
   );
   const name = await resolveField(prompts, state, "--name", options.name, required, {
-    message: "Display name (just this contract -- the feature is already grouped)",
+    message: "Display name for this contract (e.g. Desktop, Mobile)",
     placeholder: "Desktop",
     validate: required,
   });

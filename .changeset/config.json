@@ -2,7 +2,15 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.2/schema.json",
   "changelog": false,
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "framelia",
+      "@framelia/contracts",
+      "@framelia/verify",
+      "@framelia/playwright",
+      "@framelia/dashboard-server"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

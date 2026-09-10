@@ -48,7 +48,10 @@ export async function contractCreateCommand(
       : outcome === "added"
         ? "Added contract to"
         : "Replaced contract in";
-  prompts.outro(`${verb} ${outputPath}`);
+  prompts.note(`${verb} ${outputPath}`, "Contract saved");
+  prompts.outro(
+    "This only wrote the spec -- run a Playwright test that calls toMatchFigma to capture evidence, then `framelia dashboard` to view it.",
+  );
   return {
     ok: true,
     body: { contractId: interview.answers.contractId, outputPath, outcome },

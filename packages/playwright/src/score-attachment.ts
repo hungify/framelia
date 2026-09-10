@@ -42,6 +42,9 @@ export interface FrameliaScoreAttachment {
   baselinePromotedBy?: string;
   baselineVersion?: number;
   baselineRunId?: string;
+  /** Caller-supplied contract id (e.g. "login.desktop") -- lets the Reporter derive a
+   *  readable durable artifact id/folder instead of Playwright's opaque test.id hash. */
+  contractId?: string;
 }
 import type { VisualMask } from "@framelia/contracts";
 import type {
@@ -71,6 +74,7 @@ export interface ScoreAttachmentBase {
   masks?: VisualMask[];
   maxMaskedAreaRatio?: number;
   captureEvidence?: CaptureEvidence;
+  contractId?: string;
 }
 
 /**

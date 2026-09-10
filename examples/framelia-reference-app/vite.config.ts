@@ -1,0 +1,132 @@
+import babel from "@rolldown/plugin-babel";
+import tailwindcss from "@tailwindcss/vite";
+import { devtools } from "@tanstack/devtools-vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
+import { nitro } from "nitro/vite";
+import { defineConfig, lazyPlugins } from "vite-plus";
+
+import { version } from "./package.json";
+
+// https://viteplus.dev/config/
+export default defineConfig(({ mode }) => ({
+  // Git hooks for staged files - https://viteplus.dev/guide/commit-hooks
+  staged: {
+    "*": "vp fmt --no-error-on-unmatched-pattern",
+  },
+
+  // Vitest (via Vite+) - https://viteplus.dev/guide/test
+  test: {
+    include: ["src/**/*.test.{ts,tsx}"],
+    passWithNoTests: true,
+  },
+
+  // Oxfmt - https://oxc.rs/docs/guide/usage/formatter/config.html
+  fmt: {
+    tabWidth: 2,
+    semi: true,
+    printWidth: 100,
+    singleQuote: false,
+    endOfLine: "lf",
+    trailingComma: "all",
+    sortImports: {},
+    sortTailwindcss: {
+      stylesheet: "./src/styles.css",
+      attributes: ["class", "className"],
+      functions: ["clsx", "cn", "cva", "tw"],
+    },
+    sortPackageJson: true,
+    ignorePatterns: [
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock",
+      "bun.lock",
+      "routeTree.gen.ts",
+      ".tanstack-start/",
+      ".tanstack/",
+      "migrations/",
+      ".cache",
+      "worker-configuration.d.ts",
+      ".vercel",
+      ".output",
+      ".wrangler",
+      ".netlify",
+      "dist",
+    ],
+  },
+
+  // Oxlint - https://oxc.rs/docs/guide/usage/linter/config
+  lint: {
+    plugins: ["typescript", "react", "react-perf", "jsx-a11y"],
+    env: {
+      builtin: true,
+      node: true,
+      browser: true,
+    },
+    options: {
+      typeAware: true,
+      typeCheck: true,
+    },
+    jsPlugins: [
+      // Plugins with "/" in name have to be aliased for now
+      // Issue: https://github.com/oxc-project/oxc/issues/14557
+      {
+        name: "eslint-tanstack-router",
+        specifier: "@tanstack/eslint-plugin-router",
+      },
+      { name: "vite-plus", specifier: "vite-plus/oxlint-plugin" },
+    ],
+    rules: {
+      "vite-plus/prefer-vite-plus-imports": "warn",
+
+      "no-deprecated": "warn",
+      "typescript/no-floating-promises": "off",
+      "typescript/no-misused-spread": "off",
+
+      "jsx-a11y/prefer-tag-over-role": "off",
+
+      // Experimental:
+      // https://oxc.rs/docs/guide/usage/linter/rules/react/react-compiler.html
+      "react/react-compiler": "warn",
+
+      "eslint-tanstack-router/create-route-property-order": "warn",
+    },
+    ignorePatterns: [
+      "dist",
+      ".wrangler",
+      ".vercel",
+      ".netlify",
+      ".output",
+      "build/",
+      "worker-configuration.d.ts",
+      "scripts/",
+    ],
+  },
+
+  // Vite config - https://vite.dev/config/
+  define: {
+    __APP_VERSION__: JSON.stringify(version),
+  },
+  server: {
+    port: 3000,
+  },
+  plugins: lazyPlugins(() =>
+    mode === "test"
+      ? []
+      : [
+          devtools({
+            // https://tanstack.com/devtools/latest/docs/vite-plugin#console-piping
+            consolePiping: { enabled: false },
+          }),
+          tanstackStart(),
+          // https://tanstack.com/start/latest/docs/framework/react/guide/hosting
+          nitro(),
+          viteReact(),
+          // https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md#react-compiler
+          babel({
+            presets: [reactCompilerPreset()],
+          }),
+          tailwindcss(),
+        ],
+  ),
+}));

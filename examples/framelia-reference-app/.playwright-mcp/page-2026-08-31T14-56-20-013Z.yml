@@ -1,0 +1,130 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e3]:
+    - banner [ref=f5e4]:
+      - generic "Framelia" [ref=f5e5]:
+        - strong [ref=f5e6]: Framelia
+        - generic [ref=f5e7]:
+          - button "Contracts" [pressed] [ref=f5e8]
+          - button "Details" [pressed] [ref=f5e9]
+      - generic [ref=f5e17]:
+        - generic [ref=f5e18]: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae
+        - code [ref=f5e19]: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae.4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae
+      - generic [ref=f5e10]: Archived
+    - main [ref=f5e20]:
+      - complementary [ref=f5e21]:
+        - generic [ref=f5e22]:
+          - generic [ref=f5e23]:
+            - generic [ref=f5e24]:
+              - strong [ref=f5e25]: Verification run
+              - generic [ref=f5e26]: 2 of 2 stories
+            - generic [ref=f5e27]: failed
+          - generic [ref=f5e28]:
+            - searchbox "Search stories" [ref=f5e30]
+            - combobox "Filter by status" [ref=f5e31]:
+              - generic: All
+          - tree [ref=f5e36]:
+            - treeitem "4efa28804d1e5d3a174e A27c3ac01e4ca3436cae 1" [expanded] [level=1] [ref=f5e37]:
+              - generic [ref=f5e38]: ▾
+              - strong [ref=f5e41]: 4efa28804d1e5d3a174e A27c3ac01e4ca3436cae
+              - generic [ref=f5e42]: "1"
+            - group [ref=f5e46]:
+              - treeitem "4efa28804d1e5d3a174e A27c3ac01e4ca3436cae 2.74%" [level=2] [selected] [ref=f5e47]:
+                - strong [ref=f5e51]: 4efa28804d1e5d3a174e A27c3ac01e4ca3436cae
+                - generic [ref=f5e52]: 2.74%
+            - treeitem "4efa28804d1e5d3a174e 1c85acdc09aaac726066 1" [expanded] [level=1] [ref=f5e54]:
+              - generic [ref=f5e55]: ▾
+              - strong [ref=f5e58]: 4efa28804d1e5d3a174e 1c85acdc09aaac726066
+              - generic [ref=f5e59]: "1"
+            - group [ref=f5e63]:
+              - treeitem "4efa28804d1e5d3a174e 1c85acdc09aaac726066 0.71%" [level=2] [ref=f5e64]:
+                - strong [ref=f5e68]: 4efa28804d1e5d3a174e 1c85acdc09aaac726066
+                - generic [ref=f5e69]: 0.71%
+          - generic "Verification summary" [ref=f5e71]:
+            - generic [ref=f5e72]:
+              - generic [ref=f5e73]: Visual tests
+              - generic [ref=f5e74]: 0 clean passes / 2
+            - progressbar "0%" [ref=f5e76]
+            - generic [ref=f5e78]: 2 failed
+            - paragraph [ref=f5e80]: ⌥ + ← / → to move selection
+      - region "Visual comparison inspector" [ref=f5e82]:
+        - generic [ref=f5e85]:
+          - img "Baseline capture" [ref=f5e86]
+          - img "Actual capture" [ref=f5e87]
+          - slider "Reveal after image" [ref=f5e88]
+        - generic [ref=f5e90]:
+          - tablist "Comparison mode" [ref=f5e91]:
+            - tab "Baseline" [ref=f5e92] [cursor=pointer]
+            - tab "Actual" [ref=f5e93] [cursor=pointer]
+            - tab "Scrub" [selected] [ref=f5e94] [cursor=pointer]
+            - tab "Diff" [ref=f5e95] [cursor=pointer]
+            - tab "Split" [ref=f5e96] [cursor=pointer]
+          - generic [ref=f5e98]:
+            - generic [ref=f5e99]: Opacity
+            - generic "Opacity" [ref=f5e100]:
+              - slider "Thumb" [ref=f5e103]
+            - status "Opacity Opacity" [ref=f5e104]: 55%
+          - generic [ref=f5e105]:
+            - checkbox "Difference blend" [checked] [ref=f5e108]
+            - generic [ref=f5e109]: Difference
+        - generic [ref=f5e110]:
+          - button "Zoom out" [ref=f5e111] [cursor=pointer]: −
+          - button "101%" [ref=f5e112] [cursor=pointer]
+          - button "Zoom in" [ref=f5e113] [cursor=pointer]: +
+          - button "100%" [ref=f5e115] [cursor=pointer]
+          - button "Fit" [ref=f5e116] [cursor=pointer]
+      - complementary [ref=f5e117]:
+        - generic [ref=f5e118]:
+          - generic [ref=f5e119]:
+            - generic [ref=f5e120]:
+              - heading "4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae" [level=1] [ref=f5e121]
+              - generic [ref=f5e122]: failed
+            - code [ref=f5e123]: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae.4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae
+          - generic [ref=f5e124]:
+            - generic [ref=f5e125]:
+              - term [ref=f5e126]: Diff ratio
+              - definition [ref=f5e127]: 2.74%
+            - generic [ref=f5e128]:
+              - term [ref=f5e129]: Pixels
+              - definition [ref=f5e130]: 6,701
+            - generic [ref=f5e131]:
+              - term [ref=f5e132]: Viewport
+              - definition [ref=f5e133]: 356×688
+            - generic [ref=f5e134]:
+              - term [ref=f5e135]: Baseline
+              - definition [ref=f5e136]: figma
+          - generic [ref=f5e137]:
+            - generic [ref=f5e138]: Resolved threshold — page
+            - 'generic "profile: page minMatch: 0.99 minSSIM: 0.97 maxAvgDeltaE: 4 maxDiffPixels: unbounded maxAreaGapPercent: 5 cluster: true" [ref=f5e139]':
+              - generic [ref=f5e140]: match ≥ 99.00%
+              - generic [ref=f5e141]: SSIM ≥ 97.00%
+              - generic [ref=f5e142]: ΔE ≤ 4.00
+              - generic [ref=f5e143]: px ≤ unbounded
+              - generic [ref=f5e144]: cluster on
+          - generic [ref=f5e145]:
+            - generic [ref=f5e146]:
+              - generic [ref=f5e147]: Baseline provenance
+              - code [ref=f5e148]: figma://q2MZbYDBibNKYDm7ESfvKF/6007:4284
+            - generic [ref=f5e149]:
+              - generic [ref=f5e150]: Evidence hash
+              - code [ref=f5e151]: sha256:fa0f9b144c2bbe9f95a8adb469c70850d7852f1e695cc17f296a17de0044a7f2
+          - group [ref=f5e152]:
+            - generic "Capture evidence · 1 warning(s)" [ref=f5e153] [cursor=pointer]
+            - generic [ref=f5e154]:
+              - term [ref=f5e155]: Final URL
+              - definition [ref=f5e156]: http://localhost:8888/login
+              - term [ref=f5e157]: Readiness
+              - definition [ref=f5e158]: not configured
+              - term [ref=f5e159]: Fonts
+              - definition [ref=f5e160]: loaded
+              - term [ref=f5e161]: Actions
+              - definition [ref=f5e162]: none
+              - term [ref=f5e163]: Times
+              - definition [ref=f5e164]: 2026-08-31T11:59:45.670Z → 2026-08-31T11:59:46.388Z → 2026-08-31T11:59:46.434Z
+              - term [ref=f5e165]: Hashes
+              - definition [ref=f5e166]: sha256:29219037bd47fb8314c3c40a6be6b9d8405588c5735c8a7d82e391db36ae752f
+              - term [ref=f5e167]: Artifacts
+              - definition [ref=f5e168]: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/visual-score.json · 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/figma-baseline.png · 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/actual.png · 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/diff.png
+            - list [ref=f5e169]:
+              - listitem [ref=f5e170]: "Warning: devtoolsSelector \"[class*=\"tsqd\" i], [id*=\"tsqd\" i], [class*=\"tsrd\" i], [id*=\"tsrd\" i], [data-testid=\"tanstack_devtools\"], nextjs-portal\" matched no elements; devtools chrome may still be visible in the capture."
+  - region "Notifications (F8)":
+    - list

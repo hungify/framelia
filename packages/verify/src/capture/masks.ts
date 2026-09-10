@@ -13,7 +13,11 @@ export type MaskResolution =
 
 export type MaskResolutionSpec = Pick<ReadyCaptureSpec, "scope" | "screenshot">;
 
-export async function resolveMasks(page: Page, spec: MaskResolutionSpec): Promise<MaskResolution> {
+export async function resolveMasks(
+  page: Page,
+  spec: MaskResolutionSpec,
+  scale = 1,
+): Promise<MaskResolution> {
   const masks = spec.screenshot.masks ?? [];
   if (!masks.length) return { ok: true, locators: [], evidence: null };
   const resolvedAt = new Date().toISOString();
@@ -33,12 +37,17 @@ export async function resolveMasks(page: Page, spec: MaskResolutionSpec): Promis
   // scrollOffset below maps mask bounds onto), and a viewport screenshot's
   // (0,0) is already viewport origin (where boundingBox() already reports).
   const regionOrigin = spec.scope.kind === "region" ? { x: scope.x, y: scope.y } : { x: 0, y: 0 };
+  // Rebased bounds are reported (MaskEvidence.bounds) for consumers that compare them
+  // directly against the captured PNG's own pixel buffer -- compare()'s maskBounds
+  // parameter, and attributeDiffRegions's SelectorBounds. Both read raw image pixels, so
+  // a >1 capture scale (core.ts's `scale: "device"` screenshot) needs these CSS-px
+  // boundingBox() rects scaled up to match, same as the image itself.
   const toImageSpace = (rects: MaskBounds[]): MaskBounds[] =>
     rects.map((rect) => ({
-      x: rect.x - regionOrigin.x,
-      y: rect.y - regionOrigin.y,
-      width: rect.width,
-      height: rect.height,
+      x: (rect.x - regionOrigin.x) * scale,
+      y: (rect.y - regionOrigin.y) * scale,
+      width: rect.width * scale,
+      height: rect.height * scale,
     }));
   const fail = (
     code: Extract<RejectResult["error"], `MASK_${string}`>,

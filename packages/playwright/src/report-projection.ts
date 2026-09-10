@@ -51,6 +51,25 @@ export function sanitizeTestId(test: TestCase): string {
   return test.id.replaceAll(/[^a-zA-Z0-9-]+/g, "-");
 }
 
+/** Like sanitizeTestId, but keeps dots (a contractId like "login.desktop" reads literally)
+ *  and collapses any run of dots so it can't spell a ".." traversal segment. */
+export function sanitizeContractId(contractId: string): string {
+  return contractId.replaceAll(/[^a-zA-Z0-9._-]+/g, "-").replaceAll(/\.{2,}/g, ".");
+}
+
+/** Durable evidence folder segments for a contractId, e.g. ("login.desktop", "page") ->
+ *  ["login", "desktop.page"] -- mirrors contract.ts's own featureName grouping so a folder
+ *  matches how `framelia contract create` names its own. Splits only on the first dot so a
+ *  multi-part story name stays intact as the leaf. */
+export function contractDirSegments(contractId: string, leafSuffix: string): string[] {
+  const sanitized = sanitizeContractId(contractId);
+  const dotIndex = sanitized.indexOf(".");
+  if (dotIndex === -1) return [`${sanitized}.${leafSuffix}`];
+  const feature = sanitized.slice(0, dotIndex);
+  const leaf = sanitized.slice(dotIndex + 1);
+  return [feature, `${leaf}.${leafSuffix}`];
+}
+
 export function contractNameFor(test: TestCase): string {
   return test.titlePath().slice(1).join(" › ") || test.title;
 }
@@ -135,8 +154,8 @@ export interface DerivedContract {
   verificationContract?: VerificationContract;
   verificationResult?: VerificationArtifact["results"][number];
   /** Figma matcher evidence is durable; live two-page (toMatchPage/toMatchUrl) results
-   *  remain dashboard/runtime-only -- there is no stable baseline artifact to persist
-   *  a pointer to. */
+   *  remain dashboard/runtime-only under R9 -- there is no stable baseline artifact to
+   *  persist a pointer to. */
   writeEvidence?: {
     outDir: string;
     expectedPath?: string;
@@ -149,9 +168,10 @@ export interface DerivedContract {
   /** Set only for a toMatchPageBaseline result (baselineKind "web" with a promoted
    *  baseline) -- unlike live two-page results, this one does have a stable baseline
    *  artifact (see @framelia/verify's page-baseline.ts), so its image evidence is
-   *  worth persisting durably too. Deliberately skips the VerificationArtifact/done-gate
-   *  pipeline -- this only lets the dashboard keep showing expected/actual/diff and
-   *  who/when promoted the baseline after the live run ends. */
+   *  worth persisting durably too. Deliberately skips the schema-v4
+   *  VerificationArtifact/done-gate pipeline (R9 still applies to that part) -- this
+   *  only lets the dashboard keep showing expected/actual/diff and who/when promoted
+   *  the baseline after the live run ends. */
   writePageBaselineEvidence?: {
     outDir: string;
     expectedPath?: string;
@@ -169,26 +189,54 @@ export function deriveContract(
   index: number,
   total: number,
 ): DerivedContract {
-  const baseId = sanitizeTestId(test);
+  // id stays flat ("login.desktop.page") since contractSchema's id field forbids "/".
+  const scopeKind = score?.scope?.kind ?? "page";
+  const baseId = score?.contractId
+    ? `${sanitizeContractId(score.contractId)}.${scopeKind}`
+    : sanitizeTestId(test);
   const id = total === 1 ? baseId : `${baseId}-${index + 1}`;
-  const relativeOutDir = visualArtifactPath(id);
+  // Contract/result outDir is relative to projectRoot (VISUAL_ARTIFACT_DIR_PATTERN
+  // requires it -- matches the old CLI's convention); fs operations need the
+  // resolved absolute path instead. Unlike `id`, the folder is free to nest under the
+  // same feature folder `framelia contract create` uses, so CLI-authored config and
+  // toMatchFigma evidence end up sharing one directory instead of two disconnected ones.
+  const outDirSegments = score?.contractId
+    ? contractDirSegments(score.contractId, total === 1 ? scopeKind : `${scopeKind}-${index + 1}`)
+    : [id];
+  const relativeOutDir = visualArtifactPath(...outDirSegments);
   const absoluteOutDir = path.join(evidenceRoot, relativeOutDir);
   const outDir = relativeOutDir;
   const primary = score;
   const pass = result.status === "passed";
   const targetUrl = httpTargetUrl(primary?.targetUrl);
   const isTerminal = result.status === "passed" || result.status === "failed";
+  // Same verdict derivation the durable report path (dashboard-server's model.ts) applies to
+  // this contract's persisted visual-score.json -- computed here, live, from the same
+  // captureEvidence the matcher already attached, so a run can't read "passed" now and
+  // "blocked" once the report is exported. No score attachment (primary undefined) means no
+  // matcher ran at all for this test; fall back to the raw Playwright result instead.
+  // primary.captureEvidence is verify/internal's CaptureEvidence, not contracts' schema-inferred
+  // CaptureEvidenceArtifact -- same runtime shape (fields match field-for-field), but the
+  // schema's `.loose()` gives its type an index signature CaptureEvidence doesn't structurally
+  // declare, which TS treats as a mismatch even though every property lines up.
   const captureEvidence = primary
     ? projectCaptureEvidence(
         primary.captureEvidence as CaptureEvidenceArtifact | undefined,
         targetUrl,
       )
     : undefined;
+  // Unlike the durable path (dashboard-server's model.ts, where captureEvidence is a
+  // completeness invariant of the compare() pipeline), captureEvidence is best-effort here --
+  // not every matcher attaches it -- so a missing one is not itself a caveat live; only surface
+  // diagnostics when there's actual evidence to derive them from.
   const diagnostics = captureEvidence ? deriveCaptureEvidenceDiagnostics(captureEvidence, []) : [];
   const maskApplied = captureEvidence?.maskEvidence?.status === "applied";
   const status = primary
     ? deriveDashboardVerdict({ resultOk: isTerminal, pass, diagnostics, maskApplied })
     : dashboardStatusFor(result);
+  // A score attachment only exists once capture already succeeded (see runToMatchFigma/
+  // runComparePages: a selector that fails to resolve returns before attaching a score), so a
+  // region scope reaching here always resolved to exactly one stable element.
   const scope = primary?.scope ?? { kind: "page" as const, fullPage: false };
   const regionExpectedSize =
     scope.kind === "region"
@@ -234,6 +282,10 @@ export function deriveContract(
     finishedAt: new Date().toISOString(),
   });
 
+  // A toMatchPageBaseline result carries the same expected/actual/diff triplet a
+  // Figma result does, plus who/when promoted the baseline it matched -- worth
+  // persisting for the dashboard (#41) even though it skips the schema-v4
+  // VerificationArtifact/done-gate pipeline below (R9 still applies to that part).
   if (primary?.baselineKind === "web" && primary.baselinePromotedAt != null) {
     const expectedPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-expected");
     const actualAttachmentPath = attachmentPath(
@@ -529,6 +581,9 @@ export function writeEvidence(
         ...(gateEligible !== undefined ? { gateEligible } : {}),
         ...(styleGateEligible !== undefined ? { styleGateEligible } : {}),
         ...(score.masks?.length ? { masks: score.masks } : {}),
+        // Recorded from the project's config default, not score.maxMaskedAreaRatio (the
+        // matcher's per-call capture option) -- contractToDoneGate compares against the same
+        // project default, so run-meta must match that, not the capture-time override.
         ...(maxMaskedAreaRatio !== undefined ? { maxMaskedAreaRatio } : {}),
         ...(captureEvidence ? { captureEvidence } : {}),
       },
@@ -546,6 +601,14 @@ export function writeEvidence(
   );
 }
 
+/**
+ * Copies a toMatchPageBaseline result's expected/actual/diff triplet into the
+ * contract's own durable outDir -- same reasoning as writeEvidence (Playwright's own
+ * test-results/attachments aren't guaranteed to survive past the next run), but no
+ * visual-score.json/VerificationArtifact: those belong to the schema-v4 done-gate
+ * pipeline, which stays Figma-only (R9). This only keeps the dashboard's image
+ * evidence and promotion provenance alive after the live run ends.
+ */
 export function writePageBaselineEvidence(
   evidence: NonNullable<DerivedContract["writePageBaselineEvidence"]>,
 ): void {
@@ -648,6 +711,10 @@ export function finalizeTestEnd(
 
   const primary = derivedContracts[0]!;
   const dashboardId = sanitizeTestId(test);
+  // The live dashboard collapses every matcher call in a test into this one row (unlike the
+  // durable artifact, which gets a separate contract per call -- see the id `-1`/`-2` suffixing
+  // above) -- a style issue from any matcher but the first would otherwise silently vanish from
+  // the live view even though it's still on disk.
   const topIssues = derivedContracts.flatMap((derived) => derived.dashboardResult.topIssues ?? []);
 
   const artifacts: VerificationArtifact[] = [];

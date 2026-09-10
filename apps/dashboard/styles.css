@@ -36,6 +36,10 @@
 :root {
   color-scheme: dark;
   --ui-primary: var(--color-accent);
+  --ui-error: var(--color-red);
+  --ui-success: var(--color-green);
+  --ui-warning: var(--color-amber);
+  --ui-info: var(--color-blue);
   --ui-bg: var(--color-bg);
   --ui-bg-muted: var(--color-panel);
   --ui-bg-elevated: var(--color-panel-raised);
@@ -44,6 +48,7 @@
   --ui-border-muted: var(--color-line-soft);
   --ui-text: var(--color-text);
   --ui-text-muted: var(--color-muted);
+  --ui-text-inverted: var(--color-bg);
   --ui-radius: 0.3rem;
 }
 
@@ -76,4 +81,27 @@
   select:focus-visible {
     @apply outline-2 outline-accent outline-offset-2;
   }
+}
+
+/* Edge fade signaling more content off-screen in a horizontally-scrollable row, no JS
+   needed -- "local" layers cover the fade once scrolled past it, "scroll" layers are the
+   fixed shadow underneath. */
+.scroll-fade-x {
+  background-image:
+    linear-gradient(to right, var(--color-panel) 30%, transparent),
+    linear-gradient(to left, var(--color-panel) 30%, transparent),
+    linear-gradient(to right, rgb(0 0 0 / 35%), transparent),
+    linear-gradient(to left, rgb(0 0 0 / 35%), transparent);
+  background-position:
+    left center,
+    right center,
+    left center,
+    right center;
+  background-size:
+    24px 100%,
+    24px 100%,
+    10px 100%,
+    10px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
 }

@@ -13,6 +13,14 @@ export interface CaptureOptions {
   timeoutMs?: number;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
+  /** Hides dev-only overlays (TanStack Query/Router devtools, Next.js's dev overlay) before
+   *  capture: `true` uses the built-in selector, or pass a custom CSS selector. Off by
+   *  default -- unset means no hiding, matching @framelia/verify's captureReadyPage. */
+  devtoolsSelector?: ReadyCaptureSpec["devtoolsSelector"];
+  /** Device pixel ratio to capture at -- see @framelia/verify's captureReadyPage `scale`
+   *  option. Defaults to 1 (one PNG pixel per CSS px), unchanged from before this
+   *  existed; pass the Page's own live `devicePixelRatio` for a sharper capture. */
+  scale?: ReadyCaptureSpec["scale"];
 }
 
 /**
@@ -34,5 +42,7 @@ export async function captureActual(
     timeoutMs: options.timeoutMs,
     fontPolicy: options.fontPolicy,
     animationPolicy: options.animationPolicy,
+    devtoolsSelector: options.devtoolsSelector,
+    scale: options.scale,
   });
 }

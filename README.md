@@ -170,6 +170,8 @@ Playwright matcher, Reporter, and getting-started quickstart documentation lives
 
 Dashboard-specific development and HMR instructions live in [`apps/dashboard/README.md`](apps/dashboard/README.md).
 
+An end-to-end standalone consumer reference app lives in [`examples/framelia-reference-app/`](examples/framelia-reference-app/). It demonstrates Better Auth + Drizzle protected routes, deterministic demo data, responsive UI, and `toMatchFigma` / `toMatchPage` / `toMatchUrl` in a real TanStack Start app.
+
 ## Repository boundary
 
 This repository owns verification engine, CLI, dashboard, artifacts, tests, and npm releases. Agent skills and plugin adapters remain in [`hungify/skills`](https://github.com/hungify/skills) and consume released `framelia` commands.

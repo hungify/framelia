@@ -1,0 +1,2 @@
+[  632597ms] [ERROR] Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "text/html". Strict MIME type checking is enforced for module scripts per HTML spec. @ http://localhost:60814/contracts/assets/Progress-m3LmOkfA.js:0
+[  632598ms] [ERROR] Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "text/html". Strict MIME type checking is enforced for module scripts per HTML spec. @ http://localhost:60814/contracts/assets/index-BU5HjEdZ.js:0

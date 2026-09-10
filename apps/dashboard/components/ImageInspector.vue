@@ -259,6 +259,7 @@ onBeforeUnmount(() => {
           :before-height="evidenceSize('baseline').height"
           :after-width="evidenceSize('actual').width"
           :after-height="evidenceSize('actual').height"
+          :zoom="view.scale"
           @before-load="onImageLoad($event, 'baseline')"
           @after-load="onImageLoad($event, 'actual')"
         />
@@ -312,7 +313,7 @@ onBeforeUnmount(() => {
 
     <div
       v-if="ready"
-      class="col-span-full row-start-1 min-w-0 flex items-center justify-start gap-0.5 px-2 py-1.5 border-b border-line bg-panel overflow-x-auto md:col-start-1"
+      class="col-span-full row-start-1 min-w-0 flex items-center justify-start gap-0.5 px-2 py-1.5 border-b border-line bg-panel overflow-x-auto scroll-fade-x md:col-start-1"
     >
       <UFieldGroup class="flex items-center gap-0.5" role="tablist" aria-label="Comparison mode">
         <UButton

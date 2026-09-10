@@ -1,0 +1,152 @@
+- generic:
+  - generic:
+    - generic:
+      - banner:
+        - generic:
+          - strong: Framelia
+          - generic:
+            - button [pressed]: Contracts
+            - button [pressed]: Details
+        - generic:
+          - generic: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae
+          - code: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae.4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae
+        - generic: Archived
+      - main:
+        - complementary:
+          - generic:
+            - generic:
+              - generic:
+                - strong: Verification run
+                - generic: 2 of 2 stories
+              - generic: failed
+            - generic:
+              - generic:
+                - searchbox
+              - combobox [expanded]:
+                - generic: All
+            - generic:
+              - tree:
+                - treeitem [expanded] [level=1]:
+                  - generic: ▾
+                  - generic:
+                    - generic:
+                      - strong: 4efa28804d1e5d3a174e A27c3ac01e4ca3436cae
+                  - generic: "1"
+                - group:
+                  - treeitem [level=2] [selected]:
+                    - generic:
+                      - generic:
+                        - strong: 4efa28804d1e5d3a174e A27c3ac01e4ca3436cae
+                    - generic: 2.74%
+                - treeitem [expanded] [level=1]:
+                  - generic: ▾
+                  - generic:
+                    - generic:
+                      - strong: 4efa28804d1e5d3a174e 1c85acdc09aaac726066
+                  - generic: "1"
+                - group:
+                  - treeitem [level=2]:
+                    - generic:
+                      - generic:
+                        - strong: 4efa28804d1e5d3a174e 1c85acdc09aaac726066
+                    - generic: 0.71%
+            - generic:
+              - generic:
+                - generic: Visual tests
+                - generic: 0 clean passes / 2
+              - generic:
+                - progressbar
+              - generic: 2 failed
+              - paragraph: ⌥ + ← / → to move selection
+        - generic:
+          - region:
+            - generic:
+              - generic:
+                - generic:
+                  - slider
+            - generic:
+              - tablist:
+                - tab: Baseline
+                - tab: Actual
+                - tab [selected]: Scrub
+                - tab: Diff
+                - tab: Split
+              - generic:
+                - generic: Opacity
+                - generic:
+                  - slider
+                - status: 55%
+              - generic:
+                - generic:
+                  - generic:
+                    - checkbox [checked]
+                - generic: Difference
+            - generic:
+              - button: −
+              - button: 101%
+              - button: +
+              - button: 100%
+              - button: Fit
+        - complementary:
+          - generic:
+            - generic:
+              - generic:
+                - heading [level=1]: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae
+                - generic: failed
+              - code: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae.4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae
+            - generic:
+              - generic:
+                - term: Diff ratio
+                - definition: 2.74%
+              - generic:
+                - term: Pixels
+                - definition: 6,701
+              - generic:
+                - term: Viewport
+                - definition: 356×688
+              - generic:
+                - term: Baseline
+                - definition: figma
+            - generic:
+              - generic: Resolved threshold — page
+              - generic:
+                - generic: match ≥ 99.00%
+                - generic: SSIM ≥ 97.00%
+                - generic: ΔE ≤ 4.00
+                - generic: px ≤ unbounded
+                - generic: cluster on
+            - generic:
+              - generic:
+                - generic: Baseline provenance
+                - code: figma://q2MZbYDBibNKYDm7ESfvKF/6007:4284
+              - generic:
+                - generic: Evidence hash
+                - code: sha256:fa0f9b144c2bbe9f95a8adb469c70850d7852f1e695cc17f296a17de0044a7f2
+            - group:
+              - generic: Capture evidence · 1 warning(s)
+              - generic:
+                - term: Final URL
+                - definition: http://localhost:8888/login
+                - term: Readiness
+                - definition: not configured
+                - term: Fonts
+                - definition: loaded
+                - term: Actions
+                - definition: none
+                - term: Times
+                - definition: 2026-08-31T11:59:45.670Z → 2026-08-31T11:59:46.388Z → 2026-08-31T11:59:46.434Z
+                - term: Hashes
+                - definition: sha256:29219037bd47fb8314c3c40a6be6b9d8405588c5735c8a7d82e391db36ae752f
+                - term: Artifacts
+                - definition: 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/visual-score.json · 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/figma-baseline.png · 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/actual.png · 4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/contracts/4efa28804d1e5d3a174e-a27c3ac01e4ca3436cae/diff.png
+              - list:
+                - listitem: "Warning: devtoolsSelector \"[class*=\"tsqd\" i], [id*=\"tsqd\" i], [class*=\"tsrd\" i], [id*=\"tsrd\" i], [data-testid=\"tanstack_devtools\"], nextjs-portal\" matched no elements; devtools chrome may still be visible in the capture."
+  - listbox [ref=f6e166]:
+    - group [ref=f6e167]:
+      - option "Masked pass" [ref=f6e168]
+      - option "All" [active] [selected] [ref=f6e171]
+      - option "Passed" [ref=f6e177]
+      - option "Failed" [ref=f6e180]
+      - option "Blocked" [ref=f6e183]
+      - option "Running" [ref=f6e186]
+      - option "Queued" [ref=f6e189]

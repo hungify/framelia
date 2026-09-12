@@ -9,5 +9,7 @@ export function optionalFigmaToken(runtime: CliRuntime): string | undefined {
 export function requireFigmaToken(runtime: CliRuntime): string {
   const token = optionalFigmaToken(runtime);
   if (token) return token;
-  throw new UsageError("FIGMA_ACCESS_TOKEN is not set. Export it before running this command.");
+  throw new UsageError(
+    "FIGMA_ACCESS_TOKEN is not set. Set it in .env.local or .env in the project root, or export it in your shell before running this command.",
+  );
 }

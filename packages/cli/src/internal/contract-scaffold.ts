@@ -62,8 +62,13 @@ function readExistingRequest(resolved: string): VerificationRequest | null {
   if (parsed.success) return parsed.data;
   // Force may replace foreign content, never erase contracts from a schema this build cannot read.
   if (value && typeof value === "object" && ("schemaVersion" in value || "contracts" in value)) {
+    const rawVersion = "schemaVersion" in value ? value.schemaVersion : undefined;
+    const foundVersion =
+      typeof rawVersion === "number" && Number.isFinite(rawVersion)
+        ? String(rawVersion)
+        : "unknown";
     throw new UsageError(
-      `${resolved} contains a contract document that does not match the current schema. Migrate it or pass --output to write a separate file.`,
+      `${resolved} contains a contract document at schemaVersion ${foundVersion}, but this CLI build reads schemaVersion ${SCHEMA_VERSION}. There is no automatic migration -- --force does not bypass this check either, since it never overwrites a schema this build can't verify. Hand-edit the file to match the current shape (run \`framelia schema --target contract\` to see it) or pass --output to write a separate file.`,
     );
   }
   return null;

@@ -8,6 +8,20 @@ npm install --save-dev @framelia/playwright @playwright/test
 
 `@playwright/test` is a peer dependency. Package shares consumer's `expect` instance.
 
+Public entry points (`.`, `/register`, `/reporter`, `/create-matchers`) ship JavaScript
+and TypeScript declarations. Ordinary Playwright collection in ESM and CommonJS
+projects does not require `NODE_OPTIONS`, `tsx`, or a Framelia-specific loader.
+Playwright itself still handles the consumer's TypeScript configuration and tests.
+
+For the CLI and reporter dashboard workflow, install the three public packages:
+
+```bash
+npm install --save-dev framelia @framelia/playwright @playwright/test
+```
+
+The optional dashboard peer is supplied by the CLI's dependency graph. A matcher-only
+consumer does not need the CLI or dashboard package.
+
 ## Quickstart
 
 Framelia owns capture and comparison. Your Playwright test owns navigation, auth, and interaction.

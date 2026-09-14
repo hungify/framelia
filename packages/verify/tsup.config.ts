@@ -6,6 +6,7 @@ export default defineConfig({
     internal: "src/internal.ts",
     cli: "src/cli.ts",
     env: "src/load-env.ts",
+    "project-policy": "src/project-policy.ts",
     testing: "src/testing.ts",
   },
   format: "esm",

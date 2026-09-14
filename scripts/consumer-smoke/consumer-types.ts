@@ -1,4 +1,7 @@
+import type { AuthoredContract } from "@framelia/contracts/workflow";
 import { expect, type ToMatchFigmaOptions } from "@framelia/playwright";
+import type { ResolvedProjectPolicy } from "@framelia/playwright/project-policy";
+import type { CanonicalJsonValue } from "@framelia/verify/project-policy";
 import type { Page } from "@playwright/test";
 
 export async function checkMatcherTypes(page: Page, reference: Page): Promise<void> {
@@ -10,3 +13,9 @@ export async function checkMatcherTypes(page: Page, reference: Page): Promise<vo
   // @ts-expect-error The published declarations must preserve the required node ID.
   await expect(page).toMatchFigma();
 }
+
+export const workflowRecordTypes = {
+  contract: null as unknown as AuthoredContract,
+  policy: null as unknown as ResolvedProjectPolicy,
+  canonical: null as unknown as CanonicalJsonValue,
+};

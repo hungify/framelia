@@ -65,6 +65,14 @@ Reporter writes matcher evidence under `.framelia/visual-verifications/`. Final 
 includes `visual-score.json`, `run-meta.json`, `punch-list.json`, hashes, and
 `visual-verification.json`.
 
+### Shared project policy
+
+The reporter resolves `framelia.config.*` through the same project-policy module as the CLI.
+Programmatic Playwright integrations can import `resolveProjectPolicy`,
+`discoverAuthoredContracts`, and `resolveContractProjectMatrix` from
+`@framelia/playwright/project-policy`. Contract/project pairs are resolved from authored policy,
+not inferred from whatever tests collection happens to return.
+
 ### Web-to-web matchers
 
 `toMatchPage` compares two pages already prepared by your test. `toMatchUrl` opens a page in the

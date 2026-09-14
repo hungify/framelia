@@ -26,7 +26,9 @@ describe("framelia config boundary", () => {
       path.join(projectRoot, "framelia.config.ts"),
       "enum Samples { Stable = 3 }\nexport default { stabilitySamples: Samples.Stable };\n",
     );
-    await expect(loadFrameliaConfig(projectRoot)).resolves.toMatchObject({ stabilitySamples: 3 });
+    await expect(loadFrameliaConfig(projectRoot)).resolves.toMatchObject({
+      capture: { stabilitySamples: 3 },
+    });
   });
 
   it("rejects screen-specific fields and points to visual contracts", async () => {
@@ -52,7 +54,8 @@ describe("framelia config boundary", () => {
     fs.writeFileSync(path.join(projectRoot, ".env.e2e"), "FRAMELIA_TEST_ENV=1\n");
 
     await expect(loadFrameliaConfig(projectRoot)).resolves.toMatchObject({
-      envFile: ".env.e2e",
+      envFiles: [".env", ".env.local", ".env.e2e"],
+      loadedEnvFiles: [".env.e2e"],
       storageStatePath: ".framelia/auth/user.json",
     });
   });
@@ -66,9 +69,11 @@ describe("framelia config boundary", () => {
     );
 
     await expect(loadFrameliaConfig(projectRoot)).resolves.toMatchObject({
-      stabilitySamples: 3,
-      timeoutMs: 15_000,
-      deviceScaleFactor: 2,
+      capture: {
+        stabilitySamples: 3,
+        timeoutMs: 15_000,
+        deviceScaleFactor: 2,
+      },
     });
   });
 
@@ -91,7 +96,7 @@ describe("framelia config boundary", () => {
       "export default { devtoolsSelector: '[data-vite-devtools]' };\n",
     );
     await expect(loadFrameliaConfig(projectRoot)).resolves.toMatchObject({
-      devtoolsSelector: "[data-vite-devtools]",
+      capture: { devtoolsSelector: "[data-vite-devtools]" },
     });
   });
 
@@ -103,7 +108,7 @@ describe("framelia config boundary", () => {
       "export default { devtoolsSelector: true };\n",
     );
     await expect(loadFrameliaConfig(projectRoot)).resolves.toMatchObject({
-      devtoolsSelector: true,
+      capture: { devtoolsSelector: true },
     });
   });
 
@@ -117,11 +122,13 @@ describe("framelia config boundary", () => {
     await expect(loadFrameliaConfig(projectRoot)).rejects.toThrow(/devtoolsSelector/);
   });
 
-  it("returns an empty config when no config file exists", async () => {
+  it("classifies a missing config as an uninitialized project", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-none-"));
     temporaryDirectories.push(projectRoot);
 
-    await expect(loadFrameliaConfig(projectRoot)).resolves.toEqual({});
+    await expect(loadFrameliaConfig(projectRoot)).rejects.toMatchObject({
+      code: "PROJECT_NOT_INITIALIZED",
+    });
   });
 
   it("rejects multiple config files as ambiguous", async () => {
@@ -185,7 +192,9 @@ describe("Project config intake", () => {
     );
 
     await expect(openProject(projectRoot, createFakeProcess()).loadConfig()).resolves.toMatchObject(
-      { stabilitySamples: 5 },
+      {
+        capture: { stabilitySamples: 5 },
+      },
     );
   });
 

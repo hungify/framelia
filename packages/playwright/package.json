@@ -39,6 +39,11 @@
       "framelia-dev": "./src/create-matchers.ts",
       "types": "./dist/create-matchers.d.ts",
       "default": "./dist/create-matchers.js"
+    },
+    "./project-policy": {
+      "framelia-dev": "./src/project-policy.ts",
+      "types": "./dist/project-policy.d.ts",
+      "default": "./dist/project-policy.js"
     }
   },
   "publishConfig": {

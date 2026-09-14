@@ -5,7 +5,7 @@ import { parse as parseDotenv } from "dotenv";
 
 import { AppError } from "./types.ts";
 
-const DEFAULT_ENV_FILES = [".env.local", ".env"] as const;
+const DEFAULT_ENV_FILES = [".env", ".env.local"] as const;
 
 export interface LoadProjectEnvOptions {
   files?: string[];
@@ -13,14 +13,20 @@ export interface LoadProjectEnvOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface EnvFileSpec {
+  name: string;
+  required: boolean;
+}
+
 export function loadProjectEnv(
   projectRoot: string = process.cwd(),
   options?: LoadProjectEnvOptions,
 ): string[] {
-  return loadEnvFiles(projectRoot, options?.files ?? [...DEFAULT_ENV_FILES], {
-    required: false,
-    ...(options?.env ? { env: options.env } : {}),
-  });
+  return loadEnvFileSequence(
+    projectRoot,
+    (options?.files ?? [...DEFAULT_ENV_FILES]).map((name) => ({ name, required: false })),
+    options?.env ? { env: options.env } : undefined,
+  );
 }
 
 /**
@@ -47,13 +53,26 @@ export function loadEnvFiles(
   envFile: string | string[],
   options?: { required?: boolean; env?: NodeJS.ProcessEnv },
 ): string[] {
-  const root = path.resolve(projectRoot);
   const names = Array.isArray(envFile) ? envFile : [envFile];
   const required = options?.required ?? true;
+  return loadEnvFileSequence(
+    projectRoot,
+    names.map((name) => ({ name, required })),
+    options?.env ? { env: options.env } : undefined,
+  );
+}
+
+export function loadEnvFileSequence(
+  projectRoot: string,
+  files: readonly EnvFileSpec[],
+  options?: { env?: NodeJS.ProcessEnv },
+): string[] {
+  const root = path.resolve(projectRoot);
   const env = options?.env ?? process.env;
+  const processKeys = new Set(Object.keys(env));
   const loaded: string[] = [];
 
-  for (const name of names) {
+  for (const { name, required } of files) {
     if (!name.trim())
       throw new AppError("ENV_FILE_ENTRY_INVALID", "envFile entries must be non-empty strings.");
     assertProjectRelativePath(root, name, "envFile");
@@ -62,14 +81,12 @@ export function loadEnvFiles(
       if (required) throw new AppError("ENV_FILE_NOT_FOUND", `envFile not found: ${name}`);
       continue;
     }
-    // path.resolve doesn't follow symlinks; realpath before trusting the file
-    // stays under root, so a symlinked envFile can't read files outside it.
     const realRoot = fs.realpathSync(root);
     const realFile = fs.realpathSync(file);
     if (realFile !== realRoot && !realFile.startsWith(`${realRoot}${path.sep}`)) {
       throw new AppError("PATH_ESCAPES_PROJECT_ROOT", `envFile escapes project root: ${name}`);
     }
-    applyEnvFile(file, env);
+    applyEnvFile(file, env, processKeys);
     loaded.push(file);
   }
   return loaded;
@@ -77,11 +94,15 @@ export function loadEnvFiles(
 
 /**
  * Parse-only: `dotenv.parse(text)` is a pure string-to-object function with
- * no side effects on `process.env` -- never `dotenv.config()`, which reads
- * a file and writes process.env itself, bypassing this module's own
- * key-name filter and "don't overwrite an already-set key" precedence.
+ * no side effects on `process.env`. Keys present before the sequence began
+ * remain authoritative; for every other key, later files replace earlier
+ * file values.
  */
-function applyEnvFile(file: string, env: NodeJS.ProcessEnv): void {
+function applyEnvFile(
+  file: string,
+  env: NodeJS.ProcessEnv,
+  processKeys: ReadonlySet<string>,
+): void {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
@@ -91,7 +112,7 @@ function applyEnvFile(file: string, env: NodeJS.ProcessEnv): void {
   const parsed = parseDotenv(text);
   for (const [key, val] of Object.entries(parsed)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    if (env[key] !== undefined) continue;
+    if (processKeys.has(key)) continue;
     env[key] = val;
   }
 }

@@ -24,6 +24,11 @@
       "framelia-dev": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./workflow": {
+      "framelia-dev": "./src/workflow-records.ts",
+      "types": "./dist/workflow.d.ts",
+      "default": "./dist/workflow.js"
     }
   },
   "publishConfig": {

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { VerificationArtifact } from "@framelia/contracts";
+import type { CaptureDefaults, VerificationArtifact } from "@framelia/contracts";
 import { writeVerificationArtifact } from "@framelia/verify";
 import type {
   FullConfig,
@@ -12,6 +12,7 @@ import type {
   TestResult,
 } from "@playwright/test/reporter";
 
+import { resolveProjectPolicy } from "./project-policy.ts";
 import { contractNameFor, finalizeTestEnd, sanitizeTestId } from "./report-projection.ts";
 
 export interface FrameliaReporterOptions {
@@ -21,13 +22,6 @@ export interface FrameliaReporterOptions {
   port?: number;
   /** Forwarded to startDashboardServer; mainly for tests -- production use should rely on the default. */
   clientRoot?: string;
-  /**
-   * Project's `maxMaskedAreaRatio` default (from framelia.config.ts). Written into every
-   * run-meta.json so `done-gate` -- which reads this same project default via
-   * contractToDoneGate, not the matcher's per-call capture option -- doesn't spuriously fail
-   * a correctly-masked, passing run over a value it never wrote.
-   */
-  maxMaskedAreaRatio?: number;
 }
 
 // @framelia/dashboard-server is an optional peer dependency (it owns the hono/@hono/node-server
@@ -68,6 +62,7 @@ export default class FrameliaReporter implements Reporter {
   #serverPromise?: Promise<DashboardServer>;
   #projectRoot = process.cwd();
   #artifacts: VerificationArtifact[] = [];
+  #captureDefaults: CaptureDefaults = {};
   /** Loading @framelia/dashboard-server and seeding #store is async; buffers onTestEnd
    * calls that land before it resolves so no result is silently dropped -- Playwright's
    * Reporter only gets one whole-test-result callback per test, so there is no second
@@ -89,7 +84,15 @@ export default class FrameliaReporter implements Reporter {
   onBegin(config: FullConfig, suite: Suite): void {
     this.#projectRoot = this.#options.projectRoot ?? config.rootDir ?? process.cwd();
     const tests = suite.allTests();
-    const ready = loadDashboardServer().then((mod) => {
+    const ready = Promise.all([
+      loadDashboardServer(),
+      resolveProjectPolicy({
+        cwd: this.#projectRoot,
+        projectRoot: this.#projectRoot,
+        allowUninitialized: true,
+      }),
+    ]).then(([mod, policy]) => {
+      this.#captureDefaults = policy.capture;
       const store = new mod.ReporterStore(
         tests.map((test) => ({
           id: sanitizeTestId(test),
@@ -126,7 +129,7 @@ export default class FrameliaReporter implements Reporter {
         test,
         this.#projectRoot,
         result,
-        this.#options.maxMaskedAreaRatio,
+        this.#captureDefaults.maxMaskedAreaRatio,
       );
       this.#store.recordResult(
         projection.dashboardId,

@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: { index: "src/index.ts" },
+  entry: { index: "src/index.ts", workflow: "src/workflow-records.ts" },
   format: "esm",
   target: "node22",
   platform: "node",

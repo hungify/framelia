@@ -110,6 +110,8 @@ describe("report preservation and aggregation", () => {
 
   it("namespaces duplicate ids from separate features and ignores exported report data", async () => {
     const root = path.join(tmp, "aggregate");
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
     const artifact = await readVerificationArtifact(
       writeMinimalArtifact("aggregate-artifact.json"),
     );

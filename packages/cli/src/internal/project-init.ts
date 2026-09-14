@@ -34,6 +34,12 @@ const CONTRACT_DEFAULTS_COMMENT = captureDefaultsSchema
 const CONFIG_SOURCE = `import { defineConfig } from "framelia";
 
 export default defineConfig({
+  // playwright: {
+  //   config: "playwright.config.ts",
+  //   projects: ["chromium"],
+  // },
+  // contracts: [".framelia/contracts/**/visual-contract.json"],
+  // retryAcceptance: "require-first-attempt",
   // envFile: ".env.e2e",
   // storageStatePath: "${DEFAULT_AUTH_STATE_PATH}",
 

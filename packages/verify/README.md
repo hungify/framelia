@@ -32,6 +32,19 @@ computes the fingerprint or decides to skip a test on the strength of it -- see
 `@framelia/playwright`'s README ("Scaling to many pages") for the intended call pattern from a
 Playwright spec.
 
+## Project policy
+
+`resolveProjectPolicy` is exported from `@framelia/verify/project-policy`. It is the shared
+resolver used by the CLI and Playwright integration for application-root discovery, exact
+Playwright project names, contract discovery patterns, capture defaults, retry acceptance, and
+environment-file precedence. It returns resolved path identities and source file names, never
+environment values.
+
+`discoverAuthoredContracts` validates versioned authored contracts and global ID uniqueness.
+`resolveContractProjectMatrix` expands every authored contract across its configured project
+subset before collection; `required: false` removes its cases from the required `--all` matrix
+without making the contract unexecutable.
+
 ## Navigation-free capture
 
 `captureReadyPage(page, spec)` (exported from `@framelia/verify/internal`) screenshots an

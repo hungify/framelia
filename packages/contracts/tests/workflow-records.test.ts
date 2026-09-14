@@ -1,0 +1,190 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  attemptRecordSchema,
+  authoredContractSchema,
+  baselineSnapshotSchema,
+  collectionManifestSchema,
+  commandOutcomeSchema,
+  runPlanSchema,
+  runRecordSchema,
+} from "../src/workflow-records.ts";
+
+const A_DIGEST = `sha256:${"a".repeat(64)}`;
+const B_DIGEST = `sha256:${"b".repeat(64)}`;
+
+function contract(overrides: Record<string, unknown> = {}) {
+  return {
+    formatVersion: 1,
+    kind: "framelia.contract",
+    id: "login.desktop",
+    name: "Login desktop",
+    revision: 1,
+    target: { path: "/login?mode=visual" },
+    viewport: { preset: "desktop", width: 1196, height: 796 },
+    scope: { kind: "page", pageReason: "The complete login state is reviewed." },
+    baseline: { snapshotDigest: A_DIGEST },
+    ...overrides,
+  };
+}
+
+describe("authored contract records", () => {
+  it("preserves authored identity and CSS viewport without an output directory", () => {
+    const parsed = authoredContractSchema.parse(contract());
+
+    expect(parsed).toMatchObject({
+      id: "login.desktop",
+      name: "Login desktop",
+      target: { path: "/login?mode=visual" },
+      viewport: { preset: "desktop", width: 1196, height: 796 },
+      required: true,
+    });
+    expect(
+      authoredContractSchema.safeParse(contract({ outDir: ".framelia/results" })).success,
+    ).toBe(false);
+  });
+
+  it("rejects duplicate project names while accepting the unnamed Playwright project", () => {
+    expect(authoredContractSchema.safeParse(contract({ projects: [""] })).success).toBe(true);
+    expect(
+      authoredContractSchema.safeParse(contract({ projects: ["chromium", "chromium"] })).success,
+    ).toBe(false);
+  });
+});
+
+describe("snapshot and execution units", () => {
+  it("keeps CSS viewport and screenshot pixels distinct", () => {
+    const snapshot = {
+      formatVersion: 1,
+      kind: "framelia.baseline-snapshot",
+      source: { kind: "figma", fileKey: "file", nodeId: "1:2" },
+      rendering: {
+        viewport: { preset: "custom", width: 600, height: 400 },
+        deviceScaleFactor: 2,
+      },
+      expected: {
+        kind: "page",
+        image: {
+          path: "expected.png",
+          digest: A_DIGEST,
+          width: 1200,
+          height: 800,
+        },
+      },
+    };
+
+    expect(baselineSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(
+      baselineSnapshotSchema.safeParse({
+        ...snapshot,
+        expected: { image: { ...snapshot.expected.image, width: 600 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires unique collected contract/project/repeat cases", () => {
+    const collected = {
+      binding: {
+        formatVersion: 1,
+        kind: "framelia.contract-binding",
+        contractId: "login.desktop",
+        contractFile: ".framelia/contracts/login.json",
+        contractDigest: A_DIGEST,
+      },
+      project: "chromium",
+      specFile: "e2e/login.spec.ts",
+      specFileDigest: B_DIGEST,
+      line: 20,
+      column: 4,
+      titlePath: ["login", "desktop"],
+      repeatIndex: 0,
+      dependencies: ["setup"],
+    };
+    const manifest = {
+      formatVersion: 1,
+      kind: "framelia.collection",
+      createdAt: "2026-09-14T12:00:00.000Z",
+      policyDigest: A_DIGEST,
+      cases: [collected, { ...collected, line: 21 }],
+    };
+
+    expect(collectionManifestSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it("does not let an all run omit a required case or change its digest", () => {
+    const requiredCases = [
+      { caseId: "login.desktop/chromium/0", casePlanDigest: A_DIGEST },
+      { caseId: "login.mobile/chromium/0", casePlanDigest: B_DIGEST },
+    ];
+    const plan = {
+      formatVersion: 1,
+      kind: "framelia.run-plan",
+      runId: "run-1",
+      policyDigest: A_DIGEST,
+      selection: { mode: "all", contracts: ["login.desktop", "login.mobile"] },
+      availableCases: requiredCases,
+      requiredCases,
+      selectedCases: requiredCases.slice(0, 1),
+    };
+
+    expect(runPlanSchema.safeParse(plan).success).toBe(false);
+    expect(runPlanSchema.safeParse({ ...plan, selectedCases: requiredCases }).success).toBe(true);
+  });
+
+  it("finalizes only with explicit time and an attempt belonging to each case", () => {
+    const run = {
+      formatVersion: 1,
+      kind: "framelia.run",
+      runId: "run-1",
+      planDigest: A_DIGEST,
+      status: "finalized",
+      createdAt: "2026-09-14T12:00:00.000Z",
+      cases: [
+        {
+          caseId: "login.desktop/chromium/0",
+          attemptIds: ["attempt-1"],
+          selectedAttemptId: "attempt-2",
+        },
+      ],
+    };
+
+    expect(runRecordSchema.safeParse(run).success).toBe(false);
+    expect(
+      runRecordSchema.safeParse({
+        ...run,
+        finalizedAt: "2026-09-14T12:00:01.000Z",
+        cases: [{ ...run.cases[0], selectedAttemptId: "attempt-1" }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps execution state separate from visual verdict and enforces exit precedence", () => {
+    const blockedMismatch = {
+      formatVersion: 1,
+      kind: "framelia.command-outcome",
+      command: "check",
+      executionState: "blocked",
+      visualVerdict: "mismatched",
+      exitCode: 2,
+      diagnostics: [{ code: "BASELINE_MISSING", stage: "preflight", message: "Missing snapshot" }],
+    };
+    expect(commandOutcomeSchema.safeParse(blockedMismatch).success).toBe(true);
+    expect(commandOutcomeSchema.safeParse({ ...blockedMismatch, exitCode: 1 }).success).toBe(false);
+
+    const attempt = attemptRecordSchema.parse({
+      formatVersion: 1,
+      kind: "framelia.attempt",
+      attemptId: "attempt-2",
+      caseId: "login.desktop/chromium/0",
+      casePlanDigest: A_DIGEST,
+      retryIndex: 1,
+      executionState: "completed",
+      visualVerdict: "passed",
+      startedAt: "2026-09-14T12:00:00.000Z",
+      completedAt: "2026-09-14T12:00:01.000Z",
+      diagnostics: [],
+      evidence: {},
+    });
+    expect(attempt.retryIndex).toBe(1);
+  });
+});

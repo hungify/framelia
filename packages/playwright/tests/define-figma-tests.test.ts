@@ -549,7 +549,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     expect((caught as Error).message).toContain(registeredBinding.contractDigest);
   });
 
-  it("throws instead of silently capturing when the project policy (framelia.config) changes on disk after registration, before the test body runs", async () => {
+  it("throws instead of silently capturing when the project policy's derived digest changes on disk (an env file appears) after registration, before the test body runs", async () => {
     const root = temporaryRoot();
     fs.mkdirSync(path.join(root, ".git"));
     fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
@@ -559,12 +559,22 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     defineFigmaTests(test, { contracts: contractPath, prepare: async () => undefined });
     expect(registered).toHaveLength(1);
 
-    // The contract itself is untouched here -- only the project policy changes, proving
-    // this is a distinct check from the contract one above.
-    fs.writeFileSync(
-      path.join(root, "framelia.config.mjs"),
-      'export default { retryAcceptance: "allow-passed-after-retry" };\n',
-    );
+    // Deterministic synchronization, not a guessed timer duration: invoke the callback
+    // once so its own `await policyPromise` line settles against the pre-mutation state.
+    // Nothing has drifted yet, so it clears both precapture checks and only fails later,
+    // at the (expected, irrelevant here) baseline lookup -- that failure is itself the
+    // signal that `policyPromise` already resolved by the time this settled.
+    await expect(
+      registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() })),
+    ).rejects.toThrow(/Pinned baseline snapshot/);
+
+    // The config file's own raw bytes are untouched here -- only a `.env` file's
+    // *existence* changes, which resolveProjectPolicy folds into policyDigest via
+    // `environment.loadedFiles` (existence-tracked, not content-tracked). This proves
+    // the semantic policyDigest check catches drift the synchronous raw-config-bytes
+    // fingerprint (checked first, see the test above) cannot -- they're independent,
+    // not redundant.
+    fs.writeFileSync(path.join(root, ".env"), "SOME_KEY=value\n");
 
     let caught: unknown;
     try {
@@ -619,6 +629,98 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
         fakeTestInfo({ outputRoot: temporaryRoot() }),
       );
       expect(result).toBeUndefined();
+    } finally {
+      await context.close();
+      await app.close();
+    }
+  });
+
+  it("catches a project config mutation that the async policy-resolution check alone can never see, for a CommonJS-scoped config file", async () => {
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    // `.ts` (with no `package.json` anywhere above `root` declaring `"type": "module"`,
+    // true for any fresh os.tmpdir() path) resolves through `resolveProjectPolicy`'s
+    // CommonJS branch (`tsxRequire`, not the ESM `tsImport` dynamic-import path) --
+    // see `importConfigModule`'s own module-type branching in project-policy.ts. Node's
+    // CommonJS `require()` cache is keyed by resolved absolute path and never
+    // invalidates on content change for the life of the process: this isn't a narrow
+    // timing race like the `.mjs`/dynamic-`import()` path can hit -- every
+    // `resolveProjectPolicy()` call after the first, for this exact path, is
+    // permanently stuck returning the *original* cached module, no matter how long
+    // afterward the file actually changes on disk or how much real time passes. That
+    // makes this 100% deterministic to reproduce (not timing-dependent at all), and
+    // exactly the module-type-dependent risk this fix's own doc comment calls out.
+    fs.writeFileSync(path.join(root, "framelia.config.ts"), "export default {};\n");
+    const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+
+    const { test, registered } = fakeTest();
+    defineFigmaTests(test, { contracts: contractPath, prepare: async () => undefined });
+    expect(registered).toHaveLength(1);
+
+    fs.writeFileSync(
+      path.join(root, "framelia.config.ts"),
+      'export default { retryAcceptance: "allow-passed-after-retry" };\n',
+    );
+
+    let caught: unknown;
+    try {
+      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(
+      /project config file for contract "login\.desktop" changed on disk after test collection/,
+    );
+  });
+
+  it("compares against the baseline bytes verified before capture, not bytes swapped at the shared path afterward", async () => {
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const SIZE = { width: 100, height: 80 };
+    const MATCH_COLOR: [number, number, number, number] = [100, 150, 200, 255];
+    const contract = pinPageBaseline(root, {
+      id: "login.desktop",
+      name: "Login · Desktop",
+      viewport: SIZE,
+      color: MATCH_COLOR,
+    });
+    const contractPath = writeContractFile(root, "login.desktop.json", contract);
+    const app = await server(solidHtml(SIZE, [MATCH_COLOR[0], MATCH_COLOR[1], MATCH_COLOR[2]]));
+    const context = await browser.newContext({ viewport: SIZE });
+    const sharedImagePath = path.join(root, "login.desktop.png");
+    const originalImageBytes = fs.readFileSync(sharedImagePath);
+
+    try {
+      const page = await context.newPage();
+      const { test, registered } = fakeTest();
+      defineFigmaTests(test, {
+        contracts: contractPath,
+        prepare: async ({ page: preparedPage }) => {
+          await preparedPage.goto(app.url);
+          // readPinnedBaseline already verified and (per this fix) already copied the
+          // baseline image into the private workDir by the time prepare() runs -- swap
+          // the *shared* path to something that would obviously mismatch if compare()
+          // ever re-read it instead of the copy.
+          fs.writeFileSync(
+            sharedImagePath,
+            PNG.sync.write(makeSolidPng(SIZE.width, SIZE.height, [0, 0, 0, 255])),
+          );
+        },
+      });
+      expect(registered).toHaveLength(1);
+
+      const result = await registered[0]!.fn(
+        { page },
+        fakeTestInfo({ outputRoot: temporaryRoot() }),
+      );
+      expect(result).toBeUndefined();
+
+      // Confirms the swap actually happened -- the pass above reflects the private
+      // copy, not these (now-different) live shared bytes.
+      expect(fs.readFileSync(sharedImagePath)).not.toEqual(originalImageBytes);
     } finally {
       await context.close();
       await app.close();

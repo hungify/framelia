@@ -13,7 +13,11 @@ import {
 } from "@framelia/verify";
 import type { CaptureCoreOutcome, ReadyCaptureSpec } from "@framelia/verify/internal";
 import { captureReadyPage } from "@framelia/verify/internal";
-import { discoverProjectConfig, resolveProjectPolicy } from "@framelia/verify/project-policy";
+import {
+  discoverProjectConfig,
+  fileHash,
+  resolveProjectPolicy,
+} from "@framelia/verify/project-policy";
 import type { Page, TestInfo, TestType } from "@playwright/test";
 import * as z from "zod";
 
@@ -323,6 +327,27 @@ function loadContractFile(filePath: string): LoadedContractFile {
   return { contract: result.data, digest: canonicalJsonDigest(result.data) };
 }
 
+/**
+ * Synchronously locates and hashes the project's config file's raw bytes, if one
+ * exists -- a race-free companion to the async `resolveProjectPolicy`-based policy
+ * check in `defineFigmaTests`'s registered callback. `resolveProjectPolicy` does a
+ * genuinely deferred dynamic `import()` for an ESM-scoped config file (`.mjs`/`.mts`, or
+ * `.ts`/`.js` under a `"type": "module"` package) -- real, awaited I/O that isn't
+ * guaranteed to actually touch the file until a later tick, leaving a window where a
+ * config mutated between "decide to resolve" and "import actually reads" could make
+ * `policyPromise` itself resolve against the wrong content, defeating that check at its
+ * very first moment. A synchronous `fs.readFileSync` has no such window: Node's
+ * single-threaded execution model guarantees no other code can run between "decide to
+ * read" and "read completes" for it. `discoverProjectConfig(projectRoot, projectRoot)`
+ * mirrors `resolveProjectPolicy`'s own `discoverProjectConfig(cwd, options.projectRoot)`
+ * call exactly (both `cwd` and the explicit override are `projectRoot`), so both checks
+ * agree on which file they mean.
+ */
+function hashConfigFile(projectRoot: string): string | undefined {
+  const configPath = discoverProjectConfig(projectRoot, projectRoot).configPath;
+  return configPath ? fileHash(configPath) : undefined;
+}
+
 function toPortablePath(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
 }
@@ -428,6 +453,10 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       contractFile,
       contractDigest: digest,
     });
+    // Synchronous, race-free companion to `policyPromise` below -- see
+    // `hashConfigFile`'s own doc comment for why the async, dynamic-`import()`-based
+    // policy resolution alone isn't sufficient.
+    const registeredConfigDigest = hashConfigFile(projectRoot);
     // Kicked off here, at registration time, so the config file this resolves against
     // is whatever's on disk right now -- not deferred until the callback below actually
     // runs (which may be long after registration). Never awaited here: awaiting would
@@ -475,6 +504,24 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
           );
         }
 
+        // Synchronous, race-free fingerprint, checked first: `policyPromise`
+        // (`resolveProjectPolicy`) does a genuinely deferred dynamic `import()` for an
+        // ESM-scoped config file -- real, awaited I/O that could still be reading the
+        // file's *old* content the instant a mutation lands between "decide to resolve"
+        // and "import actually reads," which would make both the registered and live
+        // `resolveProjectPolicy()` calls agree on the wrong content and defeat that
+        // check at its very first moment. `hashConfigFile` uses a synchronous
+        // `fs.readFileSync` instead, which has no such window. This is additive
+        // defense-in-depth, not a replacement: it can't catch drift in anything
+        // `resolveProjectPolicy` derives beyond the config file's own raw bytes (env
+        // files, for instance), which the semantic `policyDigest` check below still
+        // covers.
+        const liveConfigDigest = hashConfigFile(projectRoot);
+        if (liveConfigDigest !== registeredConfigDigest) {
+          throw new Error(
+            `defineFigmaTests: project config file for contract "${liveContract.id}" changed on disk after test collection (registered digest ${registeredConfigDigest ?? "none (uninitialized)"}, now ${liveConfigDigest ?? "none (uninitialized)"}) -- refusing to run a stale project policy's test.`,
+          );
+        }
         // Same shape of gap as the contract check above, for the project policy
         // (`framelia.config.*`): it's file-backed and re-readable mid-process, so an
         // edit-then-revert of that file during a run's window is just as invisible to
@@ -501,18 +548,51 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
           `contract "${liveContract.id}" does not apply to Playwright project "${testInfo.project.name}" (allowed: ${allowedProjects?.join(", ")}).`,
         );
 
-        // No third check needed here: unlike `contract`/policy above, this is never
-        // closed over from collection time -- it's called fresh on every single
-        // execution of this callback, against `liveContract` (itself just verified),
-        // and it's already digest-verified internally against `liveContract.baseline`.
-        // There is no stale, pre-collection copy of a pinned baseline for anything to
-        // drift away from.
+        // The pinned baseline record/digest itself is never closed over from collection
+        // time -- readPinnedBaseline is called fresh on every single execution, against
+        // liveContract (itself just verified), and it's already digest-verified
+        // internally against liveContract.baseline. There is no stale, pre-collection
+        // copy of the *record* for anything to drift away from.
+        //
+        // What IS still exposed: readPinnedBaseline only verifies the shared
+        // `.framelia/baselines/<digest>/` files' bytes at the moment it runs, then
+        // returns paths into that same shared, externally-writable location.
+        // reconcileViewport/prepare()/the full browser navigation and capture below can
+        // take real, unbounded wall-clock time before compare()/attachDiffTriplet()
+        // finally re-read those same shared paths -- nothing stops the shared files
+        // being swapped and reverted in that window, invisible to everything including
+        // finalization's own reconciliation (which only checks the pinned record's
+        // digest, never the live file at the moment of use). Copying the just-verified
+        // bytes into this attempt's own private workDir immediately, synchronously,
+        // right here -- before any further awaited work -- shrinks that window down to
+        // the same irreducible sub-millisecond TOCTOU already accepted elsewhere in this
+        // codebase (see lock.ts's own stale-lock non-goal), instead of leaving it open
+        // for the rest of this test's execution.
         const pinnedBaseline = await readPinnedBaseline(projectRoot, liveContract);
+        const workDir = testInfo.outputPath(sanitizeAttachmentBaseName(liveContract.id));
+        const privateImagePath = path.join(
+          workDir,
+          `expected${path.extname(pinnedBaseline.imagePath)}`,
+        );
+        fs.copyFileSync(pinnedBaseline.imagePath, privateImagePath);
+        let privateStylePath: string | undefined;
+        if (pinnedBaseline.stylePath) {
+          privateStylePath = path.join(
+            workDir,
+            `expected-style${path.extname(pinnedBaseline.stylePath)}`,
+          );
+          fs.copyFileSync(pinnedBaseline.stylePath, privateStylePath);
+        }
+        const privateBaseline: PinnedBaseline = {
+          ...pinnedBaseline,
+          imagePath: privateImagePath,
+          ...(privateStylePath ? { stylePath: privateStylePath } : {}),
+        };
 
         await reconcileViewport(page, liveContract.viewport, liveContract.id);
         await assertDeviceScaleFactorAgreement(
           page,
-          pinnedBaseline.snapshot.rendering.deviceScaleFactor,
+          privateBaseline.snapshot.rendering.deviceScaleFactor,
           liveContract.id,
         );
 
@@ -520,9 +600,9 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
 
         const timeoutMs =
           options.timeoutMs ?? (testInfo.timeout > 0 ? testInfo.timeout : DEFAULT_TIMEOUT_MS);
-        const result = await runFigmaContractTest(page, liveContract, pinnedBaseline, {
+        const result = await runFigmaContractTest(page, liveContract, privateBaseline, {
           timeoutMs,
-          workDir: testInfo.outputPath(sanitizeAttachmentBaseName(liveContract.id)),
+          workDir,
           maxMaskedAreaRatio: options.maxMaskedAreaRatio,
           fontPolicy: options.fontPolicy,
           animationPolicy: options.animationPolicy,

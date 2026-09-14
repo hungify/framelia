@@ -12,6 +12,12 @@ import { canonicalJson, canonicalJsonDigest, type CanonicalJsonValue } from "./c
 import { assertProjectRelativePath, loadEnvFileSequence } from "./load-env.ts";
 import { AppError } from "./types.ts";
 
+// Re-exported so a caller resolving a project's config path (e.g. via
+// `discoverProjectConfig`) can hash that same file's raw bytes for a synchronous,
+// race-free identity check -- see `reconcile.ts`'s own `fileHash(specFilePath)` use for
+// the same pattern applied to a spec file.
+export { fileHash } from "./hash.ts";
+
 export const CONFIG_FILE_NAMES = [
   "framelia.config.ts",
   "framelia.config.mts",

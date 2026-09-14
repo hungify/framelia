@@ -139,6 +139,20 @@ describe("effective project policy", () => {
     });
     expect(JSON.stringify(policy)).not.toContain("CUSTOM_ONLY");
   });
+
+  it("loads a .ts config in a CommonJS-typed package without an ESM parse failure", async () => {
+    const root = temporaryProject();
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ type: "commonjs" }));
+    fs.writeFileSync(
+      path.join(root, "framelia.config.ts"),
+      "export default { stabilitySamples: 3 };\n",
+    );
+
+    await expect(resolveProjectPolicy({ cwd: root })).resolves.toMatchObject({
+      initialized: true,
+      capture: { stabilitySamples: 3 },
+    });
+  });
 });
 
 describe("authored contract matrix", () => {

@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { captureDefaultsSchema, type CaptureDefaults } from "@framelia/contracts";
 import { authoredContractSchema, type AuthoredContract } from "@framelia/contracts/workflow";
+import { require as tsxRequire } from "tsx/cjs/api";
 import { tsImport } from "tsx/esm/api";
 import * as z from "zod";
 
@@ -228,7 +229,41 @@ function discoveryRoot(pattern: string): string {
   return separator < 0 ? "." : stablePrefix.slice(0, separator) || ".";
 }
 
+function nearestPackageModuleType(startDirectory: string): "module" | "commonjs" {
+  let dir = startDirectory;
+  for (;;) {
+    const packageJsonPath = path.join(dir, "package.json");
+    if (fs.existsSync(packageJsonPath)) {
+      try {
+        const manifest = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
+          type?: unknown;
+        };
+        return manifest.type === "module" ? "module" : "commonjs";
+      } catch {
+        return "commonjs";
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return "commonjs";
+    dir = parent;
+  }
+}
+
+// `.ts`/`.js` are ambiguous per Node's module resolution: their module type
+// follows the nearest `package.json#type`. `.mjs`/`.mts` are always ESM.
+// tsx's ESM `tsImport` cannot execute `import` syntax under a CommonJS
+// package scope on Node 22, so CommonJS-scoped configs load through tsx's
+// CJS `require` instead.
 async function importConfigModule(configPath: string): Promise<{ default?: unknown }> {
+  const extension = path.extname(configPath);
+  const isForcedEsm = extension === ".mjs" || extension === ".mts";
+  const moduleType = isForcedEsm ? "module" : nearestPackageModuleType(path.dirname(configPath));
+
+  if (moduleType === "commonjs") {
+    const loaded = tsxRequire(configPath, import.meta.url) as { default?: unknown };
+    return { default: loaded.default };
+  }
+
   const imported = (await tsImport(pathToFileURL(configPath).href, import.meta.url)) as {
     default?: unknown;
     "module.exports"?: unknown;

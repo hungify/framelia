@@ -6,7 +6,7 @@ import { baselineSnapshotSchema } from "@framelia/contracts/workflow";
 import * as z from "zod";
 
 import { canonicalJsonDigest, type CanonicalJsonValue } from "./canonical-json.ts";
-import { fileHash } from "./hash.ts";
+import { sha256Hex } from "./hash.ts";
 import { AppError } from "./types.ts";
 
 const BASELINES_DIR_SEGMENTS = [".framelia", "baselines"];
@@ -18,14 +18,25 @@ const SHA256_PREFIX = "sha256:";
  * style) bytes validated against the digests recorded inside the snapshot record itself.
  * `imagePath`/`stylePath` are absolute filesystem paths, ready to hand to compare() or a
  * JSON.parse call -- every byte behind them has already been hashed and checked against
- * the immutable record, so a caller never re-validates them.
+ * the immutable record, so a caller never re-validates them. `imageBytes`/`styleBytes`
+ * are the *exact* `Buffer`s `readPinnedBaseline` read from those same paths to compute
+ * that verification -- each shared file's bytes are read from disk exactly once, ever,
+ * inside this function. A caller that needs the verified bytes (e.g. to copy them into a
+ * private, race-free location) MUST use `imageBytes`/`styleBytes` rather than re-reading
+ * `imagePath`/`stylePath`: re-reading reopens a TOCTOU window between this function's
+ * verification and the caller's own read, on a path that remains writable by anything
+ * else on the machine for as long as the process runs.
  */
 export interface PinnedBaseline {
   snapshot: BaselineSnapshot;
   /** Absolute path to the validated expected image bytes. */
   imagePath: string;
+  /** The exact bytes read from `imagePath` and verified against `snapshot.expected.image.digest` -- see this interface's own doc comment for why a caller should prefer this over re-reading `imagePath`. */
+  imageBytes: Buffer;
   /** Absolute path to the validated expected style JSON, if the snapshot records one. */
   stylePath?: string;
+  /** The exact bytes read from `stylePath` and verified against `snapshot.expected.style.digest`, mirroring `imageBytes`. Present iff `stylePath` is. */
+  styleBytes?: Buffer;
 }
 
 /**
@@ -91,7 +102,7 @@ export async function readPinnedBaseline(
   }
 
   const imagePath = path.resolve(root, snapshot.expected.image.path);
-  assertFileDigest(
+  const imageBytes = readAndVerifyFileDigest(
     imagePath,
     snapshot.expected.image.digest,
     contract.id,
@@ -100,9 +111,10 @@ export async function readPinnedBaseline(
   );
 
   let stylePath: string | undefined;
+  let styleBytes: Buffer | undefined;
   if (snapshot.expected.style) {
     stylePath = path.resolve(root, snapshot.expected.style.path);
-    assertFileDigest(
+    styleBytes = readAndVerifyFileDigest(
       stylePath,
       snapshot.expected.style.digest,
       contract.id,
@@ -111,27 +123,39 @@ export async function readPinnedBaseline(
     );
   }
 
-  return stylePath === undefined ? { snapshot, imagePath } : { snapshot, imagePath, stylePath };
+  return stylePath === undefined
+    ? { snapshot, imagePath, imageBytes }
+    : { snapshot, imagePath, imageBytes, stylePath, styleBytes };
 }
 
-function assertFileDigest(
+/**
+ * Reads `filePath`'s bytes into memory exactly once and verifies their digest against
+ * `expectedDigest`, returning the same buffer that was hashed -- never re-reading the
+ * file to hand a caller its bytes. This is the single point where a shared baseline
+ * file's bytes cross from disk into the process for the whole `readPinnedBaseline` call
+ * chain; see `PinnedBaseline`'s own doc comment for why callers must reuse the returned
+ * buffer instead of re-reading the path themselves.
+ */
+function readAndVerifyFileDigest(
   filePath: string,
   expectedDigest: string,
   contractId: string,
   field: string,
   snapshotPath: string,
-): void {
+): Buffer {
   if (!fs.existsSync(filePath)) {
     throw new AppError(
       "PINNED_BASELINE_MISSING",
       `Pinned baseline ${field} for contract "${contractId}" not found at ${filePath} (referenced from ${snapshotPath}).`,
     );
   }
-  const actualDigest = fileHash(filePath);
+  const bytes = fs.readFileSync(filePath);
+  const actualDigest = `${SHA256_PREFIX}${sha256Hex(bytes)}`;
   if (actualDigest !== expectedDigest) {
     throw new AppError(
       "PINNED_BASELINE_DIGEST_MISMATCH",
       `Pinned baseline ${field} for contract "${contractId}" at ${filePath} does not match its recorded digest: expected ${expectedDigest}, recomputed ${actualDigest}.`,
     );
   }
+  return bytes;
 }

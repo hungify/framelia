@@ -53,7 +53,7 @@ export async function doneGateCommand(
   const verdict = doneGateFromArtifact(artifactResult.data, {
     maxScoreAgeMs: parsed.data.maxScoreAgeMs,
     maxBaselineAgeMs: parsed.data.maxBaselineAgeMs ?? parsed.data.maxGoldAgeMs,
-    defaults: config,
+    defaults: config.capture,
   });
   return { ok: verdict.done, body: { artifactPath, ...verdict } };
 }

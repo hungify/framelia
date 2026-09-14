@@ -92,7 +92,9 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
   try {
     const standalone = mode === "matcher-only";
     const dependencies = {
+      "@framelia/contracts": releasePackages.get("@framelia/contracts"),
       "@framelia/playwright": releasePackages.get("@framelia/playwright"),
+      "@framelia/verify": releasePackages.get("@framelia/verify"),
       "@playwright/test": values["playwright-version"],
       typescript: "6.0.3",
       "@types/node": "26.0.1",

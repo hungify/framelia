@@ -124,7 +124,7 @@ export async function aggregateDashboardSource(project: Project): Promise<Dashbo
     defaultConcurrency(),
     async ({ feature, filePath }) => {
       const artifact = await readVerificationArtifact(filePath);
-      return withFeaturePrefix(await projectArtifact(artifact, feature, defaults), feature);
+      return withFeaturePrefix(await projectArtifact(artifact, feature, defaults.capture), feature);
     },
   );
 

@@ -86,6 +86,7 @@ describe("doneGateCommand", () => {
 
   it("resolves the artifact path against the injected runtime cwd and reports done: false when the artifact itself is not ok", async () => {
     const projectRoot = fs.mkdtempSync(path.join(tmp, "project-"));
+    fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {};\n");
     const artifactAbsolutePath = writeFailingArtifact(projectRoot);
 
     const result = await doneGateCommand(

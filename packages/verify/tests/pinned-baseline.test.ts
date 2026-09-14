@@ -1,16 +1,27 @@
 import * as fs from "node:fs";
+import type * as NodeFs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { authoredContractSchema, baselineSnapshotSchema } from "@framelia/contracts/workflow";
 import { PNG } from "pngjs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { canonicalJsonDigest } from "../src/canonical-json.ts";
 import { sha256Hex } from "../src/hash.ts";
 import { readPinnedBaseline } from "../src/pinned-baseline.ts";
 import { makeSolidPng } from "../src/testing.ts";
 import { AppError } from "../src/types.ts";
+
+// `import * as fs from "node:fs"` yields a non-configurable ESM namespace object --
+// `vi.spyOn` can never redefine a property on it. `vi.mock` with `importOriginal`
+// swaps the whole module binding instead, which every importer (including
+// pinned-baseline.ts's own `import * as fs`) resolves through, letting a `vi.fn`
+// wrapper around the real `readFileSync` count calls without changing behavior.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFs>();
+  return { ...actual, readFileSync: vi.fn<typeof actual.readFileSync>(actual.readFileSync) };
+});
 
 const temporaryDirectories: string[] = [];
 
@@ -83,6 +94,40 @@ describe("readPinnedBaseline", () => {
     expect(result.imagePath).toBe(imagePath);
     expect(result.stylePath).toBeUndefined();
     expect(result.snapshot.expected.kind).toBe("page");
+  });
+
+  it("returns the exact image bytes it verified against the recorded digest, not a fresh read", async () => {
+    const root = temporaryRoot();
+    const { contract, imagePath } = writePinnedSnapshot(root);
+    const onDiskBytes = fs.readFileSync(imagePath);
+
+    const readFileSyncMock = vi.mocked(fs.readFileSync);
+    readFileSyncMock.mockClear();
+    const result = await readPinnedBaseline(root, contract);
+    const imageReads = readFileSyncMock.mock.calls.filter((call) => call[0] === imagePath);
+
+    // Exactly one read of the shared image file's bytes, ever, inside readPinnedBaseline.
+    expect(imageReads).toHaveLength(1);
+    expect(result.imageBytes.equals(onDiskBytes)).toBe(true);
+    expect(`sha256:${sha256Hex(result.imageBytes)}`).toBe(result.snapshot.expected.image.digest);
+  });
+
+  it("exposes bytes unaffected by mutating the shared file immediately after resolution -- proving there is no lazy second read", async () => {
+    const root = temporaryRoot();
+    const { contract, imagePath } = writePinnedSnapshot(root);
+
+    const result = await readPinnedBaseline(root, contract);
+    const verifiedBytes = Buffer.from(result.imageBytes);
+
+    // Race the mutation as tightly against the read as real Node allows: the very next
+    // statement after readPinnedBaseline resolves swaps the shared file's bytes.
+    fs.writeFileSync(imagePath, PNG.sync.write(makeSolidPng(2, 2, [200, 0, 0, 255])));
+
+    // A caller holding onto result.imageBytes (e.g. to fs.writeFileSync it into a
+    // private path) sees the bytes verified before the mutation, never the swapped
+    // ones -- there is no code path left that re-reads imagePath to produce them.
+    expect(result.imageBytes.equals(verifiedBytes)).toBe(true);
+    expect(result.imageBytes.equals(fs.readFileSync(imagePath))).toBe(false);
   });
 
   it("never calls fetch -- pinned checks are structurally incapable of a network call", async () => {
@@ -216,6 +261,8 @@ describe("readPinnedBaseline", () => {
 
     const result = await readPinnedBaseline(root, contract);
     expect(result.stylePath).toBe(path.join(root, "style.json"));
+    expect(result.styleBytes?.equals(styleBytes)).toBe(true);
+    expect(result.imageBytes.equals(imageBytes)).toBe(true);
   });
 
   it("rejects when the style file's bytes disagree with its recorded digest", async () => {

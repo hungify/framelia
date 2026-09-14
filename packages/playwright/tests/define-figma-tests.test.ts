@@ -12,11 +12,12 @@ import {
 } from "@framelia/contracts/workflow";
 import type { AuthoredContract, BaselineSnapshot } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, readPinnedBaseline } from "@framelia/verify";
+import * as verify from "@framelia/verify";
 import { makeSolidPng } from "@framelia/verify/testing";
 import { chromium } from "@playwright/test";
 import type { TestInfo, TestType } from "@playwright/test";
 import { PNG } from "pngjs";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertDeviceScaleFactorAgreement,
@@ -722,6 +723,75 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       // copy, not these (now-different) live shared bytes.
       expect(fs.readFileSync(sharedImagePath)).not.toEqual(originalImageBytes);
     } finally {
+      await context.close();
+      await app.close();
+    }
+  });
+
+  it("cannot be defeated even by mutating the shared baseline the instant readPinnedBaseline resolves -- the earliest window reachable from outside defineFigmaTests", async () => {
+    // readPinnedBaseline now reads and verifies the shared baseline image's bytes
+    // exactly once, and defineFigmaTests writes those exact verified bytes into the
+    // private workDir straight from that in-memory buffer -- it never re-reads the
+    // shared path. This test proves it: it swaps the shared image file the instant
+    // readPinnedBaseline resolves, before reconcileViewport, before
+    // assertDeviceScaleFactorAgreement, before prepare(), before anything else in
+    // defineFigmaTests's own callback runs. If any code anywhere in this chain still
+    // re-read the shared path instead of reusing readPinnedBaseline's own verified
+    // bytes, the capture below would compare against the swapped (black) image and
+    // fail; it doesn't.
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const SIZE = { width: 100, height: 80 };
+    const MATCH_COLOR: [number, number, number, number] = [100, 150, 200, 255];
+    const contract = pinPageBaseline(root, {
+      id: "login.desktop",
+      name: "Login · Desktop",
+      viewport: SIZE,
+      color: MATCH_COLOR,
+    });
+    const contractPath = writeContractFile(root, "login.desktop.json", contract);
+    const app = await server(solidHtml(SIZE, [MATCH_COLOR[0], MATCH_COLOR[1], MATCH_COLOR[2]]));
+    const context = await browser.newContext({ viewport: SIZE });
+    const sharedImagePath = path.join(root, "login.desktop.png");
+    const originalImageBytes = fs.readFileSync(sharedImagePath);
+
+    // Captured before vi.spyOn below replaces the module's exported binding -- a real
+    // reference to the true, unmocked implementation, not a live binding that would
+    // itself resolve to the mock.
+    const actualReadPinnedBaseline = readPinnedBaseline;
+    const spy = vi.spyOn(verify, "readPinnedBaseline").mockImplementation(async (...args) => {
+      const verified = await actualReadPinnedBaseline(...args);
+      fs.writeFileSync(
+        sharedImagePath,
+        PNG.sync.write(makeSolidPng(SIZE.width, SIZE.height, [0, 0, 0, 255])),
+      );
+      return verified;
+    });
+
+    try {
+      const page = await context.newPage();
+      const { test, registered } = fakeTest();
+      defineFigmaTests(test, {
+        contracts: contractPath,
+        prepare: async ({ page: preparedPage }) => {
+          await preparedPage.goto(app.url);
+        },
+      });
+      expect(registered).toHaveLength(1);
+
+      const result = await registered[0]!.fn(
+        { page },
+        fakeTestInfo({ outputRoot: temporaryRoot() }),
+      );
+      expect(result).toBeUndefined();
+
+      // Confirms the swap actually happened -- the pass above reflects the bytes
+      // readPinnedBaseline verified before the swap, not these (now-different) live
+      // shared bytes.
+      expect(fs.readFileSync(sharedImagePath)).not.toEqual(originalImageBytes);
+    } finally {
+      spy.mockRestore();
       await context.close();
       await app.close();
     }

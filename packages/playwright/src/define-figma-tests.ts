@@ -562,26 +562,27 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
         // finally re-read those same shared paths -- nothing stops the shared files
         // being swapped and reverted in that window, invisible to everything including
         // finalization's own reconciliation (which only checks the pinned record's
-        // digest, never the live file at the moment of use). Copying the just-verified
-        // bytes into this attempt's own private workDir immediately, synchronously,
-        // right here -- before any further awaited work -- shrinks that window down to
-        // the same irreducible sub-millisecond TOCTOU already accepted elsewhere in this
-        // codebase (see lock.ts's own stale-lock non-goal), instead of leaving it open
-        // for the rest of this test's execution.
+        // digest, never the live file at the moment of use). Writing the just-verified
+        // `imageBytes`/`styleBytes` -- the exact buffers readPinnedBaseline already read
+        // and hashed, not a second read of the shared path via copyFileSync -- into this
+        // attempt's own private workDir immediately, synchronously, right here, before
+        // any further awaited work, closes that window entirely for the rest of this
+        // test's execution: there is now exactly one read of each shared baseline file's
+        // bytes in this whole call chain, inside readPinnedBaseline itself.
         const pinnedBaseline = await readPinnedBaseline(projectRoot, liveContract);
         const workDir = testInfo.outputPath(sanitizeAttachmentBaseName(liveContract.id));
         const privateImagePath = path.join(
           workDir,
           `expected${path.extname(pinnedBaseline.imagePath)}`,
         );
-        fs.copyFileSync(pinnedBaseline.imagePath, privateImagePath);
+        fs.writeFileSync(privateImagePath, pinnedBaseline.imageBytes);
         let privateStylePath: string | undefined;
-        if (pinnedBaseline.stylePath) {
+        if (pinnedBaseline.stylePath && pinnedBaseline.styleBytes) {
           privateStylePath = path.join(
             workDir,
             `expected-style${path.extname(pinnedBaseline.stylePath)}`,
           );
-          fs.copyFileSync(pinnedBaseline.stylePath, privateStylePath);
+          fs.writeFileSync(privateStylePath, pinnedBaseline.styleBytes);
         }
         const privateBaseline: PinnedBaseline = {
           ...pinnedBaseline,

@@ -6,6 +6,7 @@ import {
   baselineSnapshotSchema,
   collectionManifestSchema,
   commandOutcomeSchema,
+  contractBindingSchema,
   runPlanSchema,
   runRecordSchema,
 } from "../src/workflow-records.ts";
@@ -52,6 +53,42 @@ describe("authored contract records", () => {
   });
 });
 
+describe("project-relative paths", () => {
+  const binding = {
+    formatVersion: 1,
+    kind: "framelia.contract-binding",
+    contractId: "login.desktop",
+    contractFile: ".framelia/contracts/login.json",
+    contractDigest: A_DIGEST,
+  };
+
+  it("accepts an ordinary project-relative path", () => {
+    expect(contractBindingSchema.safeParse(binding).success).toBe(true);
+  });
+
+  it("rejects a POSIX-absolute path and a parent-traversal path", () => {
+    expect(
+      contractBindingSchema.safeParse({ ...binding, contractFile: "/etc/passwd" }).success,
+    ).toBe(false);
+    expect(
+      contractBindingSchema.safeParse({ ...binding, contractFile: "../outside.json" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a Windows drive-absolute path and a drive-relative path without a separator", () => {
+    // "C:\\foo" is drive-absolute; "C:foo" (no separator after the drive letter) is
+    // drive-relative -- it resolves against that drive's own current directory, which
+    // could point anywhere, not necessarily inside the project root.
+    expect(
+      contractBindingSchema.safeParse({ ...binding, contractFile: "C:\\Windows\\login.json" })
+        .success,
+    ).toBe(false);
+    expect(
+      contractBindingSchema.safeParse({ ...binding, contractFile: "C:login.json" }).success,
+    ).toBe(false);
+  });
+});
+
 describe("snapshot and execution units", () => {
   it("keeps CSS viewport and screenshot pixels distinct", () => {
     const snapshot = {
@@ -80,6 +117,27 @@ describe("snapshot and execution units", () => {
         expected: { image: { ...snapshot.expected.image, width: 600 } },
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts a region snapshot image sized to its element, not the viewport", () => {
+    // A region capture is bounded by whatever element the contract's own selector
+    // resolves to, unrelated to the viewport -- unlike a page snapshot, its expected
+    // image is never required to equal viewport × deviceScaleFactor.
+    const regionSnapshot = {
+      formatVersion: 1,
+      kind: "framelia.baseline-snapshot",
+      source: { kind: "figma", fileKey: "file", nodeId: "1:2" },
+      rendering: {
+        viewport: { preset: "desktop", width: 1200, height: 800 },
+        deviceScaleFactor: 1,
+      },
+      expected: {
+        kind: "region",
+        image: { path: "card.png", digest: A_DIGEST, width: 240, height: 96 },
+      },
+    };
+
+    expect(baselineSnapshotSchema.safeParse(regionSnapshot).success).toBe(true);
   });
 
   it("requires unique collected contract/project/repeat cases", () => {

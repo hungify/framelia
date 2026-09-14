@@ -13,7 +13,7 @@ import {
 } from "@framelia/verify";
 import type { CaptureCoreOutcome, ReadyCaptureSpec } from "@framelia/verify/internal";
 import { captureReadyPage } from "@framelia/verify/internal";
-import { discoverProjectConfig } from "@framelia/verify/project-policy";
+import { discoverProjectConfig, resolveProjectPolicy } from "@framelia/verify/project-policy";
 import type { Page, TestInfo, TestType } from "@playwright/test";
 import * as z from "zod";
 
@@ -103,6 +103,15 @@ export interface DefineFigmaTestsOptions {
    *  test's own configured timeout (`testInfo.timeout`), falling back to 60s when that's
    *  unset (0 = unbounded in Playwright's own config). */
   timeoutMs?: number;
+  // `maxMaskedAreaRatio`/`fontPolicy`/`animationPolicy`/`devtoolsSelector` below (and
+  // `timeoutMs`/`prepare`/`projectRoot` above) are literal values the caller's own
+  // `.spec.ts` passed directly to this call -- not read from an externally-mutable file
+  // the way `contracts` (via `fs.readFileSync`) and the project's `framelia.config.*`
+  // (via `resolveProjectPolicy`) are. They can only change if the source file itself
+  // changes, which requires a process restart that re-runs collection and re-freezes
+  // everything from scratch anyway -- there is no live-process A-then-B-then-A window
+  // for them the way there is for a file re-read mid-run, so the registered callback
+  // below never re-verifies them.
   maxMaskedAreaRatio?: number;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
@@ -419,6 +428,27 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       contractFile,
       contractDigest: digest,
     });
+    // Kicked off here, at registration time, so the config file this resolves against
+    // is whatever's on disk right now -- not deferred until the callback below actually
+    // runs (which may be long after registration). Never awaited here: awaiting would
+    // make `defineFigmaTests` itself async, forcing every call site to `await` it for
+    // registration to complete before Playwright's collection phase moves on. The
+    // callback awaits this same promise to get the frozen digest, and separately
+    // re-resolves fresh policy for the live comparison -- mirroring the contract check
+    // above. A project with no `framelia.config.*` at all is legitimate (see
+    // `discoverProjectConfig`'s fallback in this function's own doc comment) --
+    // `allowUninitialized: true` makes that resolve to `policyDigest: undefined` rather
+    // than throwing, and undefined-vs-undefined below correctly compares as "no drift."
+    const policyPromise = resolveProjectPolicy({
+      cwd: projectRoot,
+      projectRoot,
+      allowUninitialized: true,
+    });
+    // A contract whose project filter excludes this Playwright project skips (see
+    // `testInfo.skip` below) before ever awaiting `policyPromise` -- swallow here so an
+    // unrelated project's broken `framelia.config` can't surface as an unhandled
+    // rejection for a test that was never going to run against it anyway.
+    policyPromise.catch(() => undefined);
 
     test(
       contract.name,
@@ -428,28 +458,71 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       // fixture-parser constraint rules out forwarding a caller's full, unknown-in-advance
       // fixture set.
       async ({ page }: { page: Page }, testInfo: TestInfo) => {
-        const allowedProjects = contract.projects;
+        // Precapture reconciliation: `contract` above was loaded once, at collection
+        // time, and closed over by this callback -- Playwright may not actually invoke
+        // this callback until long after collection, and nothing else re-validates that
+        // the file on disk still matches what was registered. Reload it fresh here and
+        // compare digests before doing anything observable (skip decisions, viewport
+        // reconciliation, capture): a file that changed between collection and
+        // execution must fail loudly, never silently capture against a stale identity
+        // or a live-but-never-verified new one. See finalizeRunRecord's own
+        // digest-drift check (packages/verify/src/run-bundle/reconcile.ts) for the
+        // finalization-time half of this guarantee; this is the capture-time half.
+        const { contract: liveContract, digest: liveDigest } = loadContractFile(contractFilePath);
+        if (liveDigest !== digest) {
+          throw new Error(
+            `defineFigmaTests: contract "${contract.id}" changed on disk after test collection (registered digest ${digest}, now ${liveDigest}) -- refusing to run a stale contract's test.`,
+          );
+        }
+
+        // Same shape of gap as the contract check above, for the project policy
+        // (`framelia.config.*`): it's file-backed and re-readable mid-process, so an
+        // edit-then-revert of that file during a run's window is just as invisible to
+        // finalization-time reconciliation as a contract edit-then-revert would be.
+        // `resolveProjectPolicy` already folds every policy-relevant field into one
+        // digest the same way `reconcileCasePlan` compares it
+        // (packages/verify/src/run-bundle/reconcile.ts) -- reuse that digest directly
+        // rather than re-deriving one.
+        const registeredPolicy = await policyPromise;
+        const livePolicy = await resolveProjectPolicy({
+          cwd: projectRoot,
+          projectRoot,
+          allowUninitialized: true,
+        });
+        if (registeredPolicy.policyDigest !== livePolicy.policyDigest) {
+          throw new Error(
+            `defineFigmaTests: project policy for contract "${liveContract.id}" changed on disk after test collection (registered digest ${registeredPolicy.policyDigest ?? "none (uninitialized)"}, now ${livePolicy.policyDigest ?? "none (uninitialized)"}) -- refusing to run a stale project policy's test.`,
+          );
+        }
+
+        const allowedProjects = liveContract.projects;
         testInfo.skip(
           allowedProjects != null && !allowedProjects.includes(testInfo.project.name),
-          `contract "${contract.id}" does not apply to Playwright project "${testInfo.project.name}" (allowed: ${allowedProjects?.join(", ")}).`,
+          `contract "${liveContract.id}" does not apply to Playwright project "${testInfo.project.name}" (allowed: ${allowedProjects?.join(", ")}).`,
         );
 
-        const pinnedBaseline = await readPinnedBaseline(projectRoot, contract);
+        // No third check needed here: unlike `contract`/policy above, this is never
+        // closed over from collection time -- it's called fresh on every single
+        // execution of this callback, against `liveContract` (itself just verified),
+        // and it's already digest-verified internally against `liveContract.baseline`.
+        // There is no stale, pre-collection copy of a pinned baseline for anything to
+        // drift away from.
+        const pinnedBaseline = await readPinnedBaseline(projectRoot, liveContract);
 
-        await reconcileViewport(page, contract.viewport, contract.id);
+        await reconcileViewport(page, liveContract.viewport, liveContract.id);
         await assertDeviceScaleFactorAgreement(
           page,
           pinnedBaseline.snapshot.rendering.deviceScaleFactor,
-          contract.id,
+          liveContract.id,
         );
 
-        await options.prepare({ page }, { target: contract.target });
+        await options.prepare({ page }, { target: liveContract.target });
 
         const timeoutMs =
           options.timeoutMs ?? (testInfo.timeout > 0 ? testInfo.timeout : DEFAULT_TIMEOUT_MS);
-        const result = await runFigmaContractTest(page, contract, pinnedBaseline, {
+        const result = await runFigmaContractTest(page, liveContract, pinnedBaseline, {
           timeoutMs,
-          workDir: testInfo.outputPath(sanitizeAttachmentBaseName(contract.id)),
+          workDir: testInfo.outputPath(sanitizeAttachmentBaseName(liveContract.id)),
           maxMaskedAreaRatio: options.maxMaskedAreaRatio,
           fontPolicy: options.fontPolicy,
           animationPolicy: options.animationPolicy,

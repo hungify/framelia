@@ -14,7 +14,7 @@ import type { AuthoredContract, BaselineSnapshot } from "@framelia/contracts/wor
 import { canonicalJsonDigest, readPinnedBaseline } from "@framelia/verify";
 import { makeSolidPng } from "@framelia/verify/testing";
 import { chromium } from "@playwright/test";
-import type { TestType } from "@playwright/test";
+import type { TestInfo, TestType } from "@playwright/test";
 import { PNG } from "pngjs";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
@@ -490,5 +490,138 @@ describe("defineFigmaTests (registration)", () => {
     expect(() => defineFigmaTests(test, { contracts: [], prepare: async () => undefined })).toThrow(
       /at least one contract file/,
     );
+  });
+});
+
+/** Minimal fake of the `TestInfo` members the registered callback actually calls
+ *  (`project.name`, `timeout`, `skip`, `outputPath`, `attach`) -- same
+ *  runner-agnostic-core pattern as `attach.test.ts`'s own `fakeTestInfo`. `outputPath`
+ *  creates the directory it returns, mirroring Playwright's own real behavior. */
+function fakeTestInfo(options: { outputRoot: string; projectName?: string }): TestInfo {
+  return {
+    project: { name: options.projectName ?? "chromium" },
+    timeout: 5_000,
+    skip: (condition?: boolean, reason?: string) => {
+      if (condition) throw new Error(reason ?? "test skipped");
+    },
+    outputPath: (...parts: string[]) => {
+      const outputPath = path.join(options.outputRoot, ...parts);
+      fs.mkdirSync(outputPath, { recursive: true });
+      return outputPath;
+    },
+    attach: async () => undefined,
+  } as unknown as TestInfo;
+}
+
+describe("defineFigmaTests (execution — precapture reconciliation)", () => {
+  it("throws instead of silently capturing when the contract file changes on disk after registration, before the test body runs", async () => {
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+
+    const { test, registered } = fakeTest();
+    defineFigmaTests(test, { contracts: contractPath, prepare: async () => undefined });
+    expect(registered).toHaveLength(1);
+    const registeredBinding = contractBindingSchema.parse(
+      JSON.parse(registered[0]!.details.annotation.description),
+    );
+
+    // A -> B: the contract is edited on disk after registration/collection, before this
+    // test's body ever runs -- exactly the exploitable window this fix closes.
+    writeContractFile(root, "login.desktop.json", {
+      ...validContract,
+      revision: 2,
+      viewport: { preset: "desktop", width: 999, height: 999 },
+    });
+
+    let caught: unknown;
+    try {
+      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(
+      /contract "login\.desktop" changed on disk after test collection/,
+    );
+    expect((caught as Error).message).toContain(registeredBinding.contractDigest);
+  });
+
+  it("throws instead of silently capturing when the project policy (framelia.config) changes on disk after registration, before the test body runs", async () => {
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+
+    const { test, registered } = fakeTest();
+    defineFigmaTests(test, { contracts: contractPath, prepare: async () => undefined });
+    expect(registered).toHaveLength(1);
+
+    // The contract itself is untouched here -- only the project policy changes, proving
+    // this is a distinct check from the contract one above.
+    fs.writeFileSync(
+      path.join(root, "framelia.config.mjs"),
+      'export default { retryAcceptance: "allow-passed-after-retry" };\n',
+    );
+
+    let caught: unknown;
+    try {
+      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(
+      /project policy for contract "login\.desktop" changed on disk after test collection/,
+    );
+  });
+
+  it("completes the full A -> B -> A sequence: capture proceeds once the contract is reverted to what was registered", async () => {
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const SIZE = { width: 100, height: 80 };
+    const contractA = pinPageBaseline(root, {
+      id: "login.desktop",
+      name: "Login · Desktop",
+      viewport: SIZE,
+      color: [100, 150, 200, 255],
+    });
+    const contractPath = writeContractFile(root, "login.desktop.json", contractA);
+    const app = await server(solidHtml(SIZE, [100, 150, 200]));
+    const context = await browser.newContext({ viewport: SIZE });
+
+    try {
+      const page = await context.newPage();
+      const { test, registered } = fakeTest();
+      defineFigmaTests(test, {
+        contracts: contractPath,
+        prepare: async ({ page: preparedPage }) => {
+          await preparedPage.goto(app.url);
+        },
+      });
+      expect(registered).toHaveLength(1);
+
+      // A -> B: mutate to a different, still-valid contract before the callback runs.
+      writeContractFile(root, "login.desktop.json", { ...contractA, revision: 2 });
+      await expect(
+        registered[0]!.fn({ page }, fakeTestInfo({ outputRoot: temporaryRoot() })),
+      ).rejects.toThrow(/changed on disk after test collection/);
+
+      // B -> A: revert exactly back to what was registered -- the same object reference,
+      // so its canonical digest is byte-identical to what was frozen at registration.
+      writeContractFile(root, "login.desktop.json", contractA);
+      const result = await registered[0]!.fn(
+        { page },
+        fakeTestInfo({ outputRoot: temporaryRoot() }),
+      );
+      expect(result).toBeUndefined();
+    } finally {
+      await context.close();
+      await app.close();
+    }
   });
 });

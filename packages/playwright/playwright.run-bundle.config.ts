@@ -11,20 +11,19 @@ import { defineConfig } from "@playwright/test";
  * smoke configs (the matcher suite, defineFigmaTests's own suite) so this feature's
  * exercise doesn't multiply every other smoke spec across an extra project/retry.
  *
- * `projectRoot` is a fixed (not `mkdtemp`'d) directory so a caller can inspect
- * `.framelia/runs/<runId>` after the CLI run completes without capturing a randomly
- * generated path -- cleared at config-load time so repeated manual runs never see stale
- * state from a previous invocation. This config module is reloaded by every worker
- * process, not just the main/orchestrator one (`process.env.TEST_WORKER_INDEX` is unset
- * only in the latter) -- the wipe is gated on that so a worker starting up well after
- * the Reporter's own `onBegin` has already frozen the run plan never deletes it out from
- * under an in-progress run.
+ * `projectRoot`/`runId` are derived from `FRAMELIA_SMOKE_NONCE` (set by
+ * `scripts/verify-run-bundle-smoke.mjs`, which generates one nonce per invocation and
+ * passes it to this config's child process; worker processes inherit it automatically)
+ * so two concurrent smoke invocations never race on the same fixed directory -- without
+ * this, one invocation's own project-root wipe (below) could delete another's
+ * in-progress plan/attempts. Falling back to a fixed literal when the env var is unset
+ * (e.g. a bare `playwright test --config=playwright.run-bundle.config.ts` invocation
+ * outside the verify script) keeps that direct invocation path usable too, just without
+ * the isolation guarantee -- run it once at a time in that mode.
  */
-export const projectRoot = path.join(os.tmpdir(), "framelia-run-bundle-smoke-project");
-/** Kept in sync with `scripts/verify-run-bundle-smoke.mjs`, which reads this exact run
- *  bundle back after the CLI process exits (that script can't statically import this
- *  `.ts` config module, so the literal is intentionally duplicated there). */
-export const runId = "smoke-run";
+const nonce = process.env.FRAMELIA_SMOKE_NONCE ?? "default";
+export const projectRoot = path.join(os.tmpdir(), `framelia-run-bundle-smoke-project-${nonce}`);
+export const runId = `smoke-run-${nonce}`;
 if (process.env.TEST_WORKER_INDEX === undefined) {
   fs.rmSync(projectRoot, { recursive: true, force: true });
   fs.mkdirSync(projectRoot, { recursive: true });

@@ -1,13 +1,11 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 // Runs the run-bundle smoke config as a real `playwright test` CLI invocation, then reads
 // the resulting bundle back with `readRunBundle` and asserts on it explicitly -- proving
 // framelia/#77 (WP4)'s own deliverable end to end, not just "the command exited 1",
 // which a future regression (e.g. `smoke.failing` accidentally starting to pass) could
-// satisfy without ever exercising retry publication. See playwright.run-bundle.config.ts's
-// own `projectRoot`/`runId` -- duplicated here as plain string literals because this
-// script runs as plain Node, not through Playwright's own TS loader, so it can't
-// statically import that `.ts` config module.
-import { execFileSync } from "node:child_process";
+// satisfy without ever exercising retry publication.
+import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,8 +13,12 @@ import { fileURLToPath } from "node:url";
 import { readRunBundle } from "@framelia/verify/run-bundle";
 
 const packageDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const projectRoot = path.join(os.tmpdir(), "framelia-run-bundle-smoke-project");
-const runId = "smoke-run";
+// One nonce per invocation, passed to the child `playwright test` process (and inherited
+// by its own worker subprocesses) so two concurrent smoke runs never race on the same
+// fixed projectRoot/runId -- see playwright.run-bundle.config.ts's own doc comment.
+const nonce = crypto.randomUUID();
+const projectRoot = path.join(os.tmpdir(), `framelia-run-bundle-smoke-project-${nonce}`);
+const runId = `smoke-run-${nonce}`;
 
 function fail(message) {
   console.error(`verify-run-bundle-smoke: ${message}`);
@@ -28,6 +30,7 @@ try {
   execFileSync("playwright", ["test", "--config", "playwright.run-bundle.config.ts"], {
     cwd: packageDir,
     stdio: "inherit",
+    env: { ...process.env, FRAMELIA_SMOKE_NONCE: nonce },
   });
 } catch (error) {
   exitCode = typeof error.status === "number" ? error.status : 1;

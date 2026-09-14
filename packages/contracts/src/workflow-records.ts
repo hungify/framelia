@@ -385,6 +385,18 @@ export const attemptRecordSchema = z
         message: "completed attempt must have completedAt",
       });
     }
+    // Skips, blocks, incomplete runs (timeout/interruption), and writer/comparison errors
+    // can never resolve to a visual pass -- only a fully completed execution that actually
+    // ran the capture/compare pipeline to a definitive verdict may claim "passed". This is
+    // the schema-level guard for framelia/#77's acceptance criterion: "Skips, missing
+    // results, writer failures, cancellation and interruptions cannot become visual passes."
+    if (attempt.visualVerdict === "passed" && attempt.executionState !== "completed") {
+      context.addIssue({
+        code: "custom",
+        path: ["visualVerdict"],
+        message: `a "passed" visual verdict requires executionState "completed" (got "${attempt.executionState}")`,
+      });
+    }
   });
 
 export const runRecordSchema = z
@@ -484,8 +496,11 @@ export type BaselineSnapshot = z.infer<typeof baselineSnapshotSchema>;
 export type ContractBinding = z.infer<typeof contractBindingSchema>;
 export type CollectedCase = z.infer<typeof collectedCaseSchema>;
 export type CollectionManifest = z.infer<typeof collectionManifestSchema>;
+export type SourceIdentity = z.infer<typeof sourceIdentitySchema>;
 export type CasePlan = z.infer<typeof casePlanSchema>;
+export type RunSelection = z.infer<typeof runSelectionSchema>;
 export type RunPlan = z.infer<typeof runPlanSchema>;
+export type Diagnostic = z.infer<typeof diagnosticSchema>;
 export type AttemptRecord = z.infer<typeof attemptRecordSchema>;
 export type RunRecord = z.infer<typeof runRecordSchema>;
 export type CommandOutcome = z.infer<typeof commandOutcomeSchema>;

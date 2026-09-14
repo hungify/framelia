@@ -34,8 +34,10 @@ import {
 } from "./style-checks.ts";
 import { withTimeout } from "./timeout.ts";
 
-/** Annotation `type` every registered test carries (see defineFigmaTests's doc comment). */
-const CONTRACT_ANNOTATION_TYPE = "framelia.contract";
+/** Annotation `type` every registered test carries (see this module's own doc comment).
+ *  Exported so the Reporter (and its run-bundle projection) can find these tests without
+ *  duplicating the literal. */
+export const CONTRACT_ANNOTATION_TYPE = "framelia.contract";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 

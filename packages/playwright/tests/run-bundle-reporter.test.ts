@@ -1,0 +1,360 @@
+import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import {
+  authoredContractSchema,
+  baselineSnapshotSchema,
+  type ContractBinding,
+} from "@framelia/contracts/workflow";
+import { canonicalJsonDigest } from "@framelia/verify";
+import { readRunBundle } from "@framelia/verify/run-bundle";
+import { makeSolidPng } from "@framelia/verify/testing";
+import type {
+  FullConfig,
+  FullProject,
+  Suite,
+  TestCase,
+  TestResult,
+} from "@playwright/test/reporter";
+import { PNG } from "pngjs";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { SCORE_ATTACHMENT_SUFFIX } from "../src/attach.ts";
+import FrameliaReporter from "../src/reporter.ts";
+import type { FrameliaScoreAttachment } from "../src/score-attachment.ts";
+
+const temporaryDirectories: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((dir) => fs.promises.rm(dir, { recursive: true, force: true })),
+  );
+});
+
+function tempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  temporaryDirectories.push(dir);
+  return dir;
+}
+
+function clientRootFixture(): string {
+  const dir = tempDir("framelia-run-bundle-reporter-client-");
+  fs.writeFileSync(path.join(dir, "index.html"), "<main>Framelia</main>");
+  return dir;
+}
+
+function fakeConfig(rootDir: string): FullConfig {
+  return { rootDir } as unknown as FullConfig;
+}
+
+function fakeSuite(tests: TestCase[]): Suite {
+  return { allTests: () => tests } as unknown as Suite;
+}
+
+/** Pins a page-scope contract + baseline under `root/contracts/<id>.json`, returning the
+ *  matching `framelia.contract` annotation binding a fake TestCase can carry. */
+function pinContract(
+  root: string,
+  options: { id: string; viewport?: { width: number; height: number } },
+): ContractBinding {
+  const viewport = options.viewport ?? { width: 10, height: 10 };
+  const imageBytes = PNG.sync.write(makeSolidPng(viewport.width, viewport.height, [1, 2, 3, 255]));
+  const imageDigest: `sha256:${string}` = `sha256:${crypto.createHash("sha256").update(imageBytes).digest("hex")}`;
+  const snapshot = baselineSnapshotSchema.parse({
+    formatVersion: 1,
+    kind: "framelia.baseline-snapshot",
+    source: { kind: "figma", fileKey: "file-key", nodeId: "1:2" },
+    rendering: { viewport: { preset: "desktop", ...viewport }, deviceScaleFactor: 1 },
+    expected: {
+      kind: "page",
+      image: { path: `${options.id}.png`, digest: imageDigest, ...viewport },
+    },
+  });
+  const snapshotDigest = canonicalJsonDigest(snapshot);
+  const snapshotDir = path.join(root, ".framelia", "baselines", snapshotDigest.slice(7));
+  fs.mkdirSync(snapshotDir, { recursive: true });
+  fs.writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(snapshot));
+  fs.writeFileSync(path.join(root, `${options.id}.png`), imageBytes);
+
+  const contract = authoredContractSchema.parse({
+    formatVersion: 1,
+    kind: "framelia.contract",
+    id: options.id,
+    name: options.id,
+    revision: 1,
+    target: { path: `/${options.id}` },
+    viewport: { preset: "desktop", ...viewport },
+    scope: { kind: "page", pageReason: "full page review" },
+    baseline: { snapshotDigest },
+  });
+  fs.mkdirSync(path.join(root, "contracts"), { recursive: true });
+  const contractFile = `contracts/${options.id}.json`;
+  fs.writeFileSync(path.join(root, contractFile), JSON.stringify(contract));
+
+  return {
+    formatVersion: 1,
+    kind: "framelia.contract-binding",
+    contractId: options.id,
+    contractFile,
+    contractDigest: canonicalJsonDigest(contract),
+  };
+}
+
+function fakeProjectSuite(projectName: string): Suite {
+  const project = { name: projectName, use: { viewport: null } } as unknown as FullProject;
+  return { project: () => project } as unknown as Suite;
+}
+
+/** A fake `TestCase` shaped the way a real `defineFigmaTests` registration produces:
+ *  carrying the `framelia.contract` annotation, a spec file location, a project-bearing
+ *  parent suite, and a repeat-each index. */
+function fakeContractTest(options: {
+  id: string;
+  binding: ContractBinding;
+  specFile: string;
+  projectName?: string;
+  repeatEachIndex?: number;
+}): TestCase {
+  return {
+    id: options.id,
+    title: options.id,
+    tags: [],
+    titlePath: () => ["project", "file.spec.ts", options.id],
+    annotations: [{ type: "framelia.contract", description: JSON.stringify(options.binding) }],
+    location: { file: options.specFile, line: 1, column: 1 },
+    parent: fakeProjectSuite(options.projectName ?? "chromium"),
+    repeatEachIndex: options.repeatEachIndex ?? 0,
+  } as unknown as TestCase;
+}
+
+function scoreAttachment(
+  overrides: Partial<FrameliaScoreAttachment> = {},
+): FrameliaScoreAttachment {
+  return {
+    pass: true,
+    matchRatio: 1,
+    ssim: 1,
+    avgDeltaE: 0,
+    diffPixels: 0,
+    baselineSize: { width: 10, height: 10 },
+    actualSize: { width: 10, height: 10 },
+    targetUrl: "http://localhost/",
+    baselineKind: "figma",
+    attachmentBaseName: "framelia-case",
+    ...overrides,
+  };
+}
+
+function fakeAttemptResult(options: {
+  status: TestResult["status"];
+  retry?: number;
+  score?: FrameliaScoreAttachment;
+  actualImageDir?: string;
+}): TestResult {
+  const attachments: TestResult["attachments"] = [];
+  if (options.score) {
+    if (options.actualImageDir) {
+      const baseName = options.score.attachmentBaseName ?? "framelia-case";
+      const actualPath = path.join(options.actualImageDir, `${baseName}-actual.png`);
+      fs.writeFileSync(actualPath, PNG.sync.write(makeSolidPng(10, 10, [1, 2, 3, 255])));
+      attachments.push({ name: `${baseName}-actual`, contentType: "image/png", path: actualPath });
+    }
+    attachments.push({
+      name: `${options.score.attachmentBaseName}${SCORE_ATTACHMENT_SUFFIX}`,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(options.score)),
+    });
+  }
+  return {
+    status: options.status,
+    retry: options.retry ?? 0,
+    startTime: new Date("2026-09-14T12:00:00.000Z"),
+    duration: 1_000,
+    attachments,
+  } as unknown as TestResult;
+}
+
+function initializedProjectRoot(): string {
+  const root = tempDir("framelia-run-bundle-reporter-project-");
+  fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+  fs.writeFileSync(path.join(root, "login.spec.ts"), "// fixture spec file\n");
+  return root;
+}
+
+describe("FrameliaReporter run-bundle publication (additive to the dashboard/VerificationArtifact path)", () => {
+  it("freezes a run plan and publishes a passing attempt, finalized once onEnd completes", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-passing",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    reporter.onTestEnd(
+      test,
+      fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+    );
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const bundle = readRunBundle(root, "run-passing");
+    expect(bundle.record.status).toBe("finalized");
+    expect(bundle.record.finalizedAt).toBeDefined();
+    expect(bundle.attempts.size).toBe(1);
+    const [attempt] = [...bundle.attempts.values()];
+    expect(attempt).toMatchObject({ executionState: "completed", visualVerdict: "passed" });
+  });
+
+  it("publishes two distinct attempts for a retried case, both retained after finalize", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-retries",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    reporter.onTestEnd(
+      test,
+      fakeAttemptResult({
+        status: "failed",
+        retry: 0,
+        score: scoreAttachment({ pass: false }),
+        actualImageDir: imageDir,
+      }),
+    );
+    reporter.onTestEnd(
+      test,
+      fakeAttemptResult({
+        status: "passed",
+        retry: 1,
+        score: scoreAttachment({ pass: true }),
+        actualImageDir: imageDir,
+      }),
+    );
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const bundle = readRunBundle(root, "run-retries");
+    expect(bundle.attempts.size).toBe(2);
+    const caseEntry = bundle.record.cases[0]!;
+    expect(caseEntry.attemptIds).toHaveLength(2);
+    // Default retryAcceptance ("require-first-attempt"): the first attempt is
+    // authoritative even though the retry passed.
+    const selected = bundle.attempts.get(caseEntry.selectedAttemptId!);
+    expect(selected?.retryIndex).toBe(0);
+    expect(selected?.visualVerdict).toBe("mismatched");
+  });
+
+  it("never lets a skipped test appear as a visual pass", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-skipped",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    reporter.onTestEnd(test, fakeAttemptResult({ status: "skipped" }));
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const bundle = readRunBundle(root, "run-skipped");
+    const [attempt] = [...bundle.attempts.values()];
+    expect(attempt).toMatchObject({ executionState: "blocked", visualVerdict: "not-evaluated" });
+  });
+
+  it("never lets an interrupted test appear as a visual pass", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-interrupted",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    reporter.onTestEnd(test, fakeAttemptResult({ status: "interrupted" }));
+    await reporter.onEnd({ status: "interrupted" } as any);
+
+    const bundle = readRunBundle(root, "run-interrupted");
+    const [attempt] = [...bundle.attempts.values()];
+    expect(attempt).toMatchObject({ executionState: "incomplete", visualVerdict: "not-evaluated" });
+  });
+
+  it("still freezes and finalizes the run bundle even when the dashboard itself fails to start", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    // A clientRoot with no index.html makes @framelia/dashboard-server's own
+    // assertClientBuildExists() reject -- a real dashboard-side failure, not a mock.
+    const brokenClientRoot = tempDir("framelia-run-bundle-broken-client-");
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: brokenClientRoot,
+      port: 0,
+      runId: "run-dashboard-down",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    expect(await reporter.dashboardUrl()).toBeUndefined();
+    reporter.onTestEnd(
+      test,
+      fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+    );
+    await reporter.onEnd({ status: "passed" } as any);
+
+    const bundle = readRunBundle(root, "run-dashboard-down");
+    expect(bundle.record.status).toBe("finalized");
+    expect(bundle.attempts.size).toBe(1);
+  });
+
+  it("does not freeze a run bundle for a suite with zero framelia.contract-annotated tests", async () => {
+    const root = initializedProjectRoot();
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-no-contracts",
+    });
+    reporter.onBegin(fakeConfig(root), fakeSuite([]));
+    await reporter.onEnd({ status: "passed" } as any);
+
+    expect(fs.existsSync(path.join(root, ".framelia", "runs"))).toBe(false);
+  });
+});

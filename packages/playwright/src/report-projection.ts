@@ -101,7 +101,11 @@ function dashboardArtifactPath(id: string, name: string): string {
   return `contracts/${encodeURIComponent(id)}/${name}`;
 }
 
-function attachmentPath(
+/** Finds the file path of one of the matcher's `-expected`/`-actual`/`-diff` image
+ *  attachments off a TestResult. Exported so run-bundle-projection.ts's attempt builder
+ *  reads the exact same attachments this module's own durable-evidence writers do,
+ *  rather than a second, independently-maintained lookup convention. */
+export function attachmentPath(
   result: TestResult,
   baseName: string,
   suffix: "-expected" | "-actual" | "-diff",

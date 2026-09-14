@@ -45,6 +45,11 @@
       "types": "./dist/project-policy.d.ts",
       "default": "./dist/project-policy.js"
     },
+    "./run-bundle": {
+      "framelia-dev": "./src/run-bundle/index.ts",
+      "types": "./dist/run-bundle.d.ts",
+      "default": "./dist/run-bundle.js"
+    },
     "./testing": {
       "framelia-dev": "./src/testing.ts",
       "types": "./dist/testing.d.ts",

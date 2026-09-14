@@ -1,4 +1,3 @@
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -7,12 +6,12 @@ import {
   authoredContractSchema,
   CASE_PLAN_FORMAT_VERSION,
   casePlanSchema,
-  contractBindingSchema,
+  testRegistrationSchema,
   type AttemptRecord,
   type CasePlan,
-  type ContractBinding,
   type Diagnostic,
   type SourceIdentity,
+  type TestRegistration,
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, readPinnedBaseline, type CanonicalJsonValue } from "@framelia/verify";
 import {
@@ -27,20 +26,18 @@ import { CONTRACT_ANNOTATION_TYPE } from "./define-figma-tests.ts";
 import { attachmentPath, readScoreAttachments } from "./report-projection.ts";
 import type { FrameliaScoreAttachment } from "./score-attachment.ts";
 
-function fileHash(filePath: string): `sha256:${string}` {
-  return `sha256:${crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex")}`;
-}
-
 /** Reads the `framelia.contract` annotation `defineFigmaTests` puts on every test it
- *  registers (see that module's own doc comment). `undefined` for any ordinary test that
- *  isn't one of its registrations -- run-bundle publication only ever covers those. */
-export function readContractBinding(test: TestCase): ContractBinding | undefined {
+ *  registers (see that module's own doc comment) -- the contract binding plus this
+ *  test's own registration-time spec-file digest. `undefined` for any ordinary test
+ *  that isn't one of its registrations -- run-bundle publication only ever covers
+ *  those. */
+export function readContractRegistration(test: TestCase): TestRegistration | undefined {
   const annotation = (test.annotations ?? []).find(
     (candidate) => candidate.type === CONTRACT_ANNOTATION_TYPE,
   );
   if (!annotation?.description) return undefined;
   try {
-    return contractBindingSchema.parse(JSON.parse(annotation.description));
+    return testRegistrationSchema.parse(JSON.parse(annotation.description));
   } catch {
     // A foreign/malformed annotation sharing the same `type` string must never crash the
     // reporter -- treat it as "not one of ours" rather than propagate a parse error.
@@ -76,9 +73,6 @@ export interface CasePlanBuildContext {
   projectRoot: string;
   policyDigest: `sha256:${string}`;
   source: SourceIdentity;
-  /** Caches one file-hash per spec file path -- several registered tests (repeats,
-   *  multiple contracts fanned from one `defineFigmaTests` call) commonly share a file. */
-  specDigestCache: Map<string, `sha256:${string}`>;
 }
 
 /**
@@ -88,6 +82,18 @@ export interface CasePlanBuildContext {
  * contract/policy/binding/snapshot inputs before capture and finalization" requirement.
  * Throws if the contract has drifted since collection (changed planning inputs must
  * invalidate the run, even though the test's own id/title never changed).
+ *
+ * `specFileDigest` is read straight from the `framelia.contract` annotation's own
+ * `specDigest` (`registration.specDigest`), NOT independently re-hashed from
+ * `test.location.file` here at `onBegin` time. Playwright imports every spec file
+ * (running `defineFigmaTests` synchronously, once, per file) strictly before any
+ * Reporter's `onBegin` runs; re-hashing the file fresh from disk at this later point
+ * would freeze whatever content happens to be on disk *right now*, which can already
+ * differ from what Node actually imported and will actually execute for every attempt
+ * of this test, if the file was edited in between. `defineFigmaTests`'s own `specUrl`
+ * option hashes the file synchronously at true import time -- the only point that can
+ * ever observe the actually-executing bytes -- and freezes that digest into the
+ * annotation; this function only ever propagates it.
  *
  * Resolves `binding.contractFile` against `context.projectRoot` -- the Reporter's own
  * project root, not each contract file's independently-discovered nearest-config
@@ -102,10 +108,11 @@ export async function buildCasePlanForTest(
   test: TestCase,
   context: CasePlanBuildContext,
 ): Promise<CasePlanBuildResult> {
-  const binding = readContractBinding(test);
-  if (!binding) {
+  const registration = readContractRegistration(test);
+  if (!registration) {
     throw new Error(`buildCasePlanForTest: test ${test.id} has no framelia.contract annotation.`);
   }
+  const { binding } = registration;
 
   const contractPath = path.resolve(context.projectRoot, binding.contractFile);
   let parsed: unknown;
@@ -131,11 +138,6 @@ export async function buildCasePlanForTest(
   await readPinnedBaseline(context.projectRoot, contract);
 
   const specFile = test.location.file;
-  let specFileDigest = context.specDigestCache.get(specFile);
-  if (!specFileDigest) {
-    specFileDigest = fileHash(specFile);
-    context.specDigestCache.set(specFile, specFileDigest);
-  }
   const specFileRelative = path.relative(context.projectRoot, specFile).split(path.sep).join("/");
 
   const project = test.parent.project();
@@ -155,7 +157,7 @@ export async function buildCasePlanForTest(
     policyDigest: context.policyDigest,
     bindingDigest: canonicalJsonDigest(binding),
     specFile: specFileRelative,
-    specFileDigest,
+    specFileDigest: registration.specDigest,
     project: { name: projectName, runtimeDigest: computeProjectRuntimeDigest(project) },
     repeatIndex: test.repeatEachIndex,
     source: context.source,
@@ -166,7 +168,7 @@ export async function buildCasePlanForTest(
 
 /** Every `framelia.contract`-annotated test in the collected suite -- see `Suite.allTests()`. */
 export function contractAnnotatedTests(suite: Suite): TestCase[] {
-  return suite.allTests().filter((test) => readContractBinding(test) !== undefined);
+  return suite.allTests().filter((test) => readContractRegistration(test) !== undefined);
 }
 
 function mapAttemptOutcome(

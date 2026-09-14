@@ -17,6 +17,7 @@ import {
 export const CONTRACT_FORMAT_VERSION = 1;
 export const SNAPSHOT_FORMAT_VERSION = 1;
 export const BINDING_FORMAT_VERSION = 1;
+export const TEST_REGISTRATION_FORMAT_VERSION = 1;
 export const COLLECTION_FORMAT_VERSION = 1;
 export const CASE_PLAN_FORMAT_VERSION = 1;
 export const RUN_PLAN_FORMAT_VERSION = 1;
@@ -170,6 +171,30 @@ export const contractBindingSchema = z
     contractId: z.string().regex(CONTRACT_ID_PATTERN),
     contractFile: projectRelativePathSchema,
     contractDigest: sha256DigestSchema,
+  })
+  .strict();
+
+/**
+ * The full `framelia.contract` Playwright annotation payload `defineFigmaTests`
+ * attaches to every test it registers -- `binding` (which contract this test binds to)
+ * plus `specDigest`, a registration-time content digest of the *spec file that called
+ * `defineFigmaTests`* itself (see that package's own `specUrl` option). Deliberately a
+ * sibling of `binding`, not a field folded into `contractBindingSchema`: a binding's own
+ * identity is "which contract, at which digest" and is meaningful independent of which
+ * spec file happens to import it (`collectedCaseSchema` below already establishes this
+ * precedent -- its own `specFile`/`specFileDigest` sit beside `binding`, not inside it).
+ * Keeping `specDigest` out of `contractBindingSchema` also keeps `casePlanSchema`'s own
+ * `bindingDigest` (computed as `canonicalJsonDigest(binding)`) answering exactly one
+ * question -- has the contract binding drifted -- never conflated with "has the spec
+ * file drifted," which `casePlanSchema`'s own separate `specFileDigest` field already
+ * answers.
+ */
+export const testRegistrationSchema = z
+  .object({
+    formatVersion: z.literal(TEST_REGISTRATION_FORMAT_VERSION),
+    kind: z.literal("framelia.test-registration"),
+    binding: contractBindingSchema,
+    specDigest: sha256DigestSchema,
   })
   .strict();
 
@@ -499,6 +524,7 @@ export const commandOutcomeSchema = z
 export type AuthoredContract = z.infer<typeof authoredContractSchema>;
 export type BaselineSnapshot = z.infer<typeof baselineSnapshotSchema>;
 export type ContractBinding = z.infer<typeof contractBindingSchema>;
+export type TestRegistration = z.infer<typeof testRegistrationSchema>;
 export type CollectedCase = z.infer<typeof collectedCaseSchema>;
 export type CollectionManifest = z.infer<typeof collectionManifestSchema>;
 export type SourceIdentity = z.infer<typeof sourceIdentitySchema>;

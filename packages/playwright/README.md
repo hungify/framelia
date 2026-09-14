@@ -118,6 +118,7 @@ import { test } from "@playwright/test";
 
 defineFigmaTests(test, {
   contracts: new URL("./visual-contract.json", import.meta.url),
+  specUrl: new URL(import.meta.url),
   async prepare({ page }, { target }) {
     await page.goto(target.path);
   },
@@ -126,10 +127,16 @@ defineFigmaTests(test, {
 
 `contracts` accepts one file (a `URL`, resolved module-relatively, or a path string) or
 an array of several -- each becomes exactly one registered test, fanned across every
-configured Playwright project the way any other registered test is. Every registered
-test carries a versioned `framelia.contract` annotation (`{ contractId, contractFile,
-contractDigest }`) for downstream tooling; a contract's own `projects` field, when set,
-skips the test on every other project instead of narrowing what gets registered.
+configured Playwright project the way any other registered test is. `specUrl` is
+required -- pass `new URL(import.meta.url)` from your own spec file; `defineFigmaTests`
+hashes that file's raw bytes at this exact registration moment and freezes the digest
+into every registered test's own annotation, so a spec file edited on disk after
+Playwright's own collection phase imports it can never be silently frozen into (or
+captured against) a different identity than what Node actually imported. Every
+registered test carries a versioned `framelia.contract` annotation (`{ contractId,
+contractFile, contractDigest }` plus that registration-time spec digest) for downstream
+tooling; a contract's own `projects` field, when set, skips the test on every other
+project instead of narrowing what gets registered.
 
 The contract's own `viewport` is reconciled, and the pinned baseline's
 `deviceScaleFactor` validated, before `prepare` runs. Viewport: applied automatically
@@ -165,6 +172,7 @@ const test = base.extend({
 
 defineFigmaTests(test, {
   contracts: new URL("./dashboard.visual-contract.json", import.meta.url),
+  specUrl: new URL(import.meta.url),
   async prepare({ page }, { target }) {
     await page.goto(target.path);
     await page.getByTestId("dashboard-ready").waitFor();

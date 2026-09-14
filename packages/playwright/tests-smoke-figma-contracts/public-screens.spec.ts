@@ -116,6 +116,7 @@ test.afterAll(async () => {
 // One call, two contracts, one shared source line -- see this file's header comment.
 defineFigmaTests(test, {
   contracts: [desktopContract, mobileContract],
+  specUrl: new URL(import.meta.url),
   async prepare({ page }, { target }) {
     await page.goto(`${appUrl}${target.path}`);
     await expect(page.locator("body")).toBeVisible();

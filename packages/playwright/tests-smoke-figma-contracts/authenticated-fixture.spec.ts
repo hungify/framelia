@@ -92,6 +92,7 @@ const authedTest = base.extend({
 
 defineFigmaTests(authedTest, {
   contracts: contractPath,
+  specUrl: new URL(import.meta.url),
   async prepare({ page }, { target }) {
     expect(loginRanBeforePrepare).toBe(true);
     expect(target.path).toBe("/dashboard");

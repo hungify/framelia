@@ -1,0 +1,12 @@
+---
+"@framelia/contracts": minor
+"@framelia/playwright": minor
+---
+
+Fix `defineFigmaTests`: freeze the spec file's content digest at true registration (import) time, closing the last gap in framelia/#77's case-plan digest contract.
+
+Playwright imports every spec file -- running `defineFigmaTests` synchronously, once, per file -- strictly before any Reporter's `onBegin` runs. `buildCasePlanForTest` (called from `FrameliaReporter#onBegin`) previously computed `CasePlan.specFile`'s digest by re-reading `TestCase.location.file` from disk at `onBegin` time. A spec file edited on disk in the window between "Playwright finished importing it" and "onBegin re-hashes it" froze the _edited_ content's digest into the case plan, even though the code that actually executes for every attempt is still whatever Node already imported. `reconcileCasePlan`'s finalization-time recheck couldn't catch this either: the frozen digest was wrong from the moment it was captured, not drifted afterward.
+
+`defineFigmaTests` now requires a new `specUrl: URL` option -- pass `new URL(import.meta.url)` from your own spec file. `defineFigmaTests` hashes that file's raw bytes synchronously at this exact registration moment (the only point that can ever observe the actually-executing bytes) and embeds the digest in the `framelia.contract` annotation payload, alongside the existing contract binding, via `@framelia/contracts/workflow`'s new `testRegistrationSchema` (kept as a sibling field of `binding`, not folded into `contractBindingSchema`, mirroring `collectedCaseSchema`'s own precedent of treating spec identity as independent of contract identity). `buildCasePlanForTest` now reads that annotation-embedded digest instead of independently re-hashing the file. The registered test callback also gains a new precapture check -- mirroring the existing contract/config checks -- that re-hashes the spec file fresh and throws if it has changed since registration, closing the wider registration-vs-execution window for that specific test, not just the narrower registration-vs-`onBegin` window the frozen digest alone protects.
+
+This is a breaking change: every `defineFigmaTests(test, options)` call site must add `specUrl: new URL(import.meta.url)`.

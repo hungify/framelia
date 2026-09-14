@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import {
   authoredContractSchema,
   baselineSnapshotSchema,
-  contractBindingSchema,
+  testRegistrationSchema,
 } from "@framelia/contracts/workflow";
 import type { AuthoredContract, BaselineSnapshot } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, readPinnedBaseline } from "@framelia/verify";
@@ -25,6 +25,11 @@ import {
   reconcileViewport,
   runFigmaContractTest,
 } from "../src/define-figma-tests.ts";
+
+// This test file's own identity -- a real, stable file on disk -- stands in for "the
+// calling spec file" (`options.specUrl`) in every test below that isn't itself
+// exercising spec-digest drift (those construct their own mutable fixture file).
+const TEST_SPEC_URL = new URL(import.meta.url);
 
 const browser = await chromium.launch();
 afterAll(() => browser.close());
@@ -415,6 +420,7 @@ describe("defineFigmaTests (registration)", () => {
     let prepareCalls = 0;
     defineFigmaTests(test, {
       contracts: [desktopFile, mobileFile],
+      specUrl: TEST_SPEC_URL,
       prepare: async () => {
         prepareCalls++;
       },
@@ -426,7 +432,7 @@ describe("defineFigmaTests (registration)", () => {
 
     const bindings = registered.map((entry) => {
       expect(entry.details.annotation.type).toBe("framelia.contract");
-      return contractBindingSchema.parse(JSON.parse(entry.details.annotation.description));
+      return testRegistrationSchema.parse(JSON.parse(entry.details.annotation.description)).binding;
     });
     for (const binding of bindings) {
       expect(binding.contractDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -449,7 +455,11 @@ describe("defineFigmaTests (registration)", () => {
     );
 
     const { test, registered } = fakeTest();
-    defineFigmaTests(test, { contracts: files, prepare: async () => undefined });
+    defineFigmaTests(test, {
+      contracts: files,
+      specUrl: TEST_SPEC_URL,
+      prepare: async () => undefined,
+    });
 
     expect(registered.map((entry) => entry.title)).toEqual(["Login · a", "Login · b", "Login · c"]);
   });
@@ -459,7 +469,11 @@ describe("defineFigmaTests (registration)", () => {
     const filePath = writeContractFile(root, "visual-contract.json", validContract);
 
     const { test, registered } = fakeTest();
-    defineFigmaTests(test, { contracts: pathToFileURL(filePath), prepare: async () => undefined });
+    defineFigmaTests(test, {
+      contracts: pathToFileURL(filePath),
+      specUrl: TEST_SPEC_URL,
+      prepare: async () => undefined,
+    });
 
     expect(registered).toHaveLength(1);
     expect(registered[0]?.title).toBe("Login · Desktop");
@@ -472,7 +486,11 @@ describe("defineFigmaTests (registration)", () => {
 
     const { test } = fakeTest();
     expect(() =>
-      defineFigmaTests(test, { contracts: filePath, prepare: async () => undefined }),
+      defineFigmaTests(test, {
+        contracts: filePath,
+        specUrl: TEST_SPEC_URL,
+        prepare: async () => undefined,
+      }),
     ).toThrow(/not valid JSON/);
   });
 
@@ -482,15 +500,23 @@ describe("defineFigmaTests (registration)", () => {
 
     const { test } = fakeTest();
     expect(() =>
-      defineFigmaTests(test, { contracts: filePath, prepare: async () => undefined }),
+      defineFigmaTests(test, {
+        contracts: filePath,
+        specUrl: TEST_SPEC_URL,
+        prepare: async () => undefined,
+      }),
     ).toThrow(/schema validation/);
   });
 
   it("throws when given an empty contracts array", () => {
     const { test } = fakeTest();
-    expect(() => defineFigmaTests(test, { contracts: [], prepare: async () => undefined })).toThrow(
-      /at least one contract file/,
-    );
+    expect(() =>
+      defineFigmaTests(test, {
+        contracts: [],
+        specUrl: TEST_SPEC_URL,
+        prepare: async () => undefined,
+      }),
+    ).toThrow(/at least one contract file/);
   });
 });
 
@@ -522,11 +548,15 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     const contractPath = writeContractFile(root, "login.desktop.json", validContract);
 
     const { test, registered } = fakeTest();
-    defineFigmaTests(test, { contracts: contractPath, prepare: async () => undefined });
+    defineFigmaTests(test, {
+      contracts: contractPath,
+      specUrl: TEST_SPEC_URL,
+      prepare: async () => undefined,
+    });
     expect(registered).toHaveLength(1);
-    const registeredBinding = contractBindingSchema.parse(
+    const registeredBinding = testRegistrationSchema.parse(
       JSON.parse(registered[0]!.details.annotation.description),
-    );
+    ).binding;
 
     // A -> B: the contract is edited on disk after registration/collection, before this
     // test's body ever runs -- exactly the exploitable window this fix closes.
@@ -550,6 +580,40 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     expect((caught as Error).message).toContain(registeredBinding.contractDigest);
   });
 
+  it("throws instead of silently capturing when the spec file itself changes on disk after registration, before the test body runs", async () => {
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+    const specFixturePath = path.join(root, "fixture.spec.ts");
+    fs.writeFileSync(specFixturePath, "// original spec content\n");
+
+    const { test, registered } = fakeTest();
+    defineFigmaTests(test, {
+      contracts: contractPath,
+      specUrl: pathToFileURL(specFixturePath),
+      prepare: async () => undefined,
+    });
+    expect(registered).toHaveLength(1);
+
+    // A -> B: the *spec file itself* is edited on disk after registration/collection,
+    // before this test's own body ever runs -- the wider window `specUrl`'s own
+    // precapture check closes, beyond the narrower registration-vs-onBegin window the
+    // registration-time freeze alone protects.
+    fs.writeFileSync(specFixturePath, "// edited after registration, before this test ran\n");
+
+    let caught: unknown;
+    try {
+      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(/spec file .* changed on disk after test collection/);
+    expect((caught as Error).message).toContain(specFixturePath);
+  });
+
   it("throws instead of silently capturing when the project policy's derived digest changes on disk (an env file appears) after registration, before the test body runs", async () => {
     const root = temporaryRoot();
     fs.mkdirSync(path.join(root, ".git"));
@@ -557,7 +621,11 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     const contractPath = writeContractFile(root, "login.desktop.json", validContract);
 
     const { test, registered } = fakeTest();
-    defineFigmaTests(test, { contracts: contractPath, prepare: async () => undefined });
+    defineFigmaTests(test, {
+      contracts: contractPath,
+      specUrl: TEST_SPEC_URL,
+      prepare: async () => undefined,
+    });
     expect(registered).toHaveLength(1);
 
     // Deterministic synchronization, not a guessed timer duration: invoke the callback
@@ -610,6 +678,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       const { test, registered } = fakeTest();
       defineFigmaTests(test, {
         contracts: contractPath,
+        specUrl: TEST_SPEC_URL,
         prepare: async ({ page: preparedPage }) => {
           await preparedPage.goto(app.url);
         },
@@ -655,7 +724,11 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     const contractPath = writeContractFile(root, "login.desktop.json", validContract);
 
     const { test, registered } = fakeTest();
-    defineFigmaTests(test, { contracts: contractPath, prepare: async () => undefined });
+    defineFigmaTests(test, {
+      contracts: contractPath,
+      specUrl: TEST_SPEC_URL,
+      prepare: async () => undefined,
+    });
     expect(registered).toHaveLength(1);
 
     fs.writeFileSync(
@@ -699,6 +772,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       const { test, registered } = fakeTest();
       defineFigmaTests(test, {
         contracts: contractPath,
+        specUrl: TEST_SPEC_URL,
         prepare: async ({ page: preparedPage }) => {
           await preparedPage.goto(app.url);
           // readPinnedBaseline already verified and (per this fix) already copied the
@@ -774,6 +848,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       const { test, registered } = fakeTest();
       defineFigmaTests(test, {
         contracts: contractPath,
+        specUrl: TEST_SPEC_URL,
         prepare: async ({ page: preparedPage }) => {
           await preparedPage.goto(app.url);
         },

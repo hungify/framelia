@@ -2,10 +2,12 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   authoredContractSchema,
   baselineSnapshotSchema,
+  testRegistrationSchema,
   type ContractBinding,
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest } from "@framelia/verify";
@@ -22,7 +24,9 @@ import { PNG } from "pngjs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SCORE_ATTACHMENT_SUFFIX } from "../src/attach.ts";
+import { defineFigmaTests } from "../src/define-figma-tests.ts";
 import FrameliaReporter from "../src/reporter.ts";
+import { buildCasePlanForTest } from "../src/run-bundle-projection.ts";
 import type { FrameliaScoreAttachment } from "../src/score-attachment.ts";
 
 const temporaryDirectories: string[] = [];
@@ -38,6 +42,10 @@ function tempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   temporaryDirectories.push(dir);
   return dir;
+}
+
+function fileDigest(filePath: string): `sha256:${string}` {
+  return `sha256:${crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex")}`;
 }
 
 function clientRootFixture(): string {
@@ -115,19 +123,49 @@ function fakeContractTest(options: {
   id: string;
   binding: ContractBinding;
   specFile: string;
+  /** Registration-time spec-file digest to embed in the annotation -- defaults to the
+   *  spec file's *current* content, for the common case of a test that never mutates
+   *  the spec file after constructing this fake. Pass explicitly to simulate a digest
+   *  frozen before a later on-disk mutation. */
+  specDigest?: `sha256:${string}`;
   projectName?: string;
   repeatEachIndex?: number;
 }): TestCase {
+  const registration = {
+    formatVersion: 1,
+    kind: "framelia.test-registration",
+    binding: options.binding,
+    specDigest: options.specDigest ?? fileDigest(options.specFile),
+  };
   return {
     id: options.id,
     title: options.id,
     tags: [],
     titlePath: () => ["project", "file.spec.ts", options.id],
-    annotations: [{ type: "framelia.contract", description: JSON.stringify(options.binding) }],
+    annotations: [{ type: "framelia.contract", description: JSON.stringify(registration) }],
     location: { file: options.specFile, line: 1, column: 1 },
     parent: fakeProjectSuite(options.projectName ?? "chromium"),
     repeatEachIndex: options.repeatEachIndex ?? 0,
   } as unknown as TestCase;
+}
+
+/** Fake `TestType`-shaped double: captures every registered `test(title, details, fn)`
+ *  call the real `defineFigmaTests` makes, without any real Playwright runtime -- same
+ *  pattern as `define-figma-tests.test.ts`'s own `fakeTest`. Used here to prove
+ *  `buildCasePlanForTest` reads the annotation `defineFigmaTests` actually produced at
+ *  registration time, not a hand-assembled stand-in. */
+function fakeTest(): {
+  test: Parameters<typeof defineFigmaTests>[0];
+  registered: Array<{ annotation: { type: string; description: string } }>;
+} {
+  const registered: Array<{ annotation: { type: string; description: string } }> = [];
+  const test = ((
+    _title: string,
+    details: { annotation: { type: string; description: string } },
+  ) => {
+    registered.push(details);
+  }) as unknown as Parameters<typeof defineFigmaTests>[0];
+  return { test, registered };
 }
 
 function scoreAttachment(
@@ -356,5 +394,66 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
     await reporter.onEnd({ status: "passed" } as any);
 
     expect(fs.existsSync(path.join(root, ".framelia", "runs"))).toBe(false);
+  });
+});
+
+describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix)", () => {
+  it("freezes the spec digest captured at defineFigmaTests registration time, not the file's content when buildCasePlanForTest later reads it", async () => {
+    const root = tempDir("framelia-spec-digest-regression-");
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    pinContract(root, { id: "login.desktop" });
+    const specFilePath = path.join(root, "login.spec.ts");
+    fs.writeFileSync(specFilePath, "// original content, imported by Playwright's collection\n");
+
+    // Simulates "Playwright's collection phase just imported this spec file": the real
+    // `defineFigmaTests` hashes `specFilePath`'s bytes synchronously, right now, and
+    // freezes that digest into the registered test's own `framelia.contract` annotation.
+    const { test, registered } = fakeTest();
+    defineFigmaTests(test, {
+      contracts: path.join(root, "contracts", "login.desktop.json"),
+      specUrl: pathToFileURL(specFilePath),
+      prepare: async () => undefined,
+    });
+    expect(registered).toHaveLength(1);
+    const registeredAnnotation = registered[0]!.annotation;
+    const originalSpecDigest = testRegistrationSchema.parse(
+      JSON.parse(registeredAnnotation.description),
+    ).specDigest;
+    expect(originalSpecDigest).toBe(fileDigest(specFilePath));
+
+    // A -> B: the spec file is edited on disk after collection, before the Reporter's
+    // own `onBegin` ever runs -- exactly framelia/#77's exploitable window. Node never
+    // re-imports an already-loaded module, so the code that will actually execute for
+    // every attempt of this test is still whatever was imported above; only the bytes
+    // on disk have changed.
+    fs.writeFileSync(specFilePath, "// edited after collection, before onBegin\n");
+    const mutatedSpecDigest = fileDigest(specFilePath);
+    expect(mutatedSpecDigest).not.toBe(originalSpecDigest);
+
+    // The onBegin-equivalent step: a fake TestCase carrying the real registration
+    // annotation, with `location.file` pointing at the (now-mutated) spec fixture --
+    // exactly what Playwright's own TestCase would report at this point.
+    const test1 = {
+      id: "t1",
+      title: "t1",
+      tags: [],
+      titlePath: () => ["project", "login.spec.ts", "t1"],
+      annotations: [registeredAnnotation],
+      location: { file: specFilePath, line: 1, column: 1 },
+      parent: fakeProjectSuite("chromium"),
+      repeatEachIndex: 0,
+    } as unknown as TestCase;
+
+    const result = await buildCasePlanForTest(test1, {
+      projectRoot: root,
+      policyDigest: `sha256:${"0".repeat(64)}`,
+      source: {},
+    });
+
+    // The frozen case plan carries the digest that was true AT REGISTRATION TIME, not
+    // the post-edit disk content buildCasePlanForTest would have observed had it
+    // re-hashed the file fresh from disk here.
+    expect(result.casePlan.specFileDigest).toBe(originalSpecDigest);
+    expect(result.casePlan.specFileDigest).not.toBe(mutatedSpecDigest);
   });
 });

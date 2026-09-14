@@ -17,6 +17,7 @@ import { canonicalJsonDigest } from "../canonical-json.ts";
 import { writeFileAtomic } from "../fs-atomic.ts";
 import type { RetryAcceptancePolicy } from "../project-policy.ts";
 import { AppError } from "../types.ts";
+import { validateAttemptEvidence } from "./evidence.ts";
 import {
   ATTEMPT_RECORD_FILE_NAME,
   attemptsDir,
@@ -33,10 +34,12 @@ import { publishBundleUnit, type StagedFile } from "./staged-write.ts";
  * `case-plans/<caseId>.json` land together, or not at all. Throws `RUN_BUNDLE_ALREADY_PUBLISHED`
  * if this `plan.runId` was already frozen (a run plan never changes mid-run).
  *
- * Every `casePlans` entry's own recomputed digest must match the digest recorded for it
- * in `plan.availableCases` -- a defensive cross-check against a caller bug that would
- * otherwise let a run-plan's own membership disagree with the full case-plan records
- * meant to back it up.
+ * `casePlans` must supply exactly one record per `plan.availableCases` entry -- no
+ * duplicates, no case missing a plan, and no plan for a case the run plan never listed
+ * -- and every supplied record's own recomputed digest must match the digest recorded
+ * for it in `plan.availableCases`. Without this, a caller could freeze a `RunPlan` whose
+ * `availableCases` promises a case's plan exists while never actually publishing that
+ * plan record, silently deferring the failure to a much later `readRunBundle()` call.
  */
 export function freezeRunPlan(root: string, plan: RunPlan, casePlans: readonly CasePlan[]): void {
   const validatedPlan = runPlanSchema.parse(plan);
@@ -44,14 +47,28 @@ export function freezeRunPlan(root: string, plan: RunPlan, casePlans: readonly C
     validatedPlan.availableCases.map((entry) => [entry.caseId, entry.casePlanDigest]),
   );
 
+  const seenCaseIds = new Set<string>();
   const files: StagedFile[] = casePlans.map((casePlan) => {
     const validated = casePlanSchema.parse(casePlan);
-    const digest = canonicalJsonDigest(validated);
+    if (seenCaseIds.has(validated.caseId)) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Duplicate case plan supplied for case "${validated.caseId}".`,
+      );
+    }
+    seenCaseIds.add(validated.caseId);
     const expected = availableDigests.get(validated.caseId);
+    if (expected === undefined) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Case plan "${validated.caseId}" was supplied but is not listed in the run plan's availableCases.`,
+      );
+    }
+    const digest = canonicalJsonDigest(validated);
     if (expected !== digest) {
       throw new AppError(
         "RUN_BUNDLE_INVALID",
-        `Case plan ${validated.caseId} recomputes to digest ${digest}, which does not match its entry in the run plan's availableCases (${expected ?? "missing"}).`,
+        `Case plan ${validated.caseId} recomputes to digest ${digest}, which does not match its entry in the run plan's availableCases (${expected}).`,
       );
     }
     return {
@@ -59,6 +76,15 @@ export function freezeRunPlan(root: string, plan: RunPlan, casePlans: readonly C
       content: `${JSON.stringify(validated, null, 2)}\n`,
     };
   });
+
+  const missingCaseIds = [...availableDigests.keys()].filter((caseId) => !seenCaseIds.has(caseId));
+  if (missingCaseIds.length > 0) {
+    throw new AppError(
+      "RUN_BUNDLE_INVALID",
+      `Run plan's availableCases lists case(s) with no supplied case-plan record: ${missingCaseIds.join(", ")}.`,
+    );
+  }
+
   files.push({ relativePath: "plan.json", content: `${JSON.stringify(validatedPlan, null, 2)}\n` });
 
   publishBundleUnit(planDir(root, validatedPlan.runId), files);
@@ -116,8 +142,13 @@ export function startRunRecord(root: string, plan: RunPlan, createdAt: string): 
  * following the project's own `retryAcceptance` policy (already resolved and included in
  * every case plan's `policyDigest` -- see project-policy.ts's `RetryAcceptancePolicy`):
  *
- * - `"require-first-attempt"`: only the very first attempt (`retryIndex` 0) counts; a
- *   later retry can never rescue a case that failed on its first try.
+ * - `"require-first-attempt"`: only the very first attempt (`retryIndex` exactly `0`)
+ *   counts, and only if it was actually published -- a later retry can never rescue a
+ *   case whose first attempt failed OR was never published at all. This deliberately
+ *   does not fall back to whatever the lowest-numbered *published* attempt happens to
+ *   be: `attempts` here has already been filtered to evidence-verified attempts (see
+ *   `finalizeRunRecord`), so a missing/rejected retry-0 must never let retry-1 stand in
+ *   for it.
  * - `"allow-passed-after-retry"`: the highest-`retryIndex` attempt that passed, if any;
  *   otherwise the highest-`retryIndex` attempt overall (so a case that never passed still
  *   has a definitive "final" attempt representing its ultimate outcome).
@@ -127,8 +158,10 @@ function selectFinalAttempt(
   policy: RetryAcceptancePolicy,
 ): string | undefined {
   if (attempts.length === 0) return undefined;
+  if (policy === "require-first-attempt") {
+    return attempts.find((attempt) => attempt.retryIndex === 0)?.attemptId;
+  }
   const byRetry = [...attempts].toSorted((a, b) => a.retryIndex - b.retryIndex);
-  if (policy === "require-first-attempt") return byRetry[0]?.attemptId;
   const passed = byRetry.filter((attempt) => attempt.visualVerdict === "passed");
   return (passed.at(-1) ?? byRetry.at(-1))?.attemptId;
 }
@@ -158,22 +191,32 @@ export function finalizeRunRecord(
   const cases: RunRecord["cases"] = plan.selectedCases.map((selected) => {
     const dir = attemptsDir(root, runId, selected.caseId);
     const attempts: AttemptRecord[] = [];
+    // Excludes an attempt whose evidence was modified/deleted after publication from
+    // becoming the authoritative selectedAttemptId, without dropping it from attemptIds
+    // -- retry history stays intact for audit even when one attempt's evidence didn't.
+    const evidenceVerifiedAttempts: AttemptRecord[] = [];
     if (fs.existsSync(dir)) {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
         const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
         if (!fs.existsSync(attemptPath)) continue;
-        attempts.push(
-          parseJsonFile(
-            attemptPath,
-            attemptRecordSchema,
-            "RUN_BUNDLE_INVALID",
-            `attempt bundle at ${attemptPath}`,
-          ),
+        const attempt = parseJsonFile(
+          attemptPath,
+          attemptRecordSchema,
+          "RUN_BUNDLE_INVALID",
+          `attempt bundle at ${attemptPath}`,
         );
+        attempts.push(attempt);
+        try {
+          validateAttemptEvidence(root, attempt);
+          evidenceVerifiedAttempts.push(attempt);
+        } catch {
+          // Tampered/missing evidence: excluded from selection candidates above, kept
+          // in attemptIds below for audit -- see this function's own doc comment.
+        }
       }
     }
-    const selectedAttemptId = selectFinalAttempt(attempts, options.retryAcceptance);
+    const selectedAttemptId = selectFinalAttempt(evidenceVerifiedAttempts, options.retryAcceptance);
     return {
       caseId: selected.caseId,
       attemptIds: attempts.map((attempt) => attempt.attemptId),

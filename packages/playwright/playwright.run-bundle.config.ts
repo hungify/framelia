@@ -21,6 +21,10 @@ import { defineConfig } from "@playwright/test";
  * under an in-progress run.
  */
 export const projectRoot = path.join(os.tmpdir(), "framelia-run-bundle-smoke-project");
+/** Kept in sync with `scripts/verify-run-bundle-smoke.mjs`, which reads this exact run
+ *  bundle back after the CLI process exits (that script can't statically import this
+ *  `.ts` config module, so the literal is intentionally duplicated there). */
+export const runId = "smoke-run";
 if (process.env.TEST_WORKER_INDEX === undefined) {
   fs.rmSync(projectRoot, { recursive: true, force: true });
   fs.mkdirSync(projectRoot, { recursive: true });
@@ -30,10 +34,11 @@ if (process.env.TEST_WORKER_INDEX === undefined) {
 export default defineConfig({
   testDir: "./tests-smoke-run-bundle",
   outputDir: path.join(os.tmpdir(), "framelia-run-bundle-smoke-results"),
-  reporter: [["./src/reporter.ts", { projectRoot, port: 0, runId: "smoke-run" }], ["line"]],
+  reporter: [["./src/reporter.ts", { projectRoot, port: 0, runId }], ["line"]],
   // The always-failing case gets a second, independently published attempt too --
   // proving a retried case's two attempts stay distinct without depending on any
   // flaky/timing-sensitive behavior (see run-bundle.spec.ts's own header comment).
+  // scripts/verify-run-bundle-smoke.mjs asserts this explicitly after the run.
   retries: 1,
   timeout: 20_000,
   projects: [{ name: "desktop" }],

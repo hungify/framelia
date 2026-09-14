@@ -322,8 +322,10 @@ describe("runFigmaContractTest (runner-agnostic core)", () => {
   it("rejects clearly (not silently) when the pinned deviceScaleFactor disagrees with the actual capture's resolution", async () => {
     const root = temporaryRoot();
     const SIZE = { width: 60, height: 50 };
-    // Pinned at 2x, but the real context below stays at the default (1x) -- capture will
-    // come out at 1x resolution, disagreeing with the pinned 2x-sized expected image.
+    // Pinned at 2x, but the real context below stays at the default (1x) --
+    // captureReadyPage's own live devicePixelRatio check (core.ts) now rejects this
+    // before ever attempting a screenshot, rather than letting it through to a later,
+    // harder-to-diagnose compare() dimension mismatch.
     const contract = pinPageBaseline(root, {
       id: "login.desktop",
       name: "Login · Desktop",
@@ -348,7 +350,7 @@ describe("runFigmaContractTest (runner-agnostic core)", () => {
       });
 
       expect(result.pass).toBe(false);
-      expect(result.message).toMatch(/did not match/);
+      expect(result.message).toMatch(/CAPTURE_SCALE_MISMATCH/);
     } finally {
       await context.close();
       await app.close();

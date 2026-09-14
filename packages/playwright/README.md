@@ -131,13 +131,16 @@ test carries a versioned `framelia.contract` annotation (`{ contractId, contract
 contractDigest }`) for downstream tooling; a contract's own `projects` field, when set,
 skips the test on every other project instead of narrowing what gets registered.
 
-The contract's own `viewport` and pinned baseline `deviceScaleFactor` are applied (or
-validated) before `prepare` runs: an already-customized page viewport that disagrees
-with the contract's own viewport fails the test explicitly, without resizing or
-reloading the page, rather than silently overriding it. `deviceScaleFactor` is fixed at
-browser-context creation, so a mismatch between the pinned baseline's own scale and the
-page's real `devicePixelRatio` is also caught and reported explicitly, instead of
-silently producing a wrong-resolution comparison.
+The contract's own `viewport` is reconciled, and the pinned baseline's
+`deviceScaleFactor` validated, before `prepare` runs. Viewport: applied automatically
+when the page's own viewport is still unset or Playwright's own default; an
+already-customized page viewport that disagrees with the contract's own viewport fails
+the test explicitly instead, without resizing or reloading the page. `deviceScaleFactor`
+can only ever be validated, never applied here -- it's fixed at browser-context creation,
+so a project running a higher-DPR contract must configure its own context/project with a
+matching `deviceScaleFactor`; a mismatch between that live value and the pinned
+baseline's own scale is caught and reported explicitly, instead of silently producing a
+wrong-resolution comparison.
 
 `prepare`'s fixtures argument is deliberately `{ page }`, not a caller's whole extended
 fixtures object -- Playwright's own test-file transform statically requires every

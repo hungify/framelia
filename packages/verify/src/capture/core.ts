@@ -37,6 +37,28 @@ export async function captureReadyPage(
   if (page.isClosed()) {
     return reject("CAPTURE_PAGE_CLOSED", "The passed Page is already closed.");
   }
+  const scale = spec.scale ?? 1;
+  // "css" (one PNG pixel per CSS px) is the default and what every existing
+  // CSS-px-based bound below (masks.ts's scope/mask bounds, capture-style.ts's
+  // captureElementBounds) assumes -- Playwright's own "device" default would let a
+  // deviceScaleFactor > 1 context silently misalign every one of them. Only switch to
+  // "device" (and scale those bounds to match, see resolveMasks's `scale` param below)
+  // when the caller explicitly asks for a sharper, non-1:1 capture.
+  const screenshotScale = scale === 1 ? "css" : "device";
+  if (scale > 1) {
+    // A "device"-scale screenshot always reflects the context's own real DPR,
+    // regardless of what `scale` the caller asked for -- Playwright has no per-call
+    // override. Failing fast here, before any settle/mask/selector work, turns a
+    // silently wrong-resolution capture (and a downstream, harder-to-diagnose
+    // compare() dimension mismatch) into one clear, immediate, actionable rejection.
+    const liveDpr = await page.evaluate(() => window.devicePixelRatio);
+    if (liveDpr !== scale) {
+      return reject(
+        "CAPTURE_SCALE_MISMATCH",
+        `Requested capture scale ${scale} does not match the page's actual devicePixelRatio ${liveDpr}. deviceScaleFactor is fixed at browser-context creation -- configure the context with { deviceScaleFactor: ${scale} } to match, or capture at scale 1.`,
+      );
+    }
+  }
   fs.mkdirSync(path.dirname(spec.outPath), { recursive: true });
   const fontPolicy = spec.fontPolicy ?? "warn";
   const devtoolsSelector =
@@ -57,14 +79,6 @@ export async function captureReadyPage(
   );
   const fontReject = checkFontReadiness(settled, fontPolicy);
   if (fontReject) return fontReject;
-  const scale = spec.scale ?? 1;
-  // "css" (one PNG pixel per CSS px) is the default and what every existing
-  // CSS-px-based bound below (masks.ts's scope/mask bounds, capture-style.ts's
-  // captureElementBounds) assumes -- Playwright's own "device" default would let a
-  // deviceScaleFactor > 1 context silently misalign every one of them. Only switch to
-  // "device" (and scale those bounds to match, see resolveMasks's `scale` param below)
-  // when the caller explicitly asks for a sharper, non-1:1 capture.
-  const screenshotScale = scale === 1 ? "css" : "device";
   const selector = spec.scope.kind === "region" ? spec.scope.selector : undefined;
   if (selector) {
     const selectorReject = await resolveSelector(page, selector);

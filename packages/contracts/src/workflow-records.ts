@@ -28,7 +28,11 @@ export const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
 export const projectRelativePathSchema = nonEmptyTrimmed.refine(
   (value) => {
-    if (/^(?:[\\/]|[A-Za-z]:[\\/])/.test(value)) return false;
+    // Rejects a POSIX-absolute leading slash/backslash, and a Windows drive
+    // reference in either form: "C:\"/"C:/" (drive-absolute) and the more easily
+    // missed "C:foo" (drive-relative -- resolves against that drive's own current
+    // directory, which path.resolve() can't be trusted to keep inside `root`).
+    if (/^(?:[\\/]|[A-Za-z]:)/.test(value)) return false;
     return !value.split(/[\\/]/).includes("..");
   },
   { message: "must be project-relative without parent traversal" },
@@ -132,6 +136,14 @@ export const baselineSnapshotSchema = z
   })
   .strict()
   .superRefine((snapshot, context) => {
+    // A page-scope capture is always viewport-sized (see captureReadyPage's
+    // fullPage:false convention for a pinned page snapshot), so its expected image
+    // dimensions are fully determined by rendering.viewport × deviceScaleFactor and
+    // can be cross-checked. A region-scope capture is sized to whatever element the
+    // contract's own selector resolves to -- unrelated to the viewport -- so this
+    // schema has no independent way to know its correct dimensions; only the field's
+    // own positive-integer constraint above applies there.
+    if (snapshot.expected.kind !== "page") return;
     const expectedWidth = snapshot.rendering.viewport.width * snapshot.rendering.deviceScaleFactor;
     const expectedHeight =
       snapshot.rendering.viewport.height * snapshot.rendering.deviceScaleFactor;

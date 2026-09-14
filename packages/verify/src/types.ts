@@ -87,7 +87,8 @@ export type FidelityErrorCode =
   | "MASK_AREA_EXCEEDED"
   | "MASK_SCOPE_INVALID"
   | "CAPTURE_SCREENSHOT_FAILED"
-  | "CAPTURE_PAGE_CLOSED";
+  | "CAPTURE_PAGE_CLOSED"
+  | "CAPTURE_SCALE_MISMATCH";
 
 export type TopIssueKind =
   | "size"

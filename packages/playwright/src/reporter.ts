@@ -279,8 +279,11 @@ export default class FrameliaReporter implements Reporter {
     }
 
     // Independent of the dashboard-facing `record()` above: a failure on either side can
-    // never prevent the other from running (see onBegin's own doc comment).
-    const publishRunBundleAttempt = (): void => {
+    // never prevent the other from running (see onBegin's own doc comment). `publishAttempt`
+    // is async (its own lock acquisition/release can await), so every publish -- not just
+    // ones that land before `#runBundle` is ready -- is tracked in `#runBundlePending` for
+    // `onEnd` to await before finalizing.
+    const publishRunBundleAttempt = async (): Promise<void> => {
       const bundle = this.#runBundle;
       const caseEntry = bundle?.cases.get(test.id);
       if (!bundle || !caseEntry) return;
@@ -290,20 +293,16 @@ export default class FrameliaReporter implements Reporter {
           caseEntry.caseId,
           caseEntry.casePlanDigest,
         );
-        publishAttempt(bundle.root, bundle.runId, attemptRecord, files);
+        await publishAttempt(bundle.root, bundle.runId, attemptRecord, files);
       } catch (error: unknown) {
         console.error(
           `framelia reporter: failed to publish run-bundle attempt for ${sanitizeTestId(test)}: ${String(error)}`,
         );
       }
     };
-    if (this.#runBundle) {
-      publishRunBundleAttempt();
-    } else {
-      this.#runBundlePending.push(
-        (this.#runBundleReady ?? Promise.resolve()).then(publishRunBundleAttempt),
-      );
-    }
+    this.#runBundlePending.push(
+      (this.#runBundleReady ?? Promise.resolve()).then(publishRunBundleAttempt),
+    );
   }
 
   async onEnd(_result: FullResult): Promise<void> {
@@ -317,7 +316,7 @@ export default class FrameliaReporter implements Reporter {
     await Promise.all(this.#runBundlePending);
     if (this.#runBundle) {
       try {
-        finalizeRunRecord(this.#runBundle.root, this.#runBundle.runId, {
+        await finalizeRunRecord(this.#runBundle.root, this.#runBundle.runId, {
           retryAcceptance: this.#runBundle.retryAcceptance,
         });
       } catch (error: unknown) {

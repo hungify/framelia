@@ -3,7 +3,6 @@ import * as path from "node:path";
 
 import {
   attemptRecordSchema,
-  casePlanSchema,
   type AttemptRecord,
   type CasePlan,
   type RunPlan,
@@ -12,8 +11,9 @@ import {
 
 import { canonicalJsonDigest } from "../canonical-json.ts";
 import { AppError } from "../types.ts";
+import { readCasePlans } from "./case-plans.ts";
 import { validateAttemptEvidence } from "./evidence.ts";
-import { ATTEMPT_RECORD_FILE_NAME, attemptsDir, casePlansDir } from "./layout.ts";
+import { ATTEMPT_RECORD_FILE_NAME, attemptsDir } from "./layout.ts";
 import { readRunPlan, readRunRecord } from "./run.ts";
 
 export interface RunBundle {
@@ -149,28 +149,6 @@ export function readRunBundle(root: string, runId: string): RunBundle {
   }
 
   return { plan, record, casePlans, attempts };
-}
-
-function readCasePlans(root: string, runId: string): Map<string, CasePlan> {
-  const dir = casePlansDir(root, runId);
-  const casePlans = new Map<string, CasePlan>();
-  if (!fs.existsSync(dir)) return casePlans;
-  for (const entry of fs.readdirSync(dir)) {
-    if (!entry.endsWith(".json")) continue;
-    const filePath = path.join(dir, entry);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    } catch (error) {
-      throw new AppError(
-        "RUN_BUNDLE_INVALID",
-        `Case plan at ${filePath} is not valid JSON: ${error instanceof Error ? error.message : String(error)}.`,
-      );
-    }
-    const casePlan = casePlanSchema.parse(parsed);
-    casePlans.set(casePlan.caseId, casePlan);
-  }
-  return casePlans;
 }
 
 function readAttemptRecord(filePath: string): AttemptRecord {

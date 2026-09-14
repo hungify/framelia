@@ -6,6 +6,7 @@
  */
 export { publishAttempt } from "./attempt.ts";
 export type { AttemptEvidenceFiles } from "./attempt.ts";
+export { readCasePlans } from "./case-plans.ts";
 export {
   ATTEMPT_EVIDENCE_FILE,
   attemptDir,
@@ -23,6 +24,8 @@ export {
   toProjectRelative,
 } from "./layout.ts";
 export type { CaseIdentity } from "./layout.ts";
+export { reconcileCasePlan } from "./reconcile.ts";
+export type { CasePlanReconciliation } from "./reconcile.ts";
 export { readRunBundle } from "./read.ts";
 export type { RunBundle } from "./read.ts";
 export {

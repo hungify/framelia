@@ -22,12 +22,13 @@ import { PNG } from "pngjs";
 import { projectRoot } from "../playwright.run-bundle.config.ts";
 import { defineFigmaTests, expect } from "../src/index.ts";
 
-// Contracts are pinned directly under the reporter's own `projectRoot` (not a separate
-// temp directory): `defineFigmaTests`'s own project-root discovery walks up from each
-// contract file's directory looking for the nearest `framelia.config.*`, and the
-// Reporter's run-bundle freezing resolves `binding.contractFile` against its own
-// `projectRoot` (see reporter.ts's own doc comment on that deliberate scope limitation)
-// -- pinning contracts anywhere else here would make the two roots disagree.
+// Contracts (and the spec file itself, via Playwright's own `testDir`) live under the
+// reporter's own `projectRoot` (this package's own directory -- see the config's own doc
+// comment): `defineFigmaTests`'s project-root discovery walks up from each contract
+// file's directory looking for the nearest `framelia.config.*`, and the Reporter's
+// run-bundle freezing resolves both `binding.contractFile` and each case's `specFile`
+// against that same `projectRoot` -- pinning contracts (or this spec file) outside it
+// would make those project-relative paths unresolvable.
 const root = projectRoot;
 
 function sha256(data: Buffer): string {
@@ -45,6 +46,13 @@ function pinPageContract(options: {
     makeSolidPng(options.viewport.width, options.viewport.height, options.color),
   );
   const imageDigest = `sha256:${sha256(imageBytes)}`;
+  // Contract JSON + its baseline image live under `.framelia/` (already repo-wide
+  // gitignored) rather than directly at the package root -- `projectRoot` is this
+  // package's own directory (see the config's own doc comment), so anything pinned
+  // straight at its top level would otherwise sit next to real package files.
+  const contractsDir = path.join(root, ".framelia", "smoke-contracts");
+  fs.mkdirSync(contractsDir, { recursive: true });
+  const imageRelativePath = `.framelia/smoke-contracts/${options.id}.png`;
   const snapshot = {
     formatVersion: 1,
     kind: "framelia.baseline-snapshot",
@@ -60,7 +68,7 @@ function pinPageContract(options: {
     expected: {
       kind: "page",
       image: {
-        path: `${options.id}.png`,
+        path: imageRelativePath,
         digest: imageDigest,
         width: options.viewport.width,
         height: options.viewport.height,
@@ -71,7 +79,7 @@ function pinPageContract(options: {
   const snapshotDir = path.join(root, ".framelia", "baselines", snapshotDigest.slice(7));
   fs.mkdirSync(snapshotDir, { recursive: true });
   fs.writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(snapshot));
-  fs.writeFileSync(path.join(root, `${options.id}.png`), imageBytes);
+  fs.writeFileSync(path.join(root, imageRelativePath), imageBytes);
 
   const contract = {
     formatVersion: 1,
@@ -84,7 +92,7 @@ function pinPageContract(options: {
     scope: { kind: "page", pageReason: "run-bundle smoke review" },
     baseline: { snapshotDigest },
   };
-  const contractPath = path.join(root, `${options.id}.json`);
+  const contractPath = path.join(contractsDir, `${options.id}.json`);
   fs.writeFileSync(contractPath, JSON.stringify(contract));
   return contractPath;
 }

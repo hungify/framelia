@@ -136,6 +136,7 @@ export async function buildCasePlanForTest(
     specFileDigest = fileHash(specFile);
     context.specDigestCache.set(specFile, specFileDigest);
   }
+  const specFileRelative = path.relative(context.projectRoot, specFile).split(path.sep).join("/");
 
   const project = test.parent.project();
   const projectName = project?.name ?? "";
@@ -153,6 +154,7 @@ export async function buildCasePlanForTest(
     snapshotDigest: contract.baseline.snapshotDigest,
     policyDigest: context.policyDigest,
     bindingDigest: canonicalJsonDigest(binding),
+    specFile: specFileRelative,
     specFileDigest,
     project: { name: projectName, runtimeDigest: computeProjectRuntimeDigest(project) },
     repeatIndex: test.repeatEachIndex,

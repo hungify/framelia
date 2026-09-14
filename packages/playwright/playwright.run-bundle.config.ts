@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "@playwright/test";
 
@@ -11,22 +12,28 @@ import { defineConfig } from "@playwright/test";
  * smoke configs (the matcher suite, defineFigmaTests's own suite) so this feature's
  * exercise doesn't multiply every other smoke spec across an extra project/retry.
  *
- * `projectRoot`/`runId` are derived from `FRAMELIA_SMOKE_NONCE` (set by
+ * `projectRoot` is this package's own directory (not a temp dir): a case plan's
+ * `specFile` is recorded project-relative to `projectRoot` (so finalization-time
+ * reconciliation can relocate and re-hash it -- see @framelia/verify's reconcile.ts),
+ * and the real spec file Playwright discovers under `testDir` below only resolves to a
+ * project-relative path (no `..` segments) when `projectRoot` is an ancestor of it. The
+ * generated `framelia.config.mjs` and pinned contracts/baselines therefore live under
+ * this package's own tree too (`.framelia/*` is already repo-wide gitignored; the
+ * top-level config file has its own package-local `.gitignore` entry).
+ *
+ * `runId` is derived from `FRAMELIA_SMOKE_NONCE` (set by
  * `scripts/verify-run-bundle-smoke.mjs`, which generates one nonce per invocation and
  * passes it to this config's child process; worker processes inherit it automatically)
- * so two concurrent smoke invocations never race on the same fixed directory -- without
- * this, one invocation's own project-root wipe (below) could delete another's
- * in-progress plan/attempts. Falling back to a fixed literal when the env var is unset
- * (e.g. a bare `playwright test --config=playwright.run-bundle.config.ts` invocation
- * outside the verify script) keeps that direct invocation path usable too, just without
- * the isolation guarantee -- run it once at a time in that mode.
+ * so two concurrent smoke invocations never race on the same run bundle -- `projectRoot`
+ * itself is now shared/persistent (not wiped per invocation): the config file and pinned
+ * contracts/baselines are deterministic, idempotent content, so concurrent invocations
+ * writing them simultaneously is harmless, and each invocation's own run state lives
+ * under its own nonce-suffixed `.framelia/runs/<runId>` directory regardless.
  */
+export const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const nonce = process.env.FRAMELIA_SMOKE_NONCE ?? "default";
-export const projectRoot = path.join(os.tmpdir(), `framelia-run-bundle-smoke-project-${nonce}`);
 export const runId = `smoke-run-${nonce}`;
 if (process.env.TEST_WORKER_INDEX === undefined) {
-  fs.rmSync(projectRoot, { recursive: true, force: true });
-  fs.mkdirSync(projectRoot, { recursive: true });
   fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {};\n");
 }
 

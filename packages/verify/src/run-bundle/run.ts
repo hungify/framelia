@@ -17,6 +17,7 @@ import { canonicalJsonDigest } from "../canonical-json.ts";
 import { writeFileAtomic } from "../fs-atomic.ts";
 import type { RetryAcceptancePolicy } from "../project-policy.ts";
 import { AppError } from "../types.ts";
+import { readCasePlans } from "./case-plans.ts";
 import { validateAttemptEvidence } from "./evidence.ts";
 import {
   ATTEMPT_RECORD_FILE_NAME,
@@ -26,6 +27,8 @@ import {
   runRecordPath,
   slug,
 } from "./layout.ts";
+import { withRunLock } from "./lock.ts";
+import { reconcileCasePlan } from "./reconcile.ts";
 import { publishBundleUnit, type StagedFile } from "./staged-write.ts";
 
 /**
@@ -176,66 +179,97 @@ function selectFinalAttempt(
  * call, republishing `run.json` with `status: "finalized"`, counts -- a crashed or
  * killed coordinator that never reaches this call leaves `run.json` at `"running"`
  * forever, correctly signaling "never authoritatively finalized" to any reader.
+ *
+ * Runs its whole body inside `withRunLock` -- the same lock `publishAttempt` takes for
+ * its own finalized-status check + publish -- so this scan is never racing a concurrent
+ * attempt publication: whichever of the two acquires the lock first runs to completion
+ * before the other starts (see lock.ts's own doc comment for why a bare status check
+ * alone isn't enough).
+ *
+ * Also reconciles each selected case's frozen `CasePlan` against current on-disk reality
+ * (`reconcileCasePlan`: re-reads the contract file, pinned baseline, project policy, and
+ * spec file this case plan was frozen from) -- framelia/#77's own "changed planning
+ * inputs invalidate the run even when IDs/commit strings are unchanged" acceptance
+ * criterion. A case whose frozen inputs no longer match disk never gets a
+ * `selectedAttemptId`, regardless of what its attempts' own `visualVerdict`s were: its
+ * `attemptIds` are still recorded (retry history/audit trail preserved, same as the
+ * evidence-tamper case above), but nothing about it can read as an authoritative pass.
  */
-export function finalizeRunRecord(
+export async function finalizeRunRecord(
   root: string,
   runId: string,
   options: { retryAcceptance: RetryAcceptancePolicy; now?: () => Date },
-): RunRecord {
-  const plan = readRunPlan(root, runId);
-  const previous = fs.existsSync(runRecordPath(root, runId))
-    ? readRunRecord(root, runId)
-    : undefined;
-  const now = options.now?.() ?? new Date();
+): Promise<RunRecord> {
+  return withRunLock(root, runId, async () => {
+    const plan = readRunPlan(root, runId);
+    const casePlans = readCasePlans(root, runId);
+    const previous = fs.existsSync(runRecordPath(root, runId))
+      ? readRunRecord(root, runId)
+      : undefined;
+    const now = options.now?.() ?? new Date();
 
-  const cases: RunRecord["cases"] = plan.selectedCases.map((selected) => {
-    const dir = attemptsDir(root, runId, selected.caseId);
-    const attempts: AttemptRecord[] = [];
-    // Excludes an attempt whose evidence was modified/deleted after publication from
-    // becoming the authoritative selectedAttemptId, without dropping it from attemptIds
-    // -- retry history stays intact for audit even when one attempt's evidence didn't.
-    const evidenceVerifiedAttempts: AttemptRecord[] = [];
-    if (fs.existsSync(dir)) {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
-        if (!fs.existsSync(attemptPath)) continue;
-        const attempt = parseJsonFile(
-          attemptPath,
-          attemptRecordSchema,
-          "RUN_BUNDLE_INVALID",
-          `attempt bundle at ${attemptPath}`,
-        );
-        attempts.push(attempt);
-        try {
-          validateAttemptEvidence(root, attempt);
-          evidenceVerifiedAttempts.push(attempt);
-        } catch {
-          // Tampered/missing evidence: excluded from selection candidates above, kept
-          // in attemptIds below for audit -- see this function's own doc comment.
+    const cases: RunRecord["cases"] = await Promise.all(
+      plan.selectedCases.map(async (selected) => {
+        const dir = attemptsDir(root, runId, selected.caseId);
+        const attempts: AttemptRecord[] = [];
+        // Excludes an attempt whose evidence was modified/deleted after publication from
+        // becoming the authoritative selectedAttemptId, without dropping it from attemptIds
+        // -- retry history stays intact for audit even when one attempt's evidence didn't.
+        const evidenceVerifiedAttempts: AttemptRecord[] = [];
+        if (fs.existsSync(dir)) {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
+            if (!fs.existsSync(attemptPath)) continue;
+            const attempt = parseJsonFile(
+              attemptPath,
+              attemptRecordSchema,
+              "RUN_BUNDLE_INVALID",
+              `attempt bundle at ${attemptPath}`,
+            );
+            attempts.push(attempt);
+            try {
+              validateAttemptEvidence(root, attempt);
+              evidenceVerifiedAttempts.push(attempt);
+            } catch {
+              // Tampered/missing evidence: excluded from selection candidates above, kept
+              // in attemptIds below for audit -- see this function's own doc comment.
+            }
+          }
         }
-      }
-    }
-    const selectedAttemptId = selectFinalAttempt(evidenceVerifiedAttempts, options.retryAcceptance);
-    return {
-      caseId: selected.caseId,
-      attemptIds: attempts.map((attempt) => attempt.attemptId),
-      ...(selectedAttemptId ? { selectedAttemptId } : {}),
-    };
-  });
 
-  const record = runRecordSchema.parse({
-    formatVersion: RUN_FORMAT_VERSION,
-    kind: "framelia.run",
-    runId,
-    planDigest: canonicalJsonDigest(plan),
-    status: "finalized",
-    createdAt: previous?.createdAt ?? now.toISOString(),
-    finalizedAt: now.toISOString(),
-    cases,
+        const casePlan = casePlans.get(selected.caseId);
+        const reconciliation = casePlan
+          ? await reconcileCasePlan(root, casePlan)
+          : {
+              consistent: false,
+              reasons: [`case "${selected.caseId}" has no full CasePlan record in the bundle`],
+            };
+
+        const selectedAttemptId = reconciliation.consistent
+          ? selectFinalAttempt(evidenceVerifiedAttempts, options.retryAcceptance)
+          : undefined;
+        return {
+          caseId: selected.caseId,
+          attemptIds: attempts.map((attempt) => attempt.attemptId),
+          ...(selectedAttemptId ? { selectedAttemptId } : {}),
+        };
+      }),
+    );
+
+    const record = runRecordSchema.parse({
+      formatVersion: RUN_FORMAT_VERSION,
+      kind: "framelia.run",
+      runId,
+      planDigest: canonicalJsonDigest(plan),
+      status: "finalized",
+      createdAt: previous?.createdAt ?? now.toISOString(),
+      finalizedAt: now.toISOString(),
+      cases,
+    });
+    publishRunRecord(root, record);
+    return record;
   });
-  publishRunRecord(root, record);
-  return record;
 }
 
 /** Reads the run's current coordination record (`run.json`), whatever its `status`. */

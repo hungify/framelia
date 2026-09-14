@@ -56,7 +56,8 @@ export type AppErrorCode =
   | "RUN_BUNDLE_CROSS_DEVICE"
   | "RUN_BUNDLE_MISSING"
   | "RUN_BUNDLE_INVALID"
-  | "RUN_BUNDLE_DIGEST_MISMATCH";
+  | "RUN_BUNDLE_DIGEST_MISMATCH"
+  | "RUN_BUNDLE_LOCK_TIMEOUT";
 
 export class AppError extends Error {
   readonly code: AppErrorCode;

@@ -234,6 +234,11 @@ export const casePlanSchema = z
     snapshotDigest: sha256DigestSchema,
     policyDigest: sha256DigestSchema,
     bindingDigest: sha256DigestSchema,
+    /** Project-relative path to the spec file that registered this case -- kept so a
+     *  later reconciliation pass (see @framelia/verify's run-bundle finalization) can
+     *  relocate and re-hash it against `specFileDigest`, catching a spec edited after
+     *  the case plan was frozen. */
+    specFile: projectRelativePathSchema,
     specFileDigest: sha256DigestSchema,
     project: z
       .object({

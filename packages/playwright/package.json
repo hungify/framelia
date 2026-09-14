@@ -55,12 +55,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "pnpm --filter @framelia/playwright... build && playwright test --config=playwright.config.ts",
+    "test:smoke:define-figma-tests": "pnpm --filter @framelia/playwright... build && playwright test --config=playwright.define-figma-tests.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@framelia/contracts": "workspace:*",
     "@framelia/verify": "workspace:*",
-    "nanoid": "3.3.16"
+    "nanoid": "3.3.16",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@framelia/dashboard-server": "workspace:*",

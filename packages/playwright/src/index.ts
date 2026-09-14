@@ -23,6 +23,14 @@ export type { ToMatchPageOptions } from "./matchers/to-match-page.ts";
 export type { ToMatchPageBaselineOptions } from "./matchers/to-match-page-baseline.ts";
 export type { ToMatchUrlOptions } from "./matchers/to-match-url.ts";
 
+export { defineFigmaTests } from "./define-figma-tests.ts";
+export type {
+  DefineFigmaTestsOptions,
+  FigmaContractOutcome,
+  FigmaContractTarget,
+  FigmaContractTestContext,
+} from "./define-figma-tests.ts";
+
 export {
   contractFreshnessPath,
   isContractFresh,

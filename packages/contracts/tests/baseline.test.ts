@@ -40,8 +40,20 @@ describe("figmaBaselineSchema", () => {
     ).toBe(false);
   });
 
-  it("rejects a scale other than 1", () => {
-    expect(figmaBaselineSchema.safeParse({ ...validFigmaBaseline, scale: 2 }).success).toBe(false);
+  it("accepts a device pixel ratio up to 4 for a sharper Figma export", () => {
+    for (const scale of [1, 2, 3, 4]) {
+      const result = figmaBaselineSchema.safeParse({ ...validFigmaBaseline, scale });
+      expect(result.success).toBe(true);
+      expect(result.success && result.data.scale).toBe(scale);
+    }
+  });
+
+  it("rejects a scale of 0, above 4, or non-integer", () => {
+    expect(figmaBaselineSchema.safeParse({ ...validFigmaBaseline, scale: 0 }).success).toBe(false);
+    expect(figmaBaselineSchema.safeParse({ ...validFigmaBaseline, scale: 5 }).success).toBe(false);
+    expect(figmaBaselineSchema.safeParse({ ...validFigmaBaseline, scale: 1.5 }).success).toBe(
+      false,
+    );
   });
 
   it("accepts a 3-digit hex canvasFill", () => {

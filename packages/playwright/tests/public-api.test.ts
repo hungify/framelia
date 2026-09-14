@@ -7,6 +7,10 @@ import type { FrameliaMatchers, PlaywrightTestHandle } from "../src/create-match
 // fails immediately if any is ever renamed or removed -- these have no runtime
 // presence, so the Object.keys() snapshot below can't see them.
 import type {
+  DefineFigmaTestsOptions,
+  FigmaContractOutcome,
+  FigmaContractTarget,
+  FigmaContractTestContext,
   ToMatchFigmaOptions,
   ToMatchPageBaselineOptions,
   ToMatchPageOptions,
@@ -26,6 +30,10 @@ export type PublicTypeSurface = [
   ReadContractEntryOutcome,
   PlaywrightTestHandle,
   FrameliaMatchers,
+  DefineFigmaTestsOptions,
+  FigmaContractOutcome,
+  FigmaContractTarget,
+  FigmaContractTestContext,
 ];
 
 /** register.ts is a pure side-effect module (extends @playwright/test's own

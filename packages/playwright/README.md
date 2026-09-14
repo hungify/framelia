@@ -101,6 +101,78 @@ check-point against its own baked `expectStyle`; results are tagged with the che
 selector and merged into `topIssues` the same non-blocking way region scope's own style
 comparison is.
 
+## Pinned Figma contracts (`defineFigmaTests`)
+
+`defineFigmaTests(test, options)` registers ordinary Playwright tests -- one per
+`framelia.contract` JSON file -- that compare against a **pinned, digest-verified
+baseline snapshot on disk** (`.framelia/baselines/<digest>/snapshot.json` under the
+project root, plus its referenced image/style bytes). It never fetches from Figma: no
+credentials or network are reachable anywhere in this call path, and a changed or
+unreachable live Figma file can never alter what a pinned check compares against.
+Acquiring/refreshing that pinned snapshot is a separate, explicit step (not covered by
+this package).
+
+```ts
+import { defineFigmaTests } from "@framelia/playwright";
+import { test } from "@playwright/test";
+
+defineFigmaTests(test, {
+  contracts: new URL("./visual-contract.json", import.meta.url),
+  async prepare({ page }, { target }) {
+    await page.goto(target.path);
+  },
+});
+```
+
+`contracts` accepts one file (a `URL`, resolved module-relatively, or a path string) or
+an array of several -- each becomes exactly one registered test, fanned across every
+configured Playwright project the way any other registered test is. Every registered
+test carries a versioned `framelia.contract` annotation (`{ contractId, contractFile,
+contractDigest }`) for downstream tooling; a contract's own `projects` field, when set,
+skips the test on every other project instead of narrowing what gets registered.
+
+The contract's own `viewport` and pinned baseline `deviceScaleFactor` are applied (or
+validated) before `prepare` runs: an already-customized page viewport that disagrees
+with the contract's own viewport fails the test explicitly, without resizing or
+reloading the page, rather than silently overriding it. `deviceScaleFactor` is fixed at
+browser-context creation, so a mismatch between the pinned baseline's own scale and the
+page's real `devicePixelRatio` is also caught and reported explicitly, instead of
+silently producing a wrong-resolution comparison.
+
+`prepare`'s fixtures argument is deliberately `{ page }`, not a caller's whole extended
+fixtures object -- Playwright's own test-file transform statically requires every
+fixture a test uses to be named literally in that test's own destructuring pattern, which
+a generic library function cannot do for fixture names it never sees at its own authoring
+time. For a scenario that needs setup before `prepare` runs (login, seeding, dismissing a
+modal), override the built-in `page` fixture itself -- Playwright's own documented
+pattern for exactly this:
+
+```ts
+import { defineFigmaTests } from "@framelia/playwright";
+import { test as base } from "@playwright/test";
+
+const test = base.extend({
+  page: async ({ page }, use) => {
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(process.env.SMOKE_USER_EMAIL!);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await use(page);
+  },
+});
+
+defineFigmaTests(test, {
+  contracts: new URL("./dashboard.visual-contract.json", import.meta.url),
+  async prepare({ page }, { target }) {
+    await page.goto(target.path);
+    await page.getByTestId("dashboard-ready").waitFor();
+  },
+});
+```
+
+By the time `prepare` runs, `page` is already the fixture's fully-prepared page; capture
+only ever happens after `prepare` resolves, so a modal/auth/readiness wait inside
+`prepare` genuinely gates the screenshot.
+
 ## Scaling to many pages
 
 Framelia does not ship a runner that discovers every `visual-contract.json` and generates

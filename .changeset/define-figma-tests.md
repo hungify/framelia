@@ -1,0 +1,11 @@
+---
+"@framelia/contracts": minor
+"@framelia/verify": minor
+"@framelia/playwright": minor
+---
+
+Execute pinned Figma contracts through `defineFigmaTests` and add higher-DPR support to the capture pipeline.
+
+- `@framelia/playwright` adds `defineFigmaTests(test, { contracts, prepare })`, registering one ordinary Playwright test per authored contract file, annotated with versioned `framelia.contract` metadata (`{ contractId, contractFile, contractDigest }`). Each registered test applies the contract's own viewport/`deviceScaleFactor` before `prepare` runs, failing explicitly (without resizing or reloading) when a caller's own fixture already customized the page's viewport or context scale disagreeably; captures only after `prepare` resolves; compares against a pinned, digest-verified baseline snapshot on disk with zero Figma credentials or network calls; and attaches evidence through the same `FrameliaScoreAttachment` mechanism every other matcher uses, so `FrameliaReporter` needs no changes. `prepare`'s fixtures argument is `{ page }` -- override the built-in `page` fixture for scenarios that need setup before `prepare` runs (see the README).
+- `@framelia/verify` adds `readPinnedBaseline(root, contract)`, which resolves a contract's pinned `.framelia/baselines/<digest>/snapshot.json` record, validates it against `contract.baseline.snapshotDigest`, and recomputes the raw-byte digest of its referenced expected image (and style file, when present) before returning validated, absolute file paths. New `AppErrorCode` members `PINNED_BASELINE_MISSING`, `PINNED_BASELINE_INVALID`, and `PINNED_BASELINE_DIGEST_MISMATCH` cover its failure modes. `canonicalJson`/`canonicalJsonDigest`/`CanonicalJsonValue` are now exported from the package root.
+- `@framelia/verify`'s `captureReadyPage` (and `@framelia/playwright`'s `captureElementBounds`) gain an optional capture `scale` (default `1`, unchanged from before): `scale > 1` captures at that many physical pixels per CSS pixel (Playwright's `scale: "device"` screenshot mode) instead of the previous CSS-px-only capture, with every mask/attribution bound reported scaled to match. `@framelia/contracts`'s `figmaBaselineSchema` widens `scale` from `1` only to an integer `1`-`4`, matching `CaptureDefaults.deviceScaleFactor`'s own cap.

@@ -21,6 +21,8 @@ export { compare } from "./compare/index.ts";
 export { attributeDiffRegions } from "./compare/attribution.ts";
 export type { DiffRegionAttribution, SelectorBounds } from "./compare/attribution.ts";
 export type { DiffCluster } from "./compare/pixel.ts";
+export { canonicalJson, canonicalJsonDigest } from "./canonical-json.ts";
+export type { CanonicalJsonValue } from "./canonical-json.ts";
 export {
   checkDoneGate,
   DEFAULT_MAX_BASELINE_AGE_MS,
@@ -38,6 +40,8 @@ export type {
   FetchBaselineOutcome,
   BaselineMeta,
 } from "./baseline/figma-fetch.ts";
+export { readPinnedBaseline } from "./pinned-baseline.ts";
+export type { PinnedBaseline } from "./pinned-baseline.ts";
 export { assertProjectRelativePath, loadEnvFiles, loadProjectEnv } from "./load-env.ts";
 export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";

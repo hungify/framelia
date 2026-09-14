@@ -48,7 +48,10 @@ export type AppErrorCode =
   | "UNKNOWN_PLAYWRIGHT_PROJECT"
   | "CONTRACT_FILE_INVALID"
   | "INVALID_HEX_COLOR"
-  | "DIMENSION_MISMATCH";
+  | "DIMENSION_MISMATCH"
+  | "PINNED_BASELINE_MISSING"
+  | "PINNED_BASELINE_INVALID"
+  | "PINNED_BASELINE_DIGEST_MISMATCH";
 
 export class AppError extends Error {
   readonly code: AppErrorCode;

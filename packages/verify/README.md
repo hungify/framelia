@@ -11,6 +11,10 @@ depends on `@framelia/contracts` and has no dependency on the CLI, HTTP server, 
 `@playwright/test`'s `expect` — `@framelia/playwright` is the only package that turns this engine
 into test matchers.
 
+`@playwright/test` is a peer dependency, shared with the consumer rather than a
+separately versioned runtime dependency. Programmatic consumers should include
+`@playwright/test` in their install; the normal CLI/Playwright workflow already does.
+
 Mask policy: contract-local `{ selector, reason, maxMatches? }` entries are last-resort overlays,
 valid for a Figma-baselined capture. Deterministic state/deep links, fonts, and animation setup
 come first. Capture resolves visible in-scope locators once, preserves layout, uses fixed

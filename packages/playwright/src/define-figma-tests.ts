@@ -482,6 +482,13 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       ? path.resolve(options.projectRoot)
       : discoverProjectConfig(path.dirname(contractFilePath)).root;
     const contractFile = toPortablePath(path.relative(projectRoot, contractFilePath));
+    // Project-relative form of `specFilePath` (resolved from `options.specUrl`),
+    // computed against this contract's own discovered `projectRoot` -- the same
+    // convention `contractFile` above already uses. Embedded in the registration so a
+    // later reader can verify the caller-supplied `specUrl` actually matches the file
+    // Playwright's own runtime metadata says registered this test (see
+    // `testRegistrationSchema`'s own doc comment for why this exists).
+    const specFile = toPortablePath(path.relative(projectRoot, specFilePath));
     const binding = contractBindingSchema.parse({
       formatVersion: 1,
       kind: "framelia.contract-binding",
@@ -493,6 +500,7 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       formatVersion: TEST_REGISTRATION_FORMAT_VERSION,
       kind: "framelia.test-registration",
       binding,
+      specFile,
       specDigest: registeredSpecDigest,
     });
     // Synchronous, race-free companion to `policyPromise` below -- see
@@ -564,6 +572,33 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
           );
         }
 
+        // `specUrl` binds "the file whose bytes were hashed above" to a real identity
+        // only by the caller's own honesty -- nothing so far stops a caller from
+        // passing an arbitrary, stable, unrelated file (or simply the wrong file)
+        // whose digest has nothing to do with what Playwright is actually executing.
+        // `testInfo.file` looks like the right runtime-authoritative check but is NOT:
+        // it reports the location where `test(...)` was *textually called* (a stack
+        // trace at registration time), which for every `defineFigmaTests` registration
+        // is always this library's own call site inside this file, never the caller's
+        // spec file -- confirmed empirically against a real `playwright test` run.
+        // `testInfo.titlePath` is documented as "the full title path starting with the
+        // test file name" and is populated from the collected file `Suite`'s own title
+        // (tracked independently of any wrapping function's own call site), relative to
+        // `testInfo.project.testDir` -- resolve it to an absolute path, then to the
+        // same portable form `registration.specFile` is already in, and refuse to run
+        // if they disagree.
+        const liveSpecFile = toPortablePath(
+          path.relative(
+            projectRoot,
+            path.resolve(testInfo.project.testDir, testInfo.titlePath[0]!),
+          ),
+        );
+        if (liveSpecFile !== specFile) {
+          throw new Error(
+            `defineFigmaTests: contract "${liveContract.id}"'s registered specUrl (${specFile}) does not match the file Playwright says registered this test (${liveSpecFile}) -- refusing to run a test whose declared spec identity doesn't match its actual location.`,
+          );
+        }
+
         // Synchronous, race-free fingerprint, checked first: `policyPromise`
         // (`resolveProjectPolicy`) does a genuinely deferred dynamic `import()` for an
         // ESM-scoped config file -- real, awaited I/O that could still be reading the
@@ -631,6 +666,13 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
         // bytes in this whole call chain, inside readPinnedBaseline itself.
         const pinnedBaseline = await readPinnedBaseline(projectRoot, liveContract);
         const workDir = testInfo.outputPath(sanitizeAttachmentBaseName(liveContract.id));
+        // `testInfo.outputPath(...)` only guarantees Playwright's own base
+        // `testInfo.outputDir` exists; it does NOT create the extra path segment(s)
+        // passed to it (real Playwright's implementation only `mkdirSync`s
+        // `outputDir` itself, then joins the segments onto that without creating
+        // them) -- writing into `workDir` (a subdirectory of `outputDir`) without
+        // creating it first throws ENOENT.
+        fs.mkdirSync(workDir, { recursive: true });
         const privateImagePath = path.join(
           workDir,
           `expected${path.extname(pinnedBaseline.imagePath)}`,

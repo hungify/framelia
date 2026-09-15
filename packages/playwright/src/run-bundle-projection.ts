@@ -45,6 +45,18 @@ export function readContractRegistration(test: TestCase): TestRegistration | und
   }
 }
 
+/** Walks a `TestCase`'s parent suite chain up to the enclosing `type: "file"` Suite --
+ *  Playwright's own collected-file-suite record, tracked independently of wherever a
+ *  registering library's own `test(...)` call happens to live textually. */
+function findFileSuite(suite: Suite | undefined): Suite | undefined {
+  let current = suite;
+  while (current) {
+    if (current.type === "file") return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
 /**
  * "Project runtime identity" for a case plan's `project.runtimeDigest` (workflow-
  * records.ts's own text doesn't fully pin this down -- see this repo's PR description for
@@ -84,16 +96,25 @@ export interface CasePlanBuildContext {
  * invalidate the run, even though the test's own id/title never changed).
  *
  * `specFileDigest` is read straight from the `framelia.contract` annotation's own
- * `specDigest` (`registration.specDigest`), NOT independently re-hashed from
- * `test.location.file` here at `onBegin` time. Playwright imports every spec file
- * (running `defineFigmaTests` synchronously, once, per file) strictly before any
- * Reporter's `onBegin` runs; re-hashing the file fresh from disk at this later point
- * would freeze whatever content happens to be on disk *right now*, which can already
- * differ from what Node actually imported and will actually execute for every attempt
- * of this test, if the file was edited in between. `defineFigmaTests`'s own `specUrl`
- * option hashes the file synchronously at true import time -- the only point that can
- * ever observe the actually-executing bytes -- and freezes that digest into the
- * annotation; this function only ever propagates it.
+ * `specDigest` (`registration.specDigest`), NOT independently re-hashed from disk here
+ * at `onBegin` time. Playwright imports every spec file (running `defineFigmaTests`
+ * synchronously, once, per file) strictly before any Reporter's `onBegin` runs;
+ * re-hashing the file fresh from disk at this later point would freeze whatever
+ * content happens to be on disk *right now*, which can already differ from what Node
+ * actually imported and will actually execute for every attempt of this test, if the
+ * file was edited in between. `defineFigmaTests`'s own `specUrl` option hashes the file
+ * synchronously at true import time -- the only point that can ever observe the
+ * actually-executing bytes -- and freezes that digest into the annotation; this
+ * function only ever propagates it. `registration.specFile` -- the portable path
+ * `specUrl` resolved to at registration time -- is cross-checked against the real spec
+ * file before that digest is trusted: without this, a caller could pass an arbitrary,
+ * stable, unrelated `specUrl` whose digest has nothing to do with what's actually
+ * executing, and nothing would ever catch it. The real spec file is resolved via the
+ * enclosing `type: "file"` Suite's own `.title` (Playwright's own collected-file-suite
+ * record, relative to the resolved project's own `testDir`) -- NOT `test.location.file`
+ * (a stack-trace-derived "where was `test(...)` textually called," which for every
+ * `defineFigmaTests` registration is this library's own call site, never the real
+ * caller spec file; confirmed empirically against a real `playwright test` run).
  *
  * Resolves `binding.contractFile` against `context.projectRoot` -- the Reporter's own
  * project root, not each contract file's independently-discovered nearest-config
@@ -137,11 +158,22 @@ export async function buildCasePlanForTest(
   // before the run is ever frozen, not silently at capture time.
   await readPinnedBaseline(context.projectRoot, contract);
 
-  const specFile = test.location.file;
-  const specFileRelative = path.relative(context.projectRoot, specFile).split(path.sep).join("/");
-
   const project = test.parent.project();
-  const projectName = project?.name ?? "";
+  const fileSuite = findFileSuite(test.parent);
+  if (!project || !fileSuite) {
+    throw new Error(
+      `run-bundle: test ${test.id} has no resolvable project/file suite to determine its spec file from.`,
+    );
+  }
+  const specFile = path.resolve(project.testDir, fileSuite.title);
+  const specFileRelative = path.relative(context.projectRoot, specFile).split(path.sep).join("/");
+  if (registration.specFile !== specFileRelative) {
+    throw new Error(
+      `run-bundle: test ${test.id}'s registered specUrl (${registration.specFile}) does not match the file Playwright says registered this test (${specFileRelative}) -- refusing to freeze a case plan whose declared spec identity doesn't match its actual location.`,
+    );
+  }
+
+  const projectName = project.name;
   const caseId = computeCaseId({
     contractId: contract.id,
     projectName,

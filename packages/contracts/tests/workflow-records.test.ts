@@ -102,6 +102,7 @@ describe("testRegistrationSchema (the framelia.contract annotation payload)", ()
     formatVersion: 1,
     kind: "framelia.test-registration",
     binding,
+    specFile: "login.spec.ts",
     specDigest: B_DIGEST,
   };
 
@@ -121,6 +122,12 @@ describe("testRegistrationSchema (the framelia.contract annotation payload)", ()
     ).toBe(false);
   });
 
+  it("rejects a POSIX-absolute specFile", () => {
+    expect(
+      testRegistrationSchema.safeParse({ ...registration, specFile: "/etc/passwd" }).success,
+    ).toBe(false);
+  });
+
   it("rejects an invalid nested binding", () => {
     expect(
       testRegistrationSchema.safeParse({
@@ -131,7 +138,7 @@ describe("testRegistrationSchema (the framelia.contract annotation payload)", ()
   });
 
   it("rejects an unknown top-level field", () => {
-    expect(testRegistrationSchema.safeParse({ ...registration, specFile: "spec.ts" }).success).toBe(
+    expect(testRegistrationSchema.safeParse({ ...registration, extra: "unexpected" }).success).toBe(
       false,
     );
   });

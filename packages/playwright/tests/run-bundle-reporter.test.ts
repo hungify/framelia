@@ -111,9 +111,22 @@ function pinContract(
   };
 }
 
-function fakeProjectSuite(projectName: string): Suite {
-  const project = { name: projectName, use: { viewport: null } } as unknown as FullProject;
-  return { project: () => project } as unknown as Suite;
+/** Mirrors real Playwright's own Suite hierarchy just enough for `buildCasePlanForTest`
+ *  to resolve the real spec file: a `type: "file"` suite whose `.title` is the file's
+ *  basename, and a project whose `.testDir` is its directory -- `path.resolve(testDir,
+ *  title)` reconstructs `specFile` exactly, the same way real Playwright's own
+ *  `testInfo.titlePath`/file-suite title (relative to `project.testDir`) does. */
+function fakeProjectSuite(projectName: string, specFile: string): Suite {
+  const project = {
+    name: projectName,
+    use: { viewport: null },
+    testDir: path.dirname(specFile),
+  } as unknown as FullProject;
+  return {
+    type: "file",
+    title: path.basename(specFile),
+    project: () => project,
+  } as unknown as Suite;
 }
 
 /** A fake `TestCase` shaped the way a real `defineFigmaTests` registration produces:
@@ -123,6 +136,14 @@ function fakeContractTest(options: {
   id: string;
   binding: ContractBinding;
   specFile: string;
+  /** Project root the registered `specFile` (portable path) is computed against --
+   *  pass the same `projectRoot` given to `FrameliaReporter` in the same test. */
+  root: string;
+  /** Overrides the registered (portable, project-relative) `specFile` embedded in the
+   *  annotation -- defaults to `specFile`'s own path relative to `root`. Pass an
+   *  explicit mismatch to simulate a `specUrl` that doesn't match the file Playwright's
+   *  own runtime metadata says registered this test. */
+  registeredSpecFile?: string;
   /** Registration-time spec-file digest to embed in the annotation -- defaults to the
    *  spec file's *current* content, for the common case of a test that never mutates
    *  the spec file after constructing this fake. Pass explicitly to simulate a digest
@@ -135,6 +156,9 @@ function fakeContractTest(options: {
     formatVersion: 1,
     kind: "framelia.test-registration",
     binding: options.binding,
+    specFile:
+      options.registeredSpecFile ??
+      path.relative(options.root, options.specFile).split(path.sep).join("/"),
     specDigest: options.specDigest ?? fileDigest(options.specFile),
   };
   return {
@@ -144,7 +168,7 @@ function fakeContractTest(options: {
     titlePath: () => ["project", "file.spec.ts", options.id],
     annotations: [{ type: "framelia.contract", description: JSON.stringify(registration) }],
     location: { file: options.specFile, line: 1, column: 1 },
-    parent: fakeProjectSuite(options.projectName ?? "chromium"),
+    parent: fakeProjectSuite(options.projectName ?? "chromium", options.specFile),
     repeatEachIndex: options.repeatEachIndex ?? 0,
   } as unknown as TestCase;
 }
@@ -237,6 +261,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -268,6 +293,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -315,6 +341,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -339,6 +366,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -367,6 +395,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -440,7 +469,7 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
       titlePath: () => ["project", "login.spec.ts", "t1"],
       annotations: [registeredAnnotation],
       location: { file: specFilePath, line: 1, column: 1 },
-      parent: fakeProjectSuite("chromium"),
+      parent: fakeProjectSuite("chromium", specFilePath),
       repeatEachIndex: 0,
     } as unknown as TestCase;
 
@@ -455,5 +484,37 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
     // re-hashed the file fresh from disk here.
     expect(result.casePlan.specFileDigest).toBe(originalSpecDigest);
     expect(result.casePlan.specFileDigest).not.toBe(mutatedSpecDigest);
+  });
+
+  it("throws when the registered specFile doesn't match the file Playwright says registered this test", async () => {
+    const root = tempDir("framelia-spec-identity-mismatch-");
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const binding = pinContract(root, { id: "login.desktop" });
+
+    // `fakeContractTest`'s registered `specFile` (portable, computed from `wrong.spec.ts`)
+    // disagrees with `location.file` (`actual.spec.ts`) -- exactly the scenario a caller
+    // passing an arbitrary, unrelated `specUrl` would produce: the embedded digest has
+    // nothing to do with what Playwright's own runtime metadata says actually ran.
+    const wrongSpecFile = path.join(root, "wrong.spec.ts");
+    fs.writeFileSync(wrongSpecFile, "// not the file that actually registered this test\n");
+    const actualSpecFile = path.join(root, "actual.spec.ts");
+    fs.writeFileSync(actualSpecFile, "// the file Playwright says registered this test\n");
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: actualSpecFile,
+      root,
+      registeredSpecFile: path.relative(root, wrongSpecFile).split(path.sep).join("/"),
+    });
+
+    await expect(
+      buildCasePlanForTest(test, {
+        projectRoot: root,
+        policyDigest: `sha256:${"0".repeat(64)}`,
+        source: {},
+      }),
+    ).rejects.toThrow(
+      /registered specUrl \(wrong\.spec\.ts\) does not match the file Playwright says registered this test \(actual\.spec\.ts\)/,
+    );
   });
 });

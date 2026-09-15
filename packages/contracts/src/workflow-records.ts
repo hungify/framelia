@@ -177,13 +177,23 @@ export const contractBindingSchema = z
 /**
  * The full `framelia.contract` Playwright annotation payload `defineFigmaTests`
  * attaches to every test it registers -- `binding` (which contract this test binds to)
- * plus `specDigest`, a registration-time content digest of the *spec file that called
- * `defineFigmaTests`* itself (see that package's own `specUrl` option). Deliberately a
- * sibling of `binding`, not a field folded into `contractBindingSchema`: a binding's own
- * identity is "which contract, at which digest" and is meaningful independent of which
- * spec file happens to import it (`collectedCaseSchema` below already establishes this
- * precedent -- its own `specFile`/`specFileDigest` sit beside `binding`, not inside it).
- * Keeping `specDigest` out of `contractBindingSchema` also keeps `casePlanSchema`'s own
+ * plus `specFile`/`specDigest`, this registration's own spec-file identity (see that
+ * package's own `specUrl` option): `specFile` is the project-relative path `specUrl`
+ * resolved to (the same portable-path convention `binding.contractFile` already uses),
+ * `specDigest` is that file's registration-time content digest. `specFile` exists so a
+ * later reader (`buildCasePlanForTest`, `defineFigmaTests`'s own precapture check) can
+ * verify the caller-supplied `specUrl` actually matches the file Playwright's own
+ * runtime metadata (`TestCase.location.file`/`TestInfo.file`) says registered this test
+ * -- without it, a caller could pass an arbitrary stable file (or the wrong file
+ * entirely) whose digest has nothing to do with what's actually executing, and nothing
+ * would ever catch the mismatch.
+ *
+ * Both fields are deliberately a sibling of `binding`, not folded into
+ * `contractBindingSchema`: a binding's own identity is "which contract, at which
+ * digest" and is meaningful independent of which spec file happens to import it
+ * (`collectedCaseSchema` below already establishes this precedent -- its own
+ * `specFile`/`specFileDigest` sit beside `binding`, not inside it). Keeping spec
+ * identity out of `contractBindingSchema` also keeps `casePlanSchema`'s own
  * `bindingDigest` (computed as `canonicalJsonDigest(binding)`) answering exactly one
  * question -- has the contract binding drifted -- never conflated with "has the spec
  * file drifted," which `casePlanSchema`'s own separate `specFileDigest` field already
@@ -194,6 +204,7 @@ export const testRegistrationSchema = z
     formatVersion: z.literal(TEST_REGISTRATION_FORMAT_VERSION),
     kind: z.literal("framelia.test-registration"),
     binding: contractBindingSchema,
+    specFile: projectRelativePathSchema,
     specDigest: sha256DigestSchema,
   })
   .strict();

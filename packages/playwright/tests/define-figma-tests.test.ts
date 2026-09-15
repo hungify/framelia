@@ -26,9 +26,12 @@ import {
   runFigmaContractTest,
 } from "../src/define-figma-tests.ts";
 
-// This test file's own identity -- a real, stable file on disk -- stands in for "the
-// calling spec file" (`options.specUrl`) in every test below that isn't itself
-// exercising spec-digest drift (those construct their own mutable fixture file).
+// Only safe for a test that never reaches `defineFigmaTests`'s per-contract
+// registration loop (an empty `contracts` array, or a contract file that fails to
+// load/parse before the loop's `specFile`/`specDigest` embedding step) -- those never
+// resolve `specFile` against a project root, so this file's own (unrelated) location
+// never needs to be project-relative to anything. Every other test uses `specFixture`
+// below, which writes a real spec file *inside* the test's own project root.
 const TEST_SPEC_URL = new URL(import.meta.url);
 
 const browser = await chromium.launch();
@@ -391,6 +394,16 @@ function writeContractFile(root: string, relativePath: string, contract: unknown
   return filePath;
 }
 
+/** Writes a placeholder spec file under `root` and returns both its `file://` URL (for
+ *  `options.specUrl`) and its absolute path (for a fake `TestInfo.file`/
+ *  `TestCase.location.file`) -- stands in for "the calling spec file" living alongside
+ *  its own project, the way a real spec file always does. */
+function specFixture(root: string, name = "fixture.spec.ts"): { url: URL; path: string } {
+  const specPath = path.join(root, name);
+  fs.writeFileSync(specPath, "// fixture spec file\n");
+  return { url: pathToFileURL(specPath), path: specPath };
+}
+
 const validContract = {
   formatVersion: 1,
   kind: "framelia.contract",
@@ -420,7 +433,7 @@ describe("defineFigmaTests (registration)", () => {
     let prepareCalls = 0;
     defineFigmaTests(test, {
       contracts: [desktopFile, mobileFile],
-      specUrl: TEST_SPEC_URL,
+      specUrl: specFixture(root).url,
       prepare: async () => {
         prepareCalls++;
       },
@@ -457,7 +470,7 @@ describe("defineFigmaTests (registration)", () => {
     const { test, registered } = fakeTest();
     defineFigmaTests(test, {
       contracts: files,
-      specUrl: TEST_SPEC_URL,
+      specUrl: specFixture(root).url,
       prepare: async () => undefined,
     });
 
@@ -471,7 +484,7 @@ describe("defineFigmaTests (registration)", () => {
     const { test, registered } = fakeTest();
     defineFigmaTests(test, {
       contracts: pathToFileURL(filePath),
-      specUrl: TEST_SPEC_URL,
+      specUrl: specFixture(root).url,
       prepare: async () => undefined,
     });
 
@@ -521,20 +534,30 @@ describe("defineFigmaTests (registration)", () => {
 });
 
 /** Minimal fake of the `TestInfo` members the registered callback actually calls
- *  (`project.name`, `timeout`, `skip`, `outputPath`, `attach`) -- same
- *  runner-agnostic-core pattern as `attach.test.ts`'s own `fakeTestInfo`. `outputPath`
- *  creates the directory it returns, mirroring Playwright's own real behavior. */
-function fakeTestInfo(options: { outputRoot: string; projectName?: string }): TestInfo {
+ *  (`project.name`/`project.testDir`, `titlePath`, `timeout`, `skip`, `outputPath`,
+ *  `attach`) -- same runner-agnostic-core pattern as `attach.test.ts`'s own
+ *  `fakeTestInfo`. `outputPath` mirrors real Playwright's own behavior: only
+ *  `outputRoot` (this fake's stand-in for `testInfo.outputDir`) is guaranteed to
+ *  exist -- extra path segments are joined onto it but never created. `file` is the
+ *  absolute path this fake's test is declared in; split into `project.testDir`
+ *  (its directory) and `titlePath[0]` (its basename) the same way real Playwright's
+ *  own `TestInfo.titlePath` -- "the full title path starting with the test file
+ *  name," relative to `testInfo.project.testDir` -- represents it. */
+function fakeTestInfo(options: {
+  outputRoot: string;
+  file: string;
+  projectName?: string;
+}): TestInfo {
   return {
-    project: { name: options.projectName ?? "chromium" },
+    project: { name: options.projectName ?? "chromium", testDir: path.dirname(options.file) },
+    titlePath: [path.basename(options.file)],
     timeout: 5_000,
     skip: (condition?: boolean, reason?: string) => {
       if (condition) throw new Error(reason ?? "test skipped");
     },
     outputPath: (...parts: string[]) => {
-      const outputPath = path.join(options.outputRoot, ...parts);
-      fs.mkdirSync(outputPath, { recursive: true });
-      return outputPath;
+      fs.mkdirSync(options.outputRoot, { recursive: true });
+      return path.join(options.outputRoot, ...parts);
     },
     attach: async () => undefined,
   } as unknown as TestInfo;
@@ -546,11 +569,12 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     fs.mkdirSync(path.join(root, ".git"));
     fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
     const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+    const spec = specFixture(root);
 
     const { test, registered } = fakeTest();
     defineFigmaTests(test, {
       contracts: contractPath,
-      specUrl: TEST_SPEC_URL,
+      specUrl: spec.url,
       prepare: async () => undefined,
     });
     expect(registered).toHaveLength(1);
@@ -568,7 +592,10 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
 
     let caught: unknown;
     try {
-      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+      await registered[0]!.fn(
+        { page: {} },
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path }),
+      );
     } catch (error) {
       caught = error;
     }
@@ -604,7 +631,10 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
 
     let caught: unknown;
     try {
-      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+      await registered[0]!.fn(
+        { page: {} },
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: specFixturePath }),
+      );
     } catch (error) {
       caught = error;
     }
@@ -614,16 +644,56 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     expect((caught as Error).message).toContain(specFixturePath);
   });
 
+  it("throws instead of silently capturing when specUrl points at a different file than the one Playwright says registered this test", async () => {
+    const root = temporaryRoot();
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+    // `specUrl` points at a real, unrelated file this call site does NOT actually
+    // execute from -- the misuse (or malice) this check exists to catch: a caller could
+    // otherwise pass a stable, unrelated file whose digest has nothing to do with what's
+    // actually running, and nothing would ever notice.
+    const wrongSpec = specFixture(root, "wrong.spec.ts");
+    const actualSpecFile = path.join(root, "actual.spec.ts");
+
+    const { test, registered } = fakeTest();
+    defineFigmaTests(test, {
+      contracts: contractPath,
+      specUrl: wrongSpec.url,
+      prepare: async () => undefined,
+    });
+    expect(registered).toHaveLength(1);
+
+    let caught: unknown;
+    try {
+      // `testInfo.file` -- Playwright's own runtime-authoritative "which file
+      // registered this test" -- disagrees with the registered `specUrl` from the very
+      // first execution; no mutation is needed to trigger this.
+      await registered[0]!.fn(
+        { page: {} },
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: actualSpecFile }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(
+      /registered specUrl \(wrong\.spec\.ts\) does not match the file Playwright says registered this test \(actual\.spec\.ts\)/,
+    );
+  });
+
   it("throws instead of silently capturing when the project policy's derived digest changes on disk (an env file appears) after registration, before the test body runs", async () => {
     const root = temporaryRoot();
     fs.mkdirSync(path.join(root, ".git"));
     fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
     const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+    const spec = specFixture(root);
 
     const { test, registered } = fakeTest();
     defineFigmaTests(test, {
       contracts: contractPath,
-      specUrl: TEST_SPEC_URL,
+      specUrl: spec.url,
       prepare: async () => undefined,
     });
     expect(registered).toHaveLength(1);
@@ -634,7 +704,10 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     // at the (expected, irrelevant here) baseline lookup -- that failure is itself the
     // signal that `policyPromise` already resolved by the time this settled.
     await expect(
-      registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() })),
+      registered[0]!.fn(
+        { page: {} },
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path }),
+      ),
     ).rejects.toThrow(/Pinned baseline snapshot/);
 
     // The config file's own raw bytes are untouched here -- only a `.env` file's
@@ -647,7 +720,10 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
 
     let caught: unknown;
     try {
-      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+      await registered[0]!.fn(
+        { page: {} },
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path }),
+      );
     } catch (error) {
       caught = error;
     }
@@ -670,6 +746,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       color: [100, 150, 200, 255],
     });
     const contractPath = writeContractFile(root, "login.desktop.json", contractA);
+    const spec = specFixture(root);
     const app = await server(solidHtml(SIZE, [100, 150, 200]));
     const context = await browser.newContext({ viewport: SIZE });
 
@@ -678,7 +755,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       const { test, registered } = fakeTest();
       defineFigmaTests(test, {
         contracts: contractPath,
-        specUrl: TEST_SPEC_URL,
+        specUrl: spec.url,
         prepare: async ({ page: preparedPage }) => {
           await preparedPage.goto(app.url);
         },
@@ -688,7 +765,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       // A -> B: mutate to a different, still-valid contract before the callback runs.
       writeContractFile(root, "login.desktop.json", { ...contractA, revision: 2 });
       await expect(
-        registered[0]!.fn({ page }, fakeTestInfo({ outputRoot: temporaryRoot() })),
+        registered[0]!.fn({ page }, fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path })),
       ).rejects.toThrow(/changed on disk after test collection/);
 
       // B -> A: revert exactly back to what was registered -- the same object reference,
@@ -696,7 +773,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       writeContractFile(root, "login.desktop.json", contractA);
       const result = await registered[0]!.fn(
         { page },
-        fakeTestInfo({ outputRoot: temporaryRoot() }),
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path }),
       );
       expect(result).toBeUndefined();
     } finally {
@@ -722,11 +799,12 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
     // exactly the module-type-dependent risk this fix's own doc comment calls out.
     fs.writeFileSync(path.join(root, "framelia.config.ts"), "export default {};\n");
     const contractPath = writeContractFile(root, "login.desktop.json", validContract);
+    const spec = specFixture(root);
 
     const { test, registered } = fakeTest();
     defineFigmaTests(test, {
       contracts: contractPath,
-      specUrl: TEST_SPEC_URL,
+      specUrl: spec.url,
       prepare: async () => undefined,
     });
     expect(registered).toHaveLength(1);
@@ -738,7 +816,10 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
 
     let caught: unknown;
     try {
-      await registered[0]!.fn({ page: {} }, fakeTestInfo({ outputRoot: temporaryRoot() }));
+      await registered[0]!.fn(
+        { page: {} },
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path }),
+      );
     } catch (error) {
       caught = error;
     }
@@ -762,6 +843,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       color: MATCH_COLOR,
     });
     const contractPath = writeContractFile(root, "login.desktop.json", contract);
+    const spec = specFixture(root);
     const app = await server(solidHtml(SIZE, [MATCH_COLOR[0], MATCH_COLOR[1], MATCH_COLOR[2]]));
     const context = await browser.newContext({ viewport: SIZE });
     const sharedImagePath = path.join(root, "login.desktop.png");
@@ -772,7 +854,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       const { test, registered } = fakeTest();
       defineFigmaTests(test, {
         contracts: contractPath,
-        specUrl: TEST_SPEC_URL,
+        specUrl: spec.url,
         prepare: async ({ page: preparedPage }) => {
           await preparedPage.goto(app.url);
           // readPinnedBaseline already verified and (per this fix) already copied the
@@ -789,7 +871,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
 
       const result = await registered[0]!.fn(
         { page },
-        fakeTestInfo({ outputRoot: temporaryRoot() }),
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path }),
       );
       expect(result).toBeUndefined();
 
@@ -825,6 +907,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       color: MATCH_COLOR,
     });
     const contractPath = writeContractFile(root, "login.desktop.json", contract);
+    const spec = specFixture(root);
     const app = await server(solidHtml(SIZE, [MATCH_COLOR[0], MATCH_COLOR[1], MATCH_COLOR[2]]));
     const context = await browser.newContext({ viewport: SIZE });
     const sharedImagePath = path.join(root, "login.desktop.png");
@@ -848,7 +931,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
       const { test, registered } = fakeTest();
       defineFigmaTests(test, {
         contracts: contractPath,
-        specUrl: TEST_SPEC_URL,
+        specUrl: spec.url,
         prepare: async ({ page: preparedPage }) => {
           await preparedPage.goto(app.url);
         },
@@ -857,7 +940,7 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
 
       const result = await registered[0]!.fn(
         { page },
-        fakeTestInfo({ outputRoot: temporaryRoot() }),
+        fakeTestInfo({ outputRoot: temporaryRoot(), file: spec.path }),
       );
       expect(result).toBeUndefined();
 

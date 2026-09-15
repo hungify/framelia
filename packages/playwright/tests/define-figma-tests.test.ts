@@ -395,9 +395,10 @@ function writeContractFile(root: string, relativePath: string, contract: unknown
 }
 
 /** Writes a placeholder spec file under `root` and returns both its `file://` URL (for
- *  `options.specUrl`) and its absolute path (for a fake `TestInfo.file`/
- *  `TestCase.location.file`) -- stands in for "the calling spec file" living alongside
- *  its own project, the way a real spec file always does. */
+ *  `options.specUrl`) and its absolute path (fed into `fakeTestInfo`'s own `file`
+ *  option, which splits it into `project.testDir` + `titlePath[0]` -- see that
+ *  function's own doc comment) -- stands in for "the calling spec file" living
+ *  alongside its own project, the way a real spec file always does. */
 function specFixture(root: string, name = "fixture.spec.ts"): { url: URL; path: string } {
   const specPath = path.join(root, name);
   fs.writeFileSync(specPath, "// fixture spec file\n");
@@ -666,9 +667,10 @@ describe("defineFigmaTests (execution — precapture reconciliation)", () => {
 
     let caught: unknown;
     try {
-      // `testInfo.file` -- Playwright's own runtime-authoritative "which file
-      // registered this test" -- disagrees with the registered `specUrl` from the very
-      // first execution; no mutation is needed to trigger this.
+      // The fake `TestInfo` (`project.testDir`/`titlePath[0]`, resolved to
+      // `actualSpecFile`) -- Playwright's own runtime-authoritative "which file
+      // registered this test" -- disagrees with the registered `specUrl` from the
+      // very first execution; no mutation is needed to trigger this.
       await registered[0]!.fn(
         { page: {} },
         fakeTestInfo({ outputRoot: temporaryRoot(), file: actualSpecFile }),

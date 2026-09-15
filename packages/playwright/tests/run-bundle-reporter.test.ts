@@ -460,8 +460,11 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
     expect(mutatedSpecDigest).not.toBe(originalSpecDigest);
 
     // The onBegin-equivalent step: a fake TestCase carrying the real registration
-    // annotation, with `location.file` pointing at the (now-mutated) spec fixture --
-    // exactly what Playwright's own TestCase would report at this point.
+    // annotation, with its parent suite's own file-suite title/project.testDir
+    // (via `fakeProjectSuite("chromium", specFilePath)`) resolving to the (now-mutated)
+    // spec fixture -- `buildCasePlanForTest` reads the real spec file from that Suite
+    // chain, exactly what Playwright's own collected `type: "file"` Suite would report
+    // at this point (NOT `location.file`, which is inert here and never read).
     const test1 = {
       id: "t1",
       title: "t1",
@@ -492,9 +495,10 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
     const binding = pinContract(root, { id: "login.desktop" });
 
     // `fakeContractTest`'s registered `specFile` (portable, computed from `wrong.spec.ts`)
-    // disagrees with `location.file` (`actual.spec.ts`) -- exactly the scenario a caller
+    // disagrees with the fake TestCase's own file-suite title/project.testDir (via
+    // `fakeProjectSuite`, resolving to `actual.spec.ts`) -- exactly the scenario a caller
     // passing an arbitrary, unrelated `specUrl` would produce: the embedded digest has
-    // nothing to do with what Playwright's own runtime metadata says actually ran.
+    // nothing to do with what Playwright's own collected file Suite says actually ran.
     const wrongSpecFile = path.join(root, "wrong.spec.ts");
     fs.writeFileSync(wrongSpecFile, "// not the file that actually registered this test\n");
     const actualSpecFile = path.join(root, "actual.spec.ts");

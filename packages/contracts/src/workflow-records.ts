@@ -183,10 +183,14 @@ export const contractBindingSchema = z
  * `specDigest` is that file's registration-time content digest. `specFile` exists so a
  * later reader (`buildCasePlanForTest`, `defineFigmaTests`'s own precapture check) can
  * verify the caller-supplied `specUrl` actually matches the file Playwright's own
- * runtime metadata (`TestCase.location.file`/`TestInfo.file`) says registered this test
- * -- without it, a caller could pass an arbitrary stable file (or the wrong file
- * entirely) whose digest has nothing to do with what's actually executing, and nothing
- * would ever catch the mismatch.
+ * collected `type: "file"` Suite (its own `.title`, resolved against the project's
+ * `testDir`) says registered this test -- without it, a caller could pass an arbitrary
+ * stable file (or the wrong file entirely) whose digest has nothing to do with what's
+ * actually executing, and nothing would ever catch the mismatch. Deliberately NOT
+ * `TestCase.location.file`/`TestInfo.file`: both report where `test(...)` was
+ * textually called (a stack-trace-derived location), which for every
+ * `defineFigmaTests` registration is this library's own call site, never the caller's
+ * spec file -- confirmed empirically against a real `playwright test` run.
  *
  * Both fields are deliberately a sibling of `binding`, not folded into
  * `contractBindingSchema`: a binding's own identity is "which contract, at which

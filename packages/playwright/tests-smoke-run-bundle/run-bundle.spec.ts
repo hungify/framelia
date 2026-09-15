@@ -145,6 +145,7 @@ test.afterAll(async () => {
 
 defineFigmaTests(test, {
   contracts: [passingContract, failingContract],
+  specUrl: new URL(import.meta.url),
   async prepare({ page }, { target }) {
     await page.goto(`${appUrl}${target.path}`);
     await expect(page.locator("body")).toBeVisible();

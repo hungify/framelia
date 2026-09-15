@@ -9,6 +9,7 @@ import {
   contractBindingSchema,
   runPlanSchema,
   runRecordSchema,
+  testRegistrationSchema,
 } from "../src/workflow-records.ts";
 
 const A_DIGEST = `sha256:${"a".repeat(64)}`;
@@ -86,6 +87,60 @@ describe("project-relative paths", () => {
     expect(
       contractBindingSchema.safeParse({ ...binding, contractFile: "C:login.json" }).success,
     ).toBe(false);
+  });
+});
+
+describe("testRegistrationSchema (the framelia.contract annotation payload)", () => {
+  const binding = {
+    formatVersion: 1,
+    kind: "framelia.contract-binding",
+    contractId: "login.desktop",
+    contractFile: ".framelia/contracts/login.json",
+    contractDigest: A_DIGEST,
+  };
+  const registration = {
+    formatVersion: 1,
+    kind: "framelia.test-registration",
+    binding,
+    specFile: "login.spec.ts",
+    specDigest: B_DIGEST,
+  };
+
+  it("accepts a binding plus a registration-time spec digest", () => {
+    expect(testRegistrationSchema.safeParse(registration).success).toBe(true);
+  });
+
+  it("keeps specDigest independent of the nested binding's own contractDigest", () => {
+    const parsed = testRegistrationSchema.parse(registration);
+    expect(parsed.specDigest).toBe(B_DIGEST);
+    expect(parsed.binding.contractDigest).toBe(A_DIGEST);
+  });
+
+  it("rejects a malformed specDigest", () => {
+    expect(
+      testRegistrationSchema.safeParse({ ...registration, specDigest: "not-a-digest" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a POSIX-absolute specFile", () => {
+    expect(
+      testRegistrationSchema.safeParse({ ...registration, specFile: "/etc/passwd" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an invalid nested binding", () => {
+    expect(
+      testRegistrationSchema.safeParse({
+        ...registration,
+        binding: { ...binding, contractFile: "/etc/passwd" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an unknown top-level field", () => {
+    expect(testRegistrationSchema.safeParse({ ...registration, extra: "unexpected" }).success).toBe(
+      false,
+    );
   });
 });
 

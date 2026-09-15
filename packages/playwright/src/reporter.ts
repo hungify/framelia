@@ -33,7 +33,7 @@ import { contractNameFor, finalizeTestEnd, sanitizeTestId } from "./report-proje
 import {
   buildAttemptRecord,
   buildCasePlanForTest,
-  readContractBinding,
+  readContractRegistration,
 } from "./run-bundle-projection.ts";
 
 export interface FrameliaReporterOptions {
@@ -196,17 +196,15 @@ export default class FrameliaReporter implements Reporter {
    */
   async #initializeRunBundle(tests: TestCase[], policy: ResolvedProjectPolicy): Promise<void> {
     if (!policy.policyDigest) return;
-    const contractTests = tests.filter((test) => readContractBinding(test) !== undefined);
+    const contractTests = tests.filter((test) => readContractRegistration(test) !== undefined);
     if (contractTests.length === 0) return;
 
-    const specDigestCache = new Map<string, `sha256:${string}`>();
     const results = await Promise.all(
       contractTests.map((test) =>
         buildCasePlanForTest(test, {
           projectRoot: this.#projectRoot,
           policyDigest: policy.policyDigest!,
           source: this.#options.source ?? {},
-          specDigestCache,
         }),
       ),
     );

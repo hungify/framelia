@@ -10,7 +10,6 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { canonicalJsonDigest } from "@framelia/verify";
@@ -18,9 +17,17 @@ import { makeSolidPng } from "@framelia/verify/testing";
 import { test } from "@playwright/test";
 import { PNG } from "pngjs";
 
+import { projectRoot } from "../playwright.define-figma-tests.config.ts";
 import { defineFigmaTests, expect } from "../src/index.ts";
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-public-screens-smoke-"));
+// `root` is this package's own `projectRoot` (not a per-invocation temp dir) -- the
+// same convention `tests-smoke-run-bundle/run-bundle.spec.ts` uses and documents:
+// `defineFigmaTests`'s own project-root discovery (walking up from each contract
+// file's directory) finds the real `framelia.config.mjs` this config writes at
+// `projectRoot`'s own top level, so a registered test's `specFile` (framelia/#77's
+// registration-time spec-digest fix) only resolves to a project-relative path (no
+// `..` segments) when contracts/baselines live under this same root too.
+const root = projectRoot;
 
 function sha256(data: Buffer): string {
   return crypto.createHash("sha256").update(data).digest("hex");
@@ -36,6 +43,12 @@ function pinPageContract(options: {
     makeSolidPng(options.viewport.width, options.viewport.height, options.color),
   );
   const imageDigest = `sha256:${sha256(imageBytes)}`;
+  // Contract JSON + its baseline image live under `.framelia/` (already repo-wide
+  // gitignored) rather than directly at the package root -- see `run-bundle.spec.ts`'s
+  // own `pinPageContract` for the same convention, applied there first.
+  const contractsDir = path.join(root, ".framelia", "smoke-contracts");
+  fs.mkdirSync(contractsDir, { recursive: true });
+  const imageRelativePath = `.framelia/smoke-contracts/${options.id}.png`;
   const snapshot = {
     formatVersion: 1,
     kind: "framelia.baseline-snapshot",
@@ -51,7 +64,7 @@ function pinPageContract(options: {
     expected: {
       kind: "page",
       image: {
-        path: `${options.id}.png`,
+        path: imageRelativePath,
         digest: imageDigest,
         width: options.viewport.width,
         height: options.viewport.height,
@@ -62,7 +75,7 @@ function pinPageContract(options: {
   const snapshotDir = path.join(root, ".framelia", "baselines", snapshotDigest.slice(7));
   fs.mkdirSync(snapshotDir, { recursive: true });
   fs.writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(snapshot));
-  fs.writeFileSync(path.join(root, `${options.id}.png`), imageBytes);
+  fs.writeFileSync(path.join(root, imageRelativePath), imageBytes);
 
   const contract = {
     formatVersion: 1,
@@ -75,7 +88,7 @@ function pinPageContract(options: {
     scope: { kind: "page", pageReason: "full page review" },
     baseline: { snapshotDigest },
   };
-  const contractPath = path.join(root, `${options.id}.json`);
+  const contractPath = path.join(contractsDir, `${options.id}.json`);
   fs.writeFileSync(contractPath, JSON.stringify(contract));
   return contractPath;
 }
@@ -110,12 +123,16 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await closeApp();
-  fs.rmSync(root, { recursive: true, force: true });
+  // `root` is this package's own `projectRoot`, not a per-invocation temp dir --
+  // never removed here (see `run-bundle.spec.ts`'s own `afterAll` for the same
+  // convention): contracts/baselines are deterministic, idempotent content, so a
+  // fresh invocation writing them again is harmless.
 });
 
 // One call, two contracts, one shared source line -- see this file's header comment.
 defineFigmaTests(test, {
   contracts: [desktopContract, mobileContract],
+  specUrl: new URL(import.meta.url),
   async prepare({ page }, { target }) {
     await page.goto(`${appUrl}${target.path}`);
     await expect(page.locator("body")).toBeVisible();

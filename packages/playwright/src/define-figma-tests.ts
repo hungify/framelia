@@ -2,7 +2,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { authoredContractSchema, contractBindingSchema } from "@framelia/contracts/workflow";
+import {
+  authoredContractSchema,
+  contractBindingSchema,
+  testRegistrationSchema,
+  TEST_REGISTRATION_FORMAT_VERSION,
+} from "@framelia/contracts/workflow";
 import type { AuthoredContract } from "@framelia/contracts/workflow";
 import type { PinnedBaseline } from "@framelia/verify";
 import {
@@ -87,6 +92,27 @@ export interface DefineFigmaTestsOptions {
    *  Playwright projects the runner is configured with. `URL` entries resolve the same
    *  module-relative way `new URL("./visual-contract.json", import.meta.url)` implies. */
   contracts: URL | string | Array<URL | string>;
+  /**
+   * Identity of the calling spec file itself -- pass `new URL(import.meta.url)` from
+   * your own spec file, the same `import.meta.url`-based `URL` convention `contracts`
+   * above documents, applied here to the file itself rather than a sibling contract
+   * file. Required: `defineFigmaTests` hashes this file's raw bytes synchronously, at
+   * this exact registration moment, and freezes that digest into every registered
+   * test's own `framelia.contract` annotation.
+   *
+   * This closes a gap Playwright's own collection model otherwise leaves open:
+   * Playwright imports every spec file (running this call, synchronously, once) during
+   * collection, strictly before any Reporter's `onBegin` runs. A spec file edited on
+   * disk in the window between "Playwright finished importing it" and "onBegin's own
+   * case-plan projection reads the file fresh to compute a digest" would freeze the
+   * *edited* content's digest into the case plan -- even though the code that actually
+   * executes for every attempt is still whatever Node already imported. A
+   * finalization-time re-check can't catch this either: the frozen digest was wrong
+   * from the moment it was captured, not drifted afterward. Freezing the digest here,
+   * at true import time, is the only point that can ever see the actually-executing
+   * bytes.
+   */
+  specUrl: URL;
   /**
    * Runs once per registered test, after the contract's viewport/deviceScaleFactor have
    * been applied (or validated against an already-customized fixture) and before any
@@ -439,6 +465,16 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
     throw new Error("defineFigmaTests: options.contracts must include at least one contract file.");
   }
 
+  // Resolved and hashed once per `defineFigmaTests` call (not once per contract in the
+  // loop below): every contract this call registers shares the one spec file that
+  // called it. Synchronous `fs.readFileSync`-based hashing, at this exact moment --
+  // Playwright's own collection phase runs this whole function body synchronously,
+  // once, while importing the spec file, strictly before any Reporter's `onBegin`. This
+  // is the only point in the entire lifecycle that can ever observe the bytes Node
+  // actually imported and will actually execute; see `specUrl`'s own doc comment.
+  const specFilePath = fileURLToPath(options.specUrl);
+  const registeredSpecDigest = fileHash(specFilePath);
+
   for (const input of inputs) {
     const contractFilePath = resolveContractFilePath(input);
     const { contract, digest } = loadContractFile(contractFilePath);
@@ -446,12 +482,26 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       ? path.resolve(options.projectRoot)
       : discoverProjectConfig(path.dirname(contractFilePath)).root;
     const contractFile = toPortablePath(path.relative(projectRoot, contractFilePath));
+    // Project-relative form of `specFilePath` (resolved from `options.specUrl`),
+    // computed against this contract's own discovered `projectRoot` -- the same
+    // convention `contractFile` above already uses. Embedded in the registration so a
+    // later reader can verify the caller-supplied `specUrl` actually matches the file
+    // Playwright's own runtime metadata says registered this test (see
+    // `testRegistrationSchema`'s own doc comment for why this exists).
+    const specFile = toPortablePath(path.relative(projectRoot, specFilePath));
     const binding = contractBindingSchema.parse({
       formatVersion: 1,
       kind: "framelia.contract-binding",
       contractId: contract.id,
       contractFile,
       contractDigest: digest,
+    });
+    const registration = testRegistrationSchema.parse({
+      formatVersion: TEST_REGISTRATION_FORMAT_VERSION,
+      kind: "framelia.test-registration",
+      binding,
+      specFile,
+      specDigest: registeredSpecDigest,
     });
     // Synchronous, race-free companion to `policyPromise` below -- see
     // `hashConfigFile`'s own doc comment for why the async, dynamic-`import()`-based
@@ -481,7 +531,7 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
 
     test(
       contract.name,
-      { annotation: { type: CONTRACT_ANNOTATION_TYPE, description: JSON.stringify(binding) } },
+      { annotation: { type: CONTRACT_ANNOTATION_TYPE, description: JSON.stringify(registration) } },
       // `{ page }` is the only fixture name this generic library can statically declare
       // here -- see DefineFigmaTestsOptions's own doc comment for why Playwright's
       // fixture-parser constraint rules out forwarding a caller's full, unknown-in-advance
@@ -501,6 +551,51 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
         if (liveDigest !== digest) {
           throw new Error(
             `defineFigmaTests: contract "${contract.id}" changed on disk after test collection (registered digest ${digest}, now ${liveDigest}) -- refusing to run a stale contract's test.`,
+          );
+        }
+
+        // Same shape of gap as the contract check above, applied to the spec file
+        // itself (see `specUrl`'s own doc comment for the registration-time half of
+        // this fix): `specFilePath`/`registeredSpecDigest` were captured once, at
+        // collection time, when this whole function body ran. This closes the *wider*
+        // window the registration-time freeze alone cannot: a spec file edited (or
+        // edited-then-reverted) anywhere between registration and this specific test's
+        // own execution -- not just the narrower registration-vs-onBegin window
+        // `specUrl` closes for the frozen `CasePlan`. Node never re-imports an
+        // already-loaded module, so this can never change *which code* actually runs
+        // here -- but it must still fail loudly rather than silently capture evidence
+        // under a spec identity that no longer matches what's on disk.
+        const liveSpecDigest = fileHash(specFilePath);
+        if (liveSpecDigest !== registeredSpecDigest) {
+          throw new Error(
+            `defineFigmaTests: spec file ${specFilePath} changed on disk after test collection (registered digest ${registeredSpecDigest}, now ${liveSpecDigest}) -- refusing to run a stale spec file's test.`,
+          );
+        }
+
+        // `specUrl` binds "the file whose bytes were hashed above" to a real identity
+        // only by the caller's own honesty -- nothing so far stops a caller from
+        // passing an arbitrary, stable, unrelated file (or simply the wrong file)
+        // whose digest has nothing to do with what Playwright is actually executing.
+        // `testInfo.file` looks like the right runtime-authoritative check but is NOT:
+        // it reports the location where `test(...)` was *textually called* (a stack
+        // trace at registration time), which for every `defineFigmaTests` registration
+        // is always this library's own call site inside this file, never the caller's
+        // spec file -- confirmed empirically against a real `playwright test` run.
+        // `testInfo.titlePath` is documented as "the full title path starting with the
+        // test file name" and is populated from the collected file `Suite`'s own title
+        // (tracked independently of any wrapping function's own call site), relative to
+        // `testInfo.project.testDir` -- resolve it to an absolute path, then to the
+        // same portable form `registration.specFile` is already in, and refuse to run
+        // if they disagree.
+        const liveSpecFile = toPortablePath(
+          path.relative(
+            projectRoot,
+            path.resolve(testInfo.project.testDir, testInfo.titlePath[0]!),
+          ),
+        );
+        if (liveSpecFile !== specFile) {
+          throw new Error(
+            `defineFigmaTests: contract "${liveContract.id}"'s registered specUrl (${specFile}) does not match the file Playwright says registered this test (${liveSpecFile}) -- refusing to run a test whose declared spec identity doesn't match its actual location.`,
           );
         }
 
@@ -571,6 +666,13 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
         // bytes in this whole call chain, inside readPinnedBaseline itself.
         const pinnedBaseline = await readPinnedBaseline(projectRoot, liveContract);
         const workDir = testInfo.outputPath(sanitizeAttachmentBaseName(liveContract.id));
+        // `testInfo.outputPath(...)` only guarantees Playwright's own base
+        // `testInfo.outputDir` exists; it does NOT create the extra path segment(s)
+        // passed to it (real Playwright's implementation only `mkdirSync`s
+        // `outputDir` itself, then joins the segments onto that without creating
+        // them) -- writing into `workDir` (a subdirectory of `outputDir`) without
+        // creating it first throws ENOENT.
+        fs.mkdirSync(workDir, { recursive: true });
         const privateImagePath = path.join(
           workDir,
           `expected${path.extname(pinnedBaseline.imagePath)}`,

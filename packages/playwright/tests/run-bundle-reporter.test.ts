@@ -2,10 +2,12 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   authoredContractSchema,
   baselineSnapshotSchema,
+  testRegistrationSchema,
   type ContractBinding,
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest } from "@framelia/verify";
@@ -22,7 +24,9 @@ import { PNG } from "pngjs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SCORE_ATTACHMENT_SUFFIX } from "../src/attach.ts";
+import { defineFigmaTests } from "../src/define-figma-tests.ts";
 import FrameliaReporter from "../src/reporter.ts";
+import { buildCasePlanForTest } from "../src/run-bundle-projection.ts";
 import type { FrameliaScoreAttachment } from "../src/score-attachment.ts";
 
 const temporaryDirectories: string[] = [];
@@ -38,6 +42,10 @@ function tempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   temporaryDirectories.push(dir);
   return dir;
+}
+
+function fileDigest(filePath: string): `sha256:${string}` {
+  return `sha256:${crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex")}`;
 }
 
 function clientRootFixture(): string {
@@ -103,9 +111,22 @@ function pinContract(
   };
 }
 
-function fakeProjectSuite(projectName: string): Suite {
-  const project = { name: projectName, use: { viewport: null } } as unknown as FullProject;
-  return { project: () => project } as unknown as Suite;
+/** Mirrors real Playwright's own Suite hierarchy just enough for `buildCasePlanForTest`
+ *  to resolve the real spec file: a `type: "file"` suite whose `.title` is the file's
+ *  basename, and a project whose `.testDir` is its directory -- `path.resolve(testDir,
+ *  title)` reconstructs `specFile` exactly, the same way real Playwright's own
+ *  `testInfo.titlePath`/file-suite title (relative to `project.testDir`) does. */
+function fakeProjectSuite(projectName: string, specFile: string): Suite {
+  const project = {
+    name: projectName,
+    use: { viewport: null },
+    testDir: path.dirname(specFile),
+  } as unknown as FullProject;
+  return {
+    type: "file",
+    title: path.basename(specFile),
+    project: () => project,
+  } as unknown as Suite;
 }
 
 /** A fake `TestCase` shaped the way a real `defineFigmaTests` registration produces:
@@ -115,19 +136,60 @@ function fakeContractTest(options: {
   id: string;
   binding: ContractBinding;
   specFile: string;
+  /** Project root the registered `specFile` (portable path) is computed against --
+   *  pass the same `projectRoot` given to `FrameliaReporter` in the same test. */
+  root: string;
+  /** Overrides the registered (portable, project-relative) `specFile` embedded in the
+   *  annotation -- defaults to `specFile`'s own path relative to `root`. Pass an
+   *  explicit mismatch to simulate a `specUrl` that doesn't match the file Playwright's
+   *  own runtime metadata says registered this test. */
+  registeredSpecFile?: string;
+  /** Registration-time spec-file digest to embed in the annotation -- defaults to the
+   *  spec file's *current* content, for the common case of a test that never mutates
+   *  the spec file after constructing this fake. Pass explicitly to simulate a digest
+   *  frozen before a later on-disk mutation. */
+  specDigest?: `sha256:${string}`;
   projectName?: string;
   repeatEachIndex?: number;
 }): TestCase {
+  const registration = {
+    formatVersion: 1,
+    kind: "framelia.test-registration",
+    binding: options.binding,
+    specFile:
+      options.registeredSpecFile ??
+      path.relative(options.root, options.specFile).split(path.sep).join("/"),
+    specDigest: options.specDigest ?? fileDigest(options.specFile),
+  };
   return {
     id: options.id,
     title: options.id,
     tags: [],
     titlePath: () => ["project", "file.spec.ts", options.id],
-    annotations: [{ type: "framelia.contract", description: JSON.stringify(options.binding) }],
+    annotations: [{ type: "framelia.contract", description: JSON.stringify(registration) }],
     location: { file: options.specFile, line: 1, column: 1 },
-    parent: fakeProjectSuite(options.projectName ?? "chromium"),
+    parent: fakeProjectSuite(options.projectName ?? "chromium", options.specFile),
     repeatEachIndex: options.repeatEachIndex ?? 0,
   } as unknown as TestCase;
+}
+
+/** Fake `TestType`-shaped double: captures every registered `test(title, details, fn)`
+ *  call the real `defineFigmaTests` makes, without any real Playwright runtime -- same
+ *  pattern as `define-figma-tests.test.ts`'s own `fakeTest`. Used here to prove
+ *  `buildCasePlanForTest` reads the annotation `defineFigmaTests` actually produced at
+ *  registration time, not a hand-assembled stand-in. */
+function fakeTest(): {
+  test: Parameters<typeof defineFigmaTests>[0];
+  registered: Array<{ annotation: { type: string; description: string } }>;
+} {
+  const registered: Array<{ annotation: { type: string; description: string } }> = [];
+  const test = ((
+    _title: string,
+    details: { annotation: { type: string; description: string } },
+  ) => {
+    registered.push(details);
+  }) as unknown as Parameters<typeof defineFigmaTests>[0];
+  return { test, registered };
 }
 
 function scoreAttachment(
@@ -199,6 +261,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -230,6 +293,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -277,6 +341,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -301,6 +366,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -329,6 +395,7 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
       id: "t1",
       binding,
       specFile: path.join(root, "login.spec.ts"),
+      root,
     });
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
@@ -356,5 +423,102 @@ describe("FrameliaReporter run-bundle publication (additive to the dashboard/Ver
     await reporter.onEnd({ status: "passed" } as any);
 
     expect(fs.existsSync(path.join(root, ".framelia", "runs"))).toBe(false);
+  });
+});
+
+describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix)", () => {
+  it("freezes the spec digest captured at defineFigmaTests registration time, not the file's content when buildCasePlanForTest later reads it", async () => {
+    const root = tempDir("framelia-spec-digest-regression-");
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    pinContract(root, { id: "login.desktop" });
+    const specFilePath = path.join(root, "login.spec.ts");
+    fs.writeFileSync(specFilePath, "// original content, imported by Playwright's collection\n");
+
+    // Simulates "Playwright's collection phase just imported this spec file": the real
+    // `defineFigmaTests` hashes `specFilePath`'s bytes synchronously, right now, and
+    // freezes that digest into the registered test's own `framelia.contract` annotation.
+    const { test, registered } = fakeTest();
+    defineFigmaTests(test, {
+      contracts: path.join(root, "contracts", "login.desktop.json"),
+      specUrl: pathToFileURL(specFilePath),
+      prepare: async () => undefined,
+    });
+    expect(registered).toHaveLength(1);
+    const registeredAnnotation = registered[0]!.annotation;
+    const originalSpecDigest = testRegistrationSchema.parse(
+      JSON.parse(registeredAnnotation.description),
+    ).specDigest;
+    expect(originalSpecDigest).toBe(fileDigest(specFilePath));
+
+    // A -> B: the spec file is edited on disk after collection, before the Reporter's
+    // own `onBegin` ever runs -- exactly framelia/#77's exploitable window. Node never
+    // re-imports an already-loaded module, so the code that will actually execute for
+    // every attempt of this test is still whatever was imported above; only the bytes
+    // on disk have changed.
+    fs.writeFileSync(specFilePath, "// edited after collection, before onBegin\n");
+    const mutatedSpecDigest = fileDigest(specFilePath);
+    expect(mutatedSpecDigest).not.toBe(originalSpecDigest);
+
+    // The onBegin-equivalent step: a fake TestCase carrying the real registration
+    // annotation, with its parent suite's own file-suite title/project.testDir
+    // (via `fakeProjectSuite("chromium", specFilePath)`) resolving to the (now-mutated)
+    // spec fixture -- `buildCasePlanForTest` reads the real spec file from that Suite
+    // chain, exactly what Playwright's own collected `type: "file"` Suite would report
+    // at this point (NOT `location.file`, which is inert here and never read).
+    const test1 = {
+      id: "t1",
+      title: "t1",
+      tags: [],
+      titlePath: () => ["project", "login.spec.ts", "t1"],
+      annotations: [registeredAnnotation],
+      location: { file: specFilePath, line: 1, column: 1 },
+      parent: fakeProjectSuite("chromium", specFilePath),
+      repeatEachIndex: 0,
+    } as unknown as TestCase;
+
+    const result = await buildCasePlanForTest(test1, {
+      projectRoot: root,
+      policyDigest: `sha256:${"0".repeat(64)}`,
+      source: {},
+    });
+
+    // The frozen case plan carries the digest that was true AT REGISTRATION TIME, not
+    // the post-edit disk content buildCasePlanForTest would have observed had it
+    // re-hashed the file fresh from disk here.
+    expect(result.casePlan.specFileDigest).toBe(originalSpecDigest);
+    expect(result.casePlan.specFileDigest).not.toBe(mutatedSpecDigest);
+  });
+
+  it("throws when the registered specFile doesn't match the file Playwright says registered this test", async () => {
+    const root = tempDir("framelia-spec-identity-mismatch-");
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const binding = pinContract(root, { id: "login.desktop" });
+
+    // `fakeContractTest`'s registered `specFile` (portable, computed from `wrong.spec.ts`)
+    // disagrees with the fake TestCase's own file-suite title/project.testDir (via
+    // `fakeProjectSuite`, resolving to `actual.spec.ts`) -- exactly the scenario a caller
+    // passing an arbitrary, unrelated `specUrl` would produce: the embedded digest has
+    // nothing to do with what Playwright's own collected file Suite says actually ran.
+    const wrongSpecFile = path.join(root, "wrong.spec.ts");
+    fs.writeFileSync(wrongSpecFile, "// not the file that actually registered this test\n");
+    const actualSpecFile = path.join(root, "actual.spec.ts");
+    fs.writeFileSync(actualSpecFile, "// the file Playwright says registered this test\n");
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: actualSpecFile,
+      root,
+      registeredSpecFile: path.relative(root, wrongSpecFile).split(path.sep).join("/"),
+    });
+
+    await expect(
+      buildCasePlanForTest(test, {
+        projectRoot: root,
+        policyDigest: `sha256:${"0".repeat(64)}`,
+        source: {},
+      }),
+    ).rejects.toThrow(
+      /registered specUrl \(wrong\.spec\.ts\) does not match the file Playwright says registered this test \(actual\.spec\.ts\)/,
+    );
   });
 });

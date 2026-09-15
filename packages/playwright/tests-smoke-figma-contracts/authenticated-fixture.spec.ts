@@ -12,7 +12,6 @@
 // the dashboard content (not the login form) is what gets compared.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { canonicalJsonDigest } from "@framelia/verify";
@@ -20,9 +19,17 @@ import { makeSolidPng } from "@framelia/verify/testing";
 import { test as base } from "@playwright/test";
 import { PNG } from "pngjs";
 
+import { projectRoot } from "../playwright.define-figma-tests.config.ts";
 import { defineFigmaTests, expect } from "../src/index.ts";
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-authenticated-fixture-smoke-"));
+// `root` is this package's own `projectRoot` (not a per-invocation temp dir) -- the
+// same convention `tests-smoke-run-bundle/run-bundle.spec.ts` uses and documents:
+// `defineFigmaTests`'s own project-root discovery (walking up from the contract
+// file's directory) finds the real `framelia.config.mjs` this config writes at
+// `projectRoot`'s own top level, so this registered test's `specFile` (framelia/#77's
+// registration-time spec-digest fix) only resolves to a project-relative path (no
+// `..` segments) when the contract/baseline live under this same root too.
+const root = projectRoot;
 
 const VIEWPORT = { preset: "desktop", width: 100, height: 80 } as const;
 const DASHBOARD_COLOR: [number, number, number, number] = [20, 80, 40, 255];
@@ -33,6 +40,13 @@ function sha256(data: Buffer): string {
 
 const imageBytes = PNG.sync.write(makeSolidPng(VIEWPORT.width, VIEWPORT.height, DASHBOARD_COLOR));
 const imageDigest = `sha256:${sha256(imageBytes)}`;
+
+// Contract JSON + its baseline image live under `.framelia/` (already repo-wide
+// gitignored) rather than directly at the package root -- see `run-bundle.spec.ts`'s
+// own `pinPageContract` for the same convention, applied there first.
+const contractsDir = path.join(root, ".framelia", "smoke-contracts");
+fs.mkdirSync(contractsDir, { recursive: true });
+const imageRelativePath = ".framelia/smoke-contracts/dashboard.png";
 const snapshot = {
   formatVersion: 1,
   kind: "framelia.baseline-snapshot",
@@ -41,7 +55,7 @@ const snapshot = {
   expected: {
     kind: "page",
     image: {
-      path: "dashboard.png",
+      path: imageRelativePath,
       digest: imageDigest,
       width: VIEWPORT.width,
       height: VIEWPORT.height,
@@ -52,7 +66,7 @@ const snapshotDigest = canonicalJsonDigest(snapshot);
 const snapshotDir = path.join(root, ".framelia", "baselines", snapshotDigest.slice(7));
 fs.mkdirSync(snapshotDir, { recursive: true });
 fs.writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(snapshot));
-fs.writeFileSync(path.join(root, "dashboard.png"), imageBytes);
+fs.writeFileSync(path.join(root, imageRelativePath), imageBytes);
 
 const contract = {
   formatVersion: 1,
@@ -65,12 +79,13 @@ const contract = {
   scope: { kind: "page", pageReason: "authenticated dashboard review" },
   baseline: { snapshotDigest },
 };
-const contractPath = path.join(root, "dashboard.json");
+const contractPath = path.join(contractsDir, "dashboard.json");
 fs.writeFileSync(contractPath, JSON.stringify(contract));
 
-base.afterAll(() => {
-  fs.rmSync(root, { recursive: true, force: true });
-});
+// `root` is this package's own `projectRoot`, not a per-invocation temp dir -- never
+// removed here (see `run-bundle.spec.ts`'s own `afterAll` for the same convention):
+// the contract/baseline are deterministic, idempotent content, so a fresh invocation
+// writing them again is harmless.
 
 const LOGIN_HTML = `<style>html,body{margin:0}body{width:${VIEWPORT.width}px;height:${VIEWPORT.height}px;background:white}</style><form id="login"><button id="submit">Sign in</button></form>`;
 const DASHBOARD_HTML = `<style>html,body{margin:0}body{width:${VIEWPORT.width}px;height:${VIEWPORT.height}px;background:rgb(${DASHBOARD_COLOR.slice(0, 3).join(",")})}</style><div data-testid="dashboard-ready" style="width:10px;height:10px"></div>`;
@@ -92,6 +107,7 @@ const authedTest = base.extend({
 
 defineFigmaTests(authedTest, {
   contracts: contractPath,
+  specUrl: new URL(import.meta.url),
   async prepare({ page }, { target }) {
     expect(loginRanBeforePrepare).toBe(true);
     expect(target.path).toBe("/dashboard");

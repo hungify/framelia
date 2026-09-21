@@ -25,22 +25,22 @@ npx framelia status --project-root "$PWD"
 
 ## Commands
 
-| Command                           | Purpose                                                                                         |
-| --------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `framelia init`                   | Initialize project config and an ignored auth-state directory.                                  |
-| `framelia auth`                   | Record Playwright storage state through a headed login browser.                                 |
-| `framelia contract create`        | Interactively author a schema-v5, Figma-baselined visual contract.                              |
-| `framelia contract suggest-masks` | Scan a live page and propose mask selectors without modifying a contract.                       |
-| `framelia baseline promote`       | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                         |
-| `framelia status`                 | Show CLI version, project root, and Figma token availability.                                   |
-| `framelia schema`                 | Print the live JSON Schema for a contract or verification artifact.                             |
-| `framelia` (no arguments)         | Open a dashboard aggregating every artifact found under `.framelia/visual-verifications/`.      |
-| `framelia dashboard`              | Same aggregated dashboard, explicit form; supports `--project-root`, `--host`, and `--no-open`. |
-| `framelia open`                   | Open one archived artifact in the dashboard without rerunning; supports `--host`.               |
-| `framelia report`                 | Export a portable static dashboard for CI artifacts.                                            |
-| `framelia done-gate`              | Revalidate a persisted artifact's identity, freshness, and evidence integrity.                  |
-| `framelia capture`                | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                                         |
-| `framelia compare`                | Compare two existing PNG files without source provenance gates.                                 |
+| Command                           | Purpose                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| `framelia init`                   | Initialize project config and an ignored auth-state directory.                       |
+| `framelia auth`                   | Record Playwright storage state through a headed login browser.                      |
+| `framelia contract create`        | Interactively author a schema-v5, Figma-baselined visual contract.                   |
+| `framelia contract suggest-masks` | Scan a live page and propose mask selectors without modifying a contract.            |
+| `framelia baseline promote`       | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.              |
+| `framelia status`                 | Show CLI version, project root, and Figma token availability.                        |
+| `framelia schema`                 | Print the live JSON Schema for an authored contract or signed requirements envelope. |
+| `framelia` (no arguments)         | Open the dashboard for one explicit durable run.                                     |
+| `framelia dashboard`              | Serve one selected durable run; requires `--run`.                                    |
+| `framelia open`                   | Alias for opening one selected durable run without rerunning.                        |
+| `framelia report`                 | Export one selected run as a relocatable static dashboard.                           |
+| `framelia done-gate`              | Evaluate one selected run against protected signed requirements.                     |
+| `framelia capture`                | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                              |
+| `framelia compare`                | Compare two existing PNG files without source provenance gates.                      |
 
 `verify`, `doctor`, and `discover` — plus the navigation action DSL underneath them — are retired.
 Visual verification runs in `@framelia/playwright`'s matchers, called from your own test.
@@ -154,52 +154,51 @@ each check-point's `expectStyle` is best-effort baked in the same way region sco
 }
 ```
 
-Print the live JSON Schema for either shape:
+Print the live JSON Schema for either input shape:
 
 ```bash
 npx framelia schema --target contract
-npx framelia schema --target artifact
+npx framelia schema --target requirements
 ```
 
 ## Browsing and gating evidence
 
 Run your Playwright suite with `@framelia/playwright`'s Reporter registered (see
-[`@framelia/playwright`](../playwright/README.md)) to produce `visual-verification.json` artifacts
-under `.framelia/visual-verifications/<test-id>/`. Then, from this CLI:
+[`@framelia/playwright`](../playwright/README.md)). It publishes immutable selected-run evidence
+under `.framelia/runs/<run-id>/`.
 
 ```bash
-npx framelia open \
-  --artifact .framelia/visual-verifications/login/visual-verification.json
+npx framelia open --project-root "$PWD" --run <run-id>
+npx framelia dashboard --project-root "$PWD" --run <run-id>
+npx framelia report --project-root "$PWD" --run <run-id> --output ./framelia-report
 ```
 
-Export a portable static report into an empty directory:
+Static report output is relocatable and contains only project-portable run identities and copied
+evidence. Serve the exported directory over HTTP; browsers block report JSON loading through
+`file://`.
+
+The authoritative gate additionally requires a protected Ed25519-signed requirements envelope:
 
 ```bash
-npx framelia report \
-  --artifact .framelia/visual-verifications/login/visual-verification.json \
-  --output ./framelia-report
-```
-
-Serve the exported directory over HTTP — browsers block report JSON loading through `file://`.
-
-Or browse every artifact under `.framelia/visual-verifications/` at once:
-
-```bash
-npx framelia dashboard --project-root "$PWD"
-```
-
-Inspect every `actual.png`, `diff.png`, `visual-score.json` for each artifact. A passing artifact
-does not replace image inspection.
-
-Then run the independent integrity gate:
-
-```bash
+export FRAMELIA_TRUSTED_REQUIREMENTS_PUBLIC_KEY=/opt/framelia/trust/requirements-ed25519.pub.pem
 npx framelia done-gate \
-  --artifact .framelia/visual-verifications/login/visual-verification.json
+  --project-root "$PWD" \
+  --run <run-id> \
+  --requirements ./ci/requirements.signed.json
 ```
 
-`done-gate` reparses the persisted artifact from disk and never trusts an in-memory verdict — it
-checks evidence freshness, hash integrity, and that every contract's result actually passed.
+The public key path must resolve outside the project checkout. Keep the corresponding private key
+only in a protected CI/deployment signing service; never put it in the repository, expose it to a
+pull-request job, or make product code a signing authority. The protected adapter signs canonical
+JSON only after it has observed the exact required case matrix, source/build identity,
+served-build proof, policy digest, binding and spec identities, and retry policy. Branch
+protection should trust only that protected job. The requirements envelope may be copied into the
+workspace, but it is not trusted unless its signature verifies against the pinned external public
+key.
+
+Legacy `visual-verification.json` input is deliberately unsupported as authority because it lacks
+the frozen source/build and case-plan identities. Rerun the annotated Playwright suite to produce
+a selected run bundle; there is no compatibility conversion or fallback.
 
 ## Diagnosis commands
 
@@ -214,15 +213,22 @@ directly with framelia's compare engine, without resolving a baseline or checkin
 ## Evidence layout
 
 ```text
-figma-gold.png
-figma-gold.meta.json
-actual.png
-diff.png
-visual-score.json
+.framelia/runs/<run-id>/
+├── plan.json
+├── run.json
+└── cases/<case-id>/
+    ├── plan.json
+    └── attempts/<attempt-id>/
+        ├── attempt.json
+        ├── expected.png
+        ├── actual.png
+        ├── diff.png
+        └── score.json
 ```
 
-`visual-verification.json` records the exact request, resolved project root, per-contract result,
-and output directories.
+Run and case plans freeze the exact selected matrix, policy, authored contract, baseline digest,
+registration identity, retry policy, and stability sample count. Attempt records contain only
+portable paths and hashes; private stability sample images are deleted after hashing.
 
 ## Exit codes
 
@@ -237,22 +243,23 @@ Exit `1` is a valid comparison result, not an infrastructure failure.
 ## CI example
 
 ```yaml
-- name: Install Framelia browser
-  run: npx playwright install --with-deps chromium
-
-- name: Run Playwright visual matchers
+- name: Run Playwright visual contracts
   env:
     FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
-    FRAMELIA_FIGMA_FILE_KEY: abc123
-  run: npx playwright test # your suite calls toMatchFigma/toMatchPage/toMatchUrl
+  run: npx playwright test
 
-- name: Gate on persisted evidence
+- name: Gate selected run
+  env:
+    FRAMELIA_TRUSTED_REQUIREMENTS_PUBLIC_KEY: /opt/framelia/trust/requirements-ed25519.pub.pem
   run: |
     npx framelia done-gate \
-      --artifact .framelia/visual-verifications/login/visual-verification.json
+      --project-root "$PWD" \
+      --run "$FRAMELIA_RUN_ID" \
+      --requirements "$SIGNED_REQUIREMENTS_PATH"
 ```
 
-Upload `.framelia/visual-verifications/` as a CI artifact on failure.
+Upload `.framelia/runs/<run-id>/` and the output of `framelia report --run <run-id>` as CI
+artifacts when review evidence is needed.
 
 ## Troubleshooting
 

@@ -1,5 +1,3 @@
-export { type VerificationArtifact, verificationArtifactSchema } from "./artifact.ts";
-
 export {
   type BaselineSource,
   baselineSchema,
@@ -32,6 +30,10 @@ export {
   projectCaptureEvidence,
 } from "./dashboard/projections.ts";
 export type {
+  DashboardAttempt,
+  DashboardEvidenceAvailability,
+  DashboardExecutionState,
+  DashboardVisualVerdict,
   DashboardCaptureEvidence,
   DashboardContractResult,
   DashboardDiagnostic,
@@ -55,7 +57,6 @@ export {
   FRAMELIA_DIR,
   VISUAL_ARTIFACT_DIR_PATTERN,
   VISUAL_CONTRACT_FILE,
-  VISUAL_VERIFICATION_FILE,
   VISUAL_VERIFICATIONS_DIR,
   VISUAL_VERIFICATIONS_ROOT,
   visualArtifactPath,

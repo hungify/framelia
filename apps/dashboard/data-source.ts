@@ -68,7 +68,7 @@ export function useRunArtifact() {
     const token = ++refreshToken;
     try {
       const result = staticMode.value
-        ? await fetchJson("./data/visual-verification.json")
+        ? await fetchJson("./data/selected-run.json")
         : await fetchJson("/api/run");
       if (token !== refreshToken) return;
       run.value = result;
@@ -76,7 +76,7 @@ export function useRunArtifact() {
     } catch (liveError) {
       if (!staticMode.value) {
         try {
-          const result = await fetchJson("./data/visual-verification.json");
+          const result = await fetchJson("./data/selected-run.json");
           if (token !== refreshToken) return;
           run.value = result;
           staticMode.value = true;

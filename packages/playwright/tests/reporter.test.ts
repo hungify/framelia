@@ -2,8 +2,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { verificationArtifactSchema } from "@framelia/contracts";
-import { doneGateFromArtifact } from "@framelia/verify";
 import { makeSolidPng } from "@framelia/verify/testing";
 import type {
   FullConfig,
@@ -152,32 +150,6 @@ function passedResultWithImages(
   } as unknown as TestResult;
 }
 
-function failedResult(name: string, imageDir: string): TestResult {
-  const png = PNG.sync.write(makeSolidPng(10, 10, [1, 2, 3, 255]));
-  const expectedPath = path.join(imageDir, `${name}-expected.png`);
-  const actualPath = path.join(imageDir, `${name}-actual.png`);
-  const diffPath = path.join(imageDir, `${name}-diff.png`);
-  fs.writeFileSync(expectedPath, png);
-  fs.writeFileSync(actualPath, png);
-  fs.writeFileSync(diffPath, png);
-  return {
-    status: "failed",
-    error: { message: "toMatchFigma: did not match." },
-    attachments: [
-      { name: `${name}-expected`, contentType: "image/png", path: expectedPath },
-      { name: `${name}-actual`, contentType: "image/png", path: actualPath },
-      { name: `${name}-diff`, contentType: "image/png", path: diffPath },
-      {
-        name: `${name}${SCORE_ATTACHMENT_SUFFIX}`,
-        contentType: "application/json",
-        body: Buffer.from(
-          JSON.stringify(scoreAttachment({ pass: false, matchRatio: 0.5, ssim: 0.5 })),
-        ),
-      },
-    ],
-  } as unknown as TestResult;
-}
-
 describe("FrameliaReporter", () => {
   it("drives a live dashboard reporting live:true during the run", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
@@ -215,57 +187,20 @@ describe("FrameliaReporter", () => {
     await expect(reporter.onEnd({ status: "passed" } as any)).resolves.toBeUndefined();
   });
 
-  it("writes a VerificationArtifact per test that done-gate/report/open can read without error", async () => {
+  it("keeps low-level matcher evidence without writing a legacy verification artifact", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
     const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
     const testA = fakeTest("test-a", "passes");
-    const testB = fakeTest("test-b", "fails");
 
-    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA, testB]));
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
     reporter.onTestEnd(testA, passedResultWithImages("test-a", imageDir));
-    reporter.onTestEnd(testB, failedResult("test-b", imageDir));
-    await reporter.onEnd({ status: "failed" } as any);
+    await reporter.onEnd({ status: "passed" } as any);
 
-    const artifactPathB = path.join(
-      projectRoot,
-      ".framelia/visual-verifications/test-b/visual-verification.json",
-    );
-    expect(fs.existsSync(artifactPathB)).toBe(true);
-
-    const rawB = JSON.parse(fs.readFileSync(artifactPathB, "utf8"));
-    const artifact = verificationArtifactSchema.parse(rawB);
-    expect(artifact.allPassed).toBe(false);
-
-    const verdict = doneGateFromArtifact(artifact);
-    expect(verdict.done).toBe(false);
-
-    const score = JSON.parse(
-      fs.readFileSync(
-        path.join(projectRoot, ".framelia/visual-verifications/test-b/visual-score.json"),
-        "utf8",
-      ),
-    );
-    expect(score).toMatchObject({ pass: false, matchRatio: 0.5 });
-
-    const artifactPathA = path.join(
-      projectRoot,
-      ".framelia/visual-verifications/test-a/visual-verification.json",
-    );
-    const rawA = JSON.parse(fs.readFileSync(artifactPathA, "utf8"));
-    const passArtifact = verificationArtifactSchema.parse(rawA);
-    expect(passArtifact.allPassed).toBe(true);
-    expect(doneGateFromArtifact(passArtifact).done).toBe(true);
-    for (const name of [
-      "visual-score.json",
-      "run-meta.json",
-      "punch-list.json",
-      "figma-baseline.meta.json",
-    ])
-      expect(
-        fs.existsSync(path.join(projectRoot, ".framelia/visual-verifications/test-a", name)),
-      ).toBe(true);
+    const outDir = path.join(projectRoot, ".framelia/visual-verifications/test-a");
+    expect(fs.existsSync(path.join(outDir, "visual-verification.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "visual-score.json"))).toBe(true);
   });
 
   it("resolves the same project capture policy used by the CLI", async () => {
@@ -292,7 +227,7 @@ describe("FrameliaReporter", () => {
     expect(runMeta.maxMaskedAreaRatio).toBe(0.1);
   });
 
-  it("persists the resolved clusterCheck override into both the contract and the durable score (regression guard: report-projection must not re-derive it from the already-resolved profile)", async () => {
+  it("persists the resolved clusterCheck override into the durable low-level score", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -310,15 +245,6 @@ describe("FrameliaReporter", () => {
     );
     await reporter.onEnd({ status: "passed" } as any);
 
-    const artifactPath = path.join(
-      projectRoot,
-      ".framelia/visual-verifications/test-a/visual-verification.json",
-    );
-    const artifact = verificationArtifactSchema.parse(
-      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
-    );
-    expect(artifact.request.contracts[0]).toMatchObject({ clusterCheck: true });
-
     const score = JSON.parse(
       fs.readFileSync(
         path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
@@ -328,7 +254,7 @@ describe("FrameliaReporter", () => {
     expect(score).toMatchObject({ clusterCheck: true });
   });
 
-  it("persists profileOverrides into both the contract and the durable score (regression guard: report-projection must not re-derive it, there's nothing to re-derive it from)", async () => {
+  it("persists profileOverrides into the durable low-level score", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -346,17 +272,6 @@ describe("FrameliaReporter", () => {
     );
     await reporter.onEnd({ status: "passed" } as any);
 
-    const artifactPath = path.join(
-      projectRoot,
-      ".framelia/visual-verifications/test-a/visual-verification.json",
-    );
-    const artifact = verificationArtifactSchema.parse(
-      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
-    );
-    expect(artifact.request.contracts[0]).toMatchObject({
-      profileOverrides: { minMatch: 0.999, maxDiffPixels: 10 },
-    });
-
     const score = JSON.parse(
       fs.readFileSync(
         path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
@@ -366,7 +281,7 @@ describe("FrameliaReporter", () => {
     expect(score).toMatchObject({ profileOverrides: { minMatch: 0.999, maxDiffPixels: 10 } });
   });
 
-  it("persists gateEligible: false into both the contract and the durable score (Issue #10: same reasoning as profileOverrides -- report-projection must not re-derive it)", async () => {
+  it("persists gateEligible: false into the durable low-level score", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -384,15 +299,6 @@ describe("FrameliaReporter", () => {
     );
     await reporter.onEnd({ status: "passed" } as any);
 
-    const artifactPath = path.join(
-      projectRoot,
-      ".framelia/visual-verifications/test-a/visual-verification.json",
-    );
-    const artifact = verificationArtifactSchema.parse(
-      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
-    );
-    expect(artifact.request.contracts[0]).toMatchObject({ gateEligible: false });
-
     const score = JSON.parse(
       fs.readFileSync(
         path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
@@ -408,47 +314,6 @@ describe("FrameliaReporter", () => {
       ),
     );
     expect(runMeta).toMatchObject({ gateEligible: false });
-  });
-
-  it("leaves expectSize absent (not backfilled from observed capture size) for a gate-eligible region that never declared options.expectSize, so validateContract's 'requires expectSize' check actually fires", async () => {
-    const projectRoot = tempDir("framelia-reporter-run-");
-    const imageDir = tempDir("framelia-reporter-images-");
-    const clientRoot = clientRootFixture();
-    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
-    const testA = fakeTest("test-a", "component matches figma without an explicit expectSize");
-
-    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
-    reporter.onTestEnd(
-      testA,
-      passedResultWithImages("test-a", imageDir, {
-        profile: "component/strict",
-        actualSize: { width: 42, height: 24 },
-        scope: { kind: "region", selector: ".card" },
-      }),
-    );
-    await reporter.onEnd({ status: "passed" } as any);
-
-    const artifactPath = path.join(
-      projectRoot,
-      ".framelia/visual-verifications/test-a/visual-verification.json",
-    );
-    const artifact = verificationArtifactSchema.parse(
-      JSON.parse(fs.readFileSync(artifactPath, "utf8")),
-    );
-    expect(artifact.request.contracts[0]?.scope).not.toHaveProperty("expectSize");
-
-    const score = JSON.parse(
-      fs.readFileSync(
-        path.join(projectRoot, ".framelia/visual-verifications/test-a/visual-score.json"),
-        "utf8",
-      ),
-    );
-    expect(score.expectSize).toBeNull();
-
-    const verdict = doneGateFromArtifact(artifact);
-    expect(
-      verdict.viewports[0]?.reasons.some((reason) => reason.includes("requires expectSize")),
-    ).toBe(true);
   });
 
   it("carries the resolved threshold onto the live DashboardContractResult (#8)", async () => {
@@ -481,7 +346,7 @@ describe("FrameliaReporter", () => {
     await reporter.onEnd({ status: "passed" } as any);
   });
 
-  it("persists every Figma matcher score attachment separately", async () => {
+  it("persists every low-level Figma matcher score attachment separately", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -501,7 +366,7 @@ describe("FrameliaReporter", () => {
     for (const id of ["test-a-1", "test-a-2"])
       expect(
         fs.existsSync(
-          path.join(projectRoot, ".framelia/visual-verifications", id, "visual-verification.json"),
+          path.join(projectRoot, ".framelia/visual-verifications", id, "visual-score.json"),
         ),
       ).toBe(true);
   });
@@ -546,7 +411,7 @@ describe("FrameliaReporter", () => {
     await reporter.onEnd({ status: "passed" } as any);
   });
 
-  it("records a toMatchPage/toMatchUrl (non-figma) result live but writes no VerificationArtifact", async () => {
+  it("records a toMatchPage/toMatchUrl result live without publishing an authoritative run", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const clientRoot = clientRootFixture();
     const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
@@ -571,7 +436,7 @@ describe("FrameliaReporter", () => {
     expect(fs.existsSync(artifactPath)).toBe(false);
   });
 
-  it("surfaces a toMatchPageBaseline result's promotion provenance on the live dashboard contract and persists its image evidence, but still writes no VerificationArtifact (#41)", async () => {
+  it("surfaces a toMatchPageBaseline result's promotion provenance and persists its low-level image evidence (#41)", async () => {
     const projectRoot = tempDir("framelia-reporter-run-");
     const imageDir = tempDir("framelia-reporter-images-");
     const clientRoot = clientRootFixture();
@@ -612,7 +477,7 @@ describe("FrameliaReporter", () => {
     expect(fs.existsSync(path.join(outDir, "web-baseline.png"))).toBe(true);
     expect(fs.existsSync(path.join(outDir, "actual.png"))).toBe(true);
     expect(fs.existsSync(path.join(outDir, "diff.png"))).toBe(true);
-    // Non-Figma results don't get a persisted done-gate artifact.
+    // Low-level unannotated results do not publish authoritative run-bundle scores.
     expect(fs.existsSync(path.join(outDir, "visual-verification.json"))).toBe(false);
     expect(fs.existsSync(path.join(outDir, "visual-score.json"))).toBe(false);
   });

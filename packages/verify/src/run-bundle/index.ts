@@ -1,8 +1,6 @@
 /**
- * Immutable run/case/attempt bundle publication (framelia/#77, WP4). Adds a new, parallel
- * publication path alongside the existing `VerificationArtifact`/`writeVerificationArtifact`
- * pipeline (verify.ts, untouched) -- this module owns nothing the dashboard/gate reads
- * today; see @framelia/playwright's Reporter for how it's wired into a real Playwright run.
+ * Immutable run/case/attempt bundle publication and the one selected-run consumer seam.
+ * Readers always select one explicit run ID; no recursive survivor aggregation exists.
  */
 export { publishAttempt } from "./attempt.ts";
 export type { AttemptEvidenceFiles } from "./attempt.ts";
@@ -28,6 +26,17 @@ export { reconcileCasePlan } from "./reconcile.ts";
 export type { CasePlanReconciliation } from "./reconcile.ts";
 export { readRunBundle } from "./read.ts";
 export type { RunBundle } from "./read.ts";
+export { evaluateAuthoritativeRun, readSelectedRun } from "./selected-run.ts";
+export type {
+  AuthoritativeCaseVerdict,
+  AuthoritativeRunIssue,
+  AuthoritativeRunVerdict,
+  EvidenceAvailability,
+  SelectedAttempt,
+  SelectedCase,
+  SelectedEvidence,
+  SelectedRun,
+} from "./selected-run.ts";
 export {
   finalizeRunRecord,
   freezeRunPlan,

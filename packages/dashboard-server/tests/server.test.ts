@@ -26,7 +26,7 @@ async function clientFixture(): Promise<string> {
 }
 
 const emptyRun: DashboardRun = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   runId: "run-1",
   status: "passed",
   summary: { total: 0, queued: 0, running: 0, passed: 0, "masked-pass": 0, failed: 0, blocked: 0 },

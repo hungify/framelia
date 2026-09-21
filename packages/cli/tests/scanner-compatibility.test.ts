@@ -50,7 +50,7 @@ describe("scanner compatibility: missing required flag value", () => {
     const fakeProcess = createFakeProcess();
     await run(["done-gate"], { process: fakeProcess, loadProjectEnv: false });
     assertUsageError(fakeProcess);
-    expect(fakeProcess.stderrText()).toContain("--artifact");
+    expect(fakeProcess.stderrText()).toContain("--run");
   });
 });
 
@@ -93,7 +93,7 @@ describe("scanner compatibility: nested-route defaults", () => {
     const fakeProcess = createFakeProcess();
     await run(["--port", "-1"], { process: fakeProcess, loadProjectEnv: false });
     expect(fakeProcess.stderrText()).not.toContain("No command registered");
-    expect(fakeProcess.stderrText().toLowerCase()).toContain("port");
+    expect(fakeProcess.stderrText()).toContain("--run");
     expect(fakeProcess.exitCode).toBe(2);
   });
 

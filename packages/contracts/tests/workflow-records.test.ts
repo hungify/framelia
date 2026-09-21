@@ -234,6 +234,7 @@ describe("snapshot and execution units", () => {
       kind: "framelia.run-plan",
       runId: "run-1",
       policyDigest: A_DIGEST,
+      retryAcceptance: "require-first-attempt",
       selection: { mode: "all", contracts: ["login.desktop", "login.mobile"] },
       availableCases: requiredCases,
       requiredCases,
@@ -285,9 +286,10 @@ describe("snapshot and execution units", () => {
     expect(commandOutcomeSchema.safeParse({ ...blockedMismatch, exitCode: 1 }).success).toBe(false);
 
     const attempt = attemptRecordSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "framelia.attempt",
       attemptId: "attempt-2",
+      runId: "run-1",
       caseId: "login.desktop/chromium/0",
       casePlanDigest: A_DIGEST,
       retryIndex: 1,

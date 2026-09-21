@@ -21,11 +21,11 @@ import { MASK_COLOR } from "./types.ts";
 /**
  * Navigation-free capture: screenshots a `Page` the caller has already
  * navigated, authenticated, and interacted with — no `goto`/`reload`, no
- * navigation-action execution, no readiness-selector/event wait, and no
- * multi-sample stability loop (a reload between samples would discard the
- * caller's own auth/form state). Intended for callers (e.g.
- * `@framelia/playwright` matchers) that already own reaching the state they
- * want to capture.
+ * navigation-action execution, and no readiness-selector/event wait. It takes two
+ * back-to-back samples without reloading so the durable score can prove whether the
+ * caller-owned state was pixel-stable. Intended for callers (e.g.
+ * `@framelia/playwright` matchers) that already own reaching the state they want to
+ * capture.
  */
 export async function captureReadyPage(
   page: Page,
@@ -88,6 +88,16 @@ export async function captureReadyPage(
   if (!resolvedMasks.ok) return resolvedMasks.reject;
   const { locators: maskLocators, evidence: maskEvidence } = resolvedMasks;
   const capturedAt = new Date().toISOString();
+  const samplePaths = Array.from({ length: spec.stabilitySamples - 1 }, (_, index) =>
+    path.join(
+      path.dirname(spec.outPath),
+      `.${path.basename(spec.outPath)}.stability-${index + 1}.png`,
+    ),
+  );
+  const capturePaths = [spec.outPath, ...samplePaths];
+  const removePrivateSamples = (): void => {
+    for (const samplePath of samplePaths) fs.rmSync(samplePath, { force: true });
+  };
   let elementRect: CaptureEvidence["elementRect"] = null;
   let computedStyle: ComputedTextStyle | null = null;
   if (selector) {
@@ -104,15 +114,18 @@ export async function captureReadyPage(
       warnings.push("could not read computed style (execution context may have been destroyed).");
     }
     try {
-      await locator.screenshot({
-        path: spec.outPath,
-        scale: screenshotScale,
-        animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
-        mask: maskLocators,
-        ...(maskLocators.length ? { maskColor: MASK_COLOR } : {}),
-        ...(devtoolsHideStyle ? { style: devtoolsHideStyle } : {}),
-      });
+      for (const screenshotPath of capturePaths) {
+        await locator.screenshot({
+          path: screenshotPath,
+          scale: screenshotScale,
+          animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
+          mask: maskLocators,
+          ...(maskLocators.length ? { maskColor: MASK_COLOR } : {}),
+          ...(devtoolsHideStyle ? { style: devtoolsHideStyle } : {}),
+        });
+      }
     } catch (error) {
+      removePrivateSamples();
       return reject(
         "CAPTURE_SCREENSHOT_FAILED",
         `Element screenshot failed: ${error instanceof Error ? error.message : String(error)}.`,
@@ -120,21 +133,30 @@ export async function captureReadyPage(
     }
   } else {
     try {
-      await page.screenshot({
-        path: spec.outPath,
-        scale: screenshotScale,
-        fullPage: spec.scope.kind === "page" ? spec.scope.fullPage : false,
-        animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
-        mask: maskLocators,
-        ...(maskLocators.length ? { maskColor: MASK_COLOR } : {}),
-        ...(devtoolsHideStyle ? { style: devtoolsHideStyle } : {}),
-      });
+      for (const screenshotPath of capturePaths) {
+        await page.screenshot({
+          path: screenshotPath,
+          scale: screenshotScale,
+          fullPage: spec.scope.kind === "page" ? spec.scope.fullPage : false,
+          animations: spec.animationPolicy === "allow" ? "allow" : "disabled",
+          mask: maskLocators,
+          ...(maskLocators.length ? { maskColor: MASK_COLOR } : {}),
+          ...(devtoolsHideStyle ? { style: devtoolsHideStyle } : {}),
+        });
+      }
     } catch (error) {
+      removePrivateSamples();
       return reject(
         "CAPTURE_SCREENSHOT_FAILED",
         `Page screenshot failed: ${error instanceof Error ? error.message : String(error)}.`,
       );
     }
+  }
+  let screenshotHashes: string[];
+  try {
+    screenshotHashes = capturePaths.map((capturePath) => fileHash(capturePath));
+  } finally {
+    removePrivateSamples();
   }
   return {
     ok: true,
@@ -149,7 +171,7 @@ export async function captureReadyPage(
     readiness: null,
     fonts: settled,
     scope: spec.scope,
-    screenshotHashes: [fileHash(spec.outPath)],
+    screenshotHashes,
     elementRect,
     computedStyle,
     warnings:

@@ -63,6 +63,17 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
         <span class="block mt-0.5 text-muted text-xs"
           >{{ contractsCount }} of {{ run.summary.total }} stories</span
         >
+        <span v-if="run.coverage" class="block mt-0.5 text-muted text-xs" data-testid="coverage">
+          Coverage {{ run.coverage.selected }}/{{ run.coverage.required }} required ·
+          {{ run.coverage.selectionMode }}
+        </span>
+        <span
+          v-if="run.executionState && run.visualVerdict"
+          class="block mt-0.5 text-muted text-xs"
+          data-testid="run-state"
+        >
+          Execution {{ run.executionState }} · Visual {{ run.visualVerdict }}
+        </span>
       </div>
       <StatusBadge :status="run.status" />
     </header>

@@ -47,7 +47,8 @@ test("login matches Figma", async ({ page }) => {
 
 Or import `@framelia/playwright/register` once from test setup.
 
-Register Reporter in `playwright.config.ts` for live dashboard events and persisted evidence:
+Register Reporter in `playwright.config.ts` for live dashboard events and immutable selected-run
+evidence:
 
 ```ts
 export default defineConfig({
@@ -57,13 +58,14 @@ export default defineConfig({
 
 ```bash
 npx playwright test
-npx framelia done-gate \
-  --artifact .framelia/visual-verifications/<test-id>/visual-verification.json
+npx framelia open --project-root "$PWD" --run <run-id>
 ```
 
-Reporter writes matcher evidence under `.framelia/visual-verifications/`. Final Figma evidence
-includes `visual-score.json`, `run-meta.json`, `punch-list.json`, hashes, and
-`visual-verification.json`.
+For each `framelia.contract`-annotated case, the Reporter freezes its authored contract, pinned
+baseline, project/repeat identity, resolved policy, registration digest, retry policy, and
+policy-selected stability sample count in a `CasePlan`. Every attempt remains under
+`.framelia/runs/<run-id>/`; finalization records which attempt was selected without deleting retry
+history.
 
 ### Shared project policy
 
@@ -148,6 +150,11 @@ so a project running a higher-DPR contract must configure its own context/projec
 matching `deviceScaleFactor`; a mismatch between that live value and the pinned
 baseline's own scale is caught and reported explicitly, instead of silently producing a
 wrong-resolution comparison.
+
+Capture takes exactly the resolved project policy's `stabilitySamples` (2–5) back-to-back
+screenshots without navigation or reload. Only the primary image is retained; hashes for every
+sample are persisted and the private sample images are removed. A gate-eligible attempt is stable
+only when the recorded count exactly matches the frozen `CasePlan` and every hash agrees.
 
 `prepare`'s fixtures argument is deliberately `{ page }`, not a caller's whole extended
 fixtures object -- Playwright's own test-file transform statically requires every

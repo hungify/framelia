@@ -1,16 +1,18 @@
 import * as path from "node:path";
 
-import { exportDashboardReport, readVerificationArtifact } from "../dashboard/report.ts";
+import { exportDashboardReport } from "../dashboard/report.ts";
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
+import { openProject } from "./project.ts";
 
 export interface ReportOptions {
-  readonly artifact: string;
+  readonly projectRoot: string | undefined;
+  readonly run: string;
   readonly output: string;
 }
 
 export interface ReportResult {
-  readonly artifactPath: string;
+  readonly runId: string;
   readonly reportPath: string;
 }
 
@@ -18,13 +20,11 @@ export async function reportCommand(
   options: ReportOptions,
   runtime: CliRuntime,
 ): Promise<CliResult<ReportResult>> {
-  const artifactPath = path.resolve(runtime.cwd(), options.artifact);
-  const artifact = await readVerificationArtifact(artifactPath);
-  const suiteName = path.basename(path.dirname(artifactPath));
+  const project = openProject(options.projectRoot, runtime);
   const indexPath = await exportDashboardReport({
-    artifact,
-    suiteName,
+    projectRoot: project.root,
+    runId: options.run,
     outputDirectory: path.resolve(runtime.cwd(), options.output),
   });
-  return { ok: true, body: { artifactPath, reportPath: indexPath } };
+  return { ok: true, body: { runId: options.run, reportPath: indexPath } };
 }

@@ -1,166 +1,31 @@
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import {
-  verificationArtifactSchema,
-  FRAMELIA_DIR,
-  VISUAL_VERIFICATION_FILE,
-  VISUAL_VERIFICATIONS_DIR,
-  type DashboardContractResult,
-  type DashboardRun,
-  type VerificationArtifact,
-} from "@framelia/contracts";
-import {
   defaultClientRoot,
-  overallStatus,
-  projectArtifact,
-  summarize,
-  type DashboardProjection,
+  projectSelectedRun,
   type DashboardSource,
 } from "@framelia/dashboard-server";
-import { JSON_INDENT_SPACES, runWithConcurrency, type CaptureDefaults } from "@framelia/verify";
-import { nanoid } from "nanoid";
+import { JSON_INDENT_SPACES } from "@framelia/verify";
+import { readSelectedRun } from "@framelia/verify/run-bundle";
 
-import type { Project } from "../internal/project.ts";
-
-const MAX_DEFAULT_CONCURRENCY = 4;
-
-function defaultConcurrency(): number {
-  return Math.min(MAX_DEFAULT_CONCURRENCY, os.availableParallelism?.() ?? 2);
-}
-
-export async function readVerificationArtifact(filePath: string): Promise<VerificationArtifact> {
-  let value: unknown;
-  try {
-    value = JSON.parse(await fs.readFile(path.resolve(filePath), "utf8"));
-  } catch (error) {
-    throw new Error(
-      `Cannot read verification artifact ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-  return verificationArtifactSchema.parse(value);
-}
-
-export async function archivedDashboardSource(
-  artifact: VerificationArtifact,
-  suiteName?: string,
-  defaults?: CaptureDefaults,
-): Promise<DashboardSource> {
-  const projection = await projectArtifact(artifact, suiteName, defaults);
-  return {
-    snapshot: () => projection.run,
-    files: () => projection.files,
-  };
-}
-
-async function findVerificationArtifacts(
-  projectRoot: string,
-): Promise<Array<{ feature: string; filePath: string }>> {
-  const base = path.join(projectRoot, FRAMELIA_DIR, VISUAL_VERIFICATIONS_DIR);
-  let entries: string[];
-  try {
-    entries = (await fs.readdir(base, { recursive: true })) as string[];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-  return entries
-    .filter((entry) => {
-      if (path.basename(entry) !== VISUAL_VERIFICATION_FILE) return false;
-      const normalized = entry.split(path.sep).join("/");
-      return !normalized.includes("/report/data/");
-    })
-    .map((entry) => ({
-      feature: featureKeyFromArtifactEntry(entry),
-      filePath: path.join(base, entry),
-    }));
-}
-
-export function featureKeyFromArtifactEntry(entry: string): string {
-  const parts = entry.split(path.sep);
-  parts.pop();
-  if (parts.length > 0 && parts[parts.length - 1]!.startsWith("run-")) parts.pop();
-  return parts.join("/") || "root";
-}
-
-function remapVirtualPaths<T>(value: T, remap: ReadonlyMap<string, string>): T {
-  if (typeof value === "string") return (remap.get(value) ?? value) as T;
-  if (Array.isArray(value)) return value.map((item) => remapVirtualPaths(item, remap)) as T;
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-        key,
-        remapVirtualPaths(item, remap),
-      ]),
-    ) as T;
-  }
-  return value;
-}
-
-function withFeaturePrefix(projection: DashboardProjection, feature: string): DashboardProjection {
-  const prefix = `${encodeURIComponent(feature)}/`;
-  const remap = new Map<string, string>();
-  const files = new Map<string, string>();
-  for (const [virtual, real] of projection.files) {
-    const prefixed = virtual.startsWith("contracts/") ? `${prefix}${virtual}` : virtual;
-    remap.set(virtual, prefixed);
-    files.set(prefixed, real);
-  }
-  const contracts: DashboardContractResult[] = projection.run.contracts.map((contract) => ({
-    ...remapVirtualPaths(contract, remap),
-    feature,
-    id: `${feature}.${contract.id}`,
-  }));
-  return { files, run: { ...projection.run, contracts } };
-}
-
-export async function aggregateDashboardSource(project: Project): Promise<DashboardSource> {
-  const found = await findVerificationArtifacts(project.root);
-  const defaults = await project.loadConfig();
-  const projections = await runWithConcurrency(
-    found,
-    defaultConcurrency(),
-    async ({ feature, filePath }) => {
-      const artifact = await readVerificationArtifact(filePath);
-      return withFeaturePrefix(await projectArtifact(artifact, feature, defaults.capture), feature);
-    },
-  );
-
-  const files = new Map<string, string>();
-  const contracts: DashboardRun["contracts"] = [];
-  let startedAt: string | undefined;
-  let updatedAt: string | undefined;
-
-  for (const projection of projections) {
-    for (const contract of projection.run.contracts) contracts.push(contract);
-    for (const [virtual, real] of projection.files) files.set(virtual, real);
-    if (!startedAt || projection.run.startedAt < startedAt) startedAt = projection.run.startedAt;
-    if (!updatedAt || projection.run.updatedAt > updatedAt) updatedAt = projection.run.updatedAt;
-  }
-
-  const summary = summarize(contracts);
-  const now = new Date().toISOString();
-  const run: DashboardRun = {
-    schemaVersion: 1,
-    runId: nanoid(),
-    status: overallStatus(summary),
-    summary,
-    contracts,
-    startedAt: startedAt ?? now,
-    updatedAt: updatedAt ?? now,
-    ...(updatedAt ? { finishedAt: updatedAt } : {}),
-  };
-
-  return {
-    snapshot: () => run,
-    files: () => files,
-  };
-}
-
+export const DASHBOARD_RUN_FILE = "selected-run.json";
 const REPORT_MARKER_FILE = ".framelia-report.json";
-const REPORT_MARKER = "framelia-dashboard-report";
+const REPORT_MARKER = "framelia-selected-run-dashboard-report";
+
+/** Live source for exactly one explicit durable run. Refreshes from disk for running runs. */
+export function selectedDashboardSource(
+  projectRoot: string,
+  runId: string,
+  suiteName?: string,
+): DashboardSource {
+  return {
+    snapshot: () =>
+      projectSelectedRun(projectRoot, readSelectedRun(projectRoot, runId), suiteName).run,
+    files: () =>
+      projectSelectedRun(projectRoot, readSelectedRun(projectRoot, runId), suiteName).files,
+  };
+}
 
 async function isPreviousFrameliaReport(outputDirectory: string): Promise<boolean> {
   return fs
@@ -169,19 +34,58 @@ async function isPreviousFrameliaReport(outputDirectory: string): Promise<boolea
     .catch(() => false);
 }
 
+function sanitizePortableValue<T>(value: T, projectRoot: string): T {
+  if (typeof value === "string") {
+    return value.replaceAll(path.resolve(projectRoot), "<project-root>") as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizePortableValue(entry, projectRoot)) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, sanitizePortableValue(entry, projectRoot)]),
+    ) as T;
+  }
+  return value;
+}
+
+async function copyPortableEvidence(
+  sourcePath: string,
+  destination: string,
+  projectRoot: string,
+): Promise<void> {
+  if (path.extname(sourcePath) !== ".json") {
+    await fs.copyFile(sourcePath, destination);
+    return;
+  }
+  const value = JSON.parse(await fs.readFile(sourcePath, "utf8")) as unknown;
+  await fs.writeFile(
+    destination,
+    `${JSON.stringify(sanitizePortableValue(value, projectRoot), null, JSON_INDENT_SPACES)}\n`,
+  );
+}
+
+/** Exports the exact same selected-run projection served by the live dashboard. */
 export async function exportDashboardReport(options: {
-  artifact: VerificationArtifact;
-  suiteName?: string;
+  projectRoot: string;
+  runId: string;
   outputDirectory: string;
+  suiteName?: string;
   clientRoot?: string;
-  defaults?: CaptureDefaults;
 }): Promise<string> {
   const outputDirectory = path.resolve(options.outputDirectory);
   const clientRoot = options.clientRoot ?? defaultClientRoot();
-  for (const result of options.artifact.results) {
-    const sourceRoot = path.resolve(result.outDir);
+  const projection = projectSelectedRun(
+    options.projectRoot,
+    readSelectedRun(options.projectRoot, options.runId),
+    options.suiteName,
+  );
+  for (const sourcePath of projection.files.values()) {
+    const sourceRoot = path.dirname(sourcePath);
     if (outputDirectory === sourceRoot || outputDirectory.startsWith(`${sourceRoot}${path.sep}`)) {
-      throw new Error(`Report output may not be inside contract artifact directory: ${sourceRoot}`);
+      throw new Error(
+        `Report output may not be inside selected-run evidence directory: ${sourceRoot}`,
+      );
     }
   }
   const existing = await fs.readdir(outputDirectory).catch((error: NodeJS.ErrnoException) => {
@@ -193,25 +97,26 @@ export async function exportDashboardReport(options: {
       `Report output directory is not empty and is not a previous Framelia report: ${outputDirectory}`,
     );
   }
+
   await fs.rm(outputDirectory, { recursive: true, force: true });
-  const projection = await projectArtifact(options.artifact, options.suiteName, options.defaults);
   await fs.mkdir(path.join(outputDirectory, "data"), { recursive: true });
   await fs.writeFile(
     path.join(outputDirectory, REPORT_MARKER_FILE),
-    `${JSON.stringify({ marker: REPORT_MARKER })}\n`,
+    `${JSON.stringify({ marker: REPORT_MARKER, runId: options.runId })}\n`,
   );
   await fs.cp(clientRoot, outputDirectory, { recursive: true });
   await fs.writeFile(
-    path.join(outputDirectory, "data", VISUAL_VERIFICATION_FILE),
+    path.join(outputDirectory, "data", DASHBOARD_RUN_FILE),
     `${JSON.stringify(projection.run, null, JSON_INDENT_SPACES)}\n`,
   );
-  for (const [relativePath, sourcePath] of projection.files) {
-    const destination = path.resolve(outputDirectory, "data", relativePath);
-    const dataRoot = path.resolve(outputDirectory, "data");
-    if (!destination.startsWith(`${dataRoot}${path.sep}`))
-      throw new Error(`Unsafe dashboard artifact path: ${relativePath}`);
+  const dataRoot = path.resolve(outputDirectory, "data");
+  for (const [portablePath, sourcePath] of projection.files) {
+    const destination = path.resolve(dataRoot, portablePath);
+    if (!destination.startsWith(`${dataRoot}${path.sep}`)) {
+      throw new Error(`Unsafe dashboard evidence path: ${portablePath}`);
+    }
     await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.copyFile(sourcePath, destination);
+    await copyPortableEvidence(sourcePath, destination, options.projectRoot);
   }
   return path.join(outputDirectory, "index.html");
 }

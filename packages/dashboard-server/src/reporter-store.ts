@@ -37,7 +37,7 @@ export class ReporterStore {
       blockers: [],
     }));
     this.#run = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: nanoid(),
       ...(suiteName ? { suiteName } : {}),
       status: "queued",

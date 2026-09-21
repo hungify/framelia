@@ -2,12 +2,20 @@ import * as z from "zod";
 
 import { baselineSchema } from "./baseline.ts";
 import { CONTRACT_ID_PATTERN } from "./constants.ts";
-import { nonEmptyTrimmed } from "./primitives.ts";
+import { httpUrlSchema, nonEmptyTrimmed } from "./primitives.ts";
+import {
+  captureEvidenceSchema,
+  captureMaskEvidenceSchema,
+  stabilitySchema,
+  topIssueSchema,
+  visualDiagnosticSchema,
+} from "./score.ts";
 import {
   componentProfileSchema,
   contractScopeSchema,
   expectStyleSchema,
   profileOverridesSchema,
+  profileSchema,
   styleCheckPointSchema,
   styleToleranceOverridesSchema,
   viewportSchema,
@@ -18,12 +26,15 @@ export const CONTRACT_FORMAT_VERSION = 1;
 export const SNAPSHOT_FORMAT_VERSION = 1;
 export const BINDING_FORMAT_VERSION = 1;
 export const TEST_REGISTRATION_FORMAT_VERSION = 1;
+export const SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 1 as const;
 export const COLLECTION_FORMAT_VERSION = 1;
-export const CASE_PLAN_FORMAT_VERSION = 1;
+export const CASE_PLAN_FORMAT_VERSION = 2;
 export const RUN_PLAN_FORMAT_VERSION = 1;
 export const RUN_FORMAT_VERSION = 1;
-export const ATTEMPT_FORMAT_VERSION = 1;
+export const ATTEMPT_FORMAT_VERSION = 2;
 export const COMMAND_OUTCOME_FORMAT_VERSION = 1;
+export const ATTEMPT_SCORE_FORMAT_VERSION = 1;
+export const AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 1;
 
 export const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
@@ -263,17 +274,34 @@ export const casePlanSchema = z
   .object({
     formatVersion: z.literal(CASE_PLAN_FORMAT_VERSION),
     kind: z.literal("framelia.case-plan"),
+    runId: nonEmptyTrimmed,
     caseId: nonEmptyTrimmed,
     contract: z
       .object({
         id: z.string().regex(CONTRACT_ID_PATTERN),
         file: projectRelativePathSchema,
         digest: sha256DigestSchema,
+        authored: authoredContractSchema,
       })
       .strict(),
     snapshotDigest: sha256DigestSchema,
+    expectedDigest: sha256DigestSchema,
+    expectedSize: z
+      .object({ width: z.number().positive(), height: z.number().positive() })
+      .strict(),
+    baselineSource: baselineSchema,
+    maxMaskedAreaRatio: z.number().min(0).max(1),
+    stabilitySamples: z.number().int().min(2).max(5),
     policyDigest: sha256DigestSchema,
     bindingDigest: sha256DigestSchema,
+    binding: contractBindingSchema,
+    registration: z
+      .object({
+        specFile: projectRelativePathSchema,
+        specDigest: sha256DigestSchema,
+        titlePath: z.array(nonEmptyTrimmed).min(1),
+      })
+      .strict(),
     /** Project-relative path to the spec file that registered this case -- kept so a
      *  later reconciliation pass (see @framelia/verify's run-bundle finalization) can
      *  relocate and re-hash it against `specFileDigest`, catching a spec edited after
@@ -287,9 +315,30 @@ export const casePlanSchema = z
       })
       .strict(),
     repeatIndex: z.number().int().nonnegative(),
+    retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
     source: sourceIdentitySchema,
   })
-  .strict();
+  .strict()
+  .superRefine((plan, context) => {
+    if (plan.contract.authored.id !== plan.contract.id) {
+      context.addIssue({
+        code: "custom",
+        path: ["contract", "authored", "id"],
+        message: "authored contract id must match the case-plan contract id",
+      });
+    }
+    if (
+      plan.binding.contractId !== plan.contract.id ||
+      plan.binding.contractFile !== plan.contract.file ||
+      plan.binding.contractDigest !== plan.contract.digest
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["binding"],
+        message: "frozen binding must match the case-plan contract identity",
+      });
+    }
+  });
 
 const plannedCaseSchema = z
   .object({
@@ -315,6 +364,7 @@ export const runPlanSchema = z
     selection: runSelectionSchema,
     availableCases: z.array(plannedCaseSchema).min(1),
     requiredCases: z.array(plannedCaseSchema),
+    retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
     selectedCases: z.array(plannedCaseSchema).min(1),
   })
   .strict()
@@ -398,12 +448,179 @@ const evidenceReferenceSchema = z
     digest: sha256DigestSchema,
   })
   .strict();
+/**
+ * Portable, versioned diagnostics captured by one visual comparison. This is the
+ * contracts-owned representation written to an attempt's `score.json`; consumers never
+ * need to decode a Playwright-private attachment or reread mutable project files.
+ */
+export const attemptScoreSchema = z
+  .object({
+    formatVersion: z.literal(ATTEMPT_SCORE_FORMAT_VERSION),
+    kind: z.literal("framelia.attempt-score"),
+    runType: z.literal("final"),
+    pass: z.boolean(),
+    matchRatio: z.number().min(0).max(1).nullable(),
+    ssim: z.number().min(0).max(1).nullable(),
+    avgDeltaE: z.number().nonnegative().nullable(),
+    diffPixels: z.number().int().nonnegative().nullable(),
+    baselineSize: z
+      .object({ width: z.number().nonnegative(), height: z.number().nonnegative() })
+      .strict(),
+    actualSize: z
+      .object({ width: z.number().nonnegative(), height: z.number().nonnegative() })
+      .strict(),
+    targetUrl: httpUrlSchema,
+    baseline: z
+      .object({
+        snapshotDigest: sha256DigestSchema,
+        kind: z.enum(["figma", "web"]),
+        fileKey: nonEmptyTrimmed.optional(),
+        nodeId: nonEmptyTrimmed.optional(),
+        fetchedAt: z.iso.datetime().optional(),
+        lastModified: z.string().nullable().optional(),
+        promotedAt: z.iso.datetime().optional(),
+        promotedBy: nonEmptyTrimmed.optional(),
+        version: z.number().int().positive().optional(),
+        sourceRunId: nonEmptyTrimmed.optional(),
+      })
+      .strict(),
+    resolvedThreshold: z
+      .object({
+        name: profileSchema,
+        minMatch: z.number().min(0).max(1),
+        maxDiffPixels: z.number().int().nonnegative().nullable(),
+        minSSIM: z.number().min(0).max(1),
+        maxAvgDeltaE: z.number().nonnegative(),
+        maxAreaGapPercent: z.number().nonnegative(),
+        cluster: z.boolean(),
+        stabilityMaxDiffRatio: z.number().nonnegative(),
+        gateEligible: z.boolean(),
+        styleGateEligible: z.boolean(),
+      })
+      .strict(),
+    attachmentBaseName: nonEmptyTrimmed,
+    profile: profileSchema,
+    clusterCheck: z.boolean().optional(),
+    profileOverrides: profileOverridesSchema.optional(),
+    styleToleranceOverrides: styleToleranceOverridesSchema.optional(),
+    gateEligible: z.boolean().optional(),
+    styleGateEligible: z.boolean().optional(),
+    scope: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("page"), fullPage: z.boolean() }).strict(),
+      z
+        .object({
+          kind: z.literal("region"),
+          selector: nonEmptyTrimmed,
+          expectedSize: z
+            .object({ width: z.number().nonnegative(), height: z.number().nonnegative() })
+            .strict()
+            .optional(),
+        })
+        .strict(),
+    ]),
+    masks: z.array(visualMaskSchema).optional(),
+    maxMaskedAreaRatio: z.number().min(0).max(1).optional(),
+    captureEvidence: captureEvidenceSchema.optional(),
+    maskEvidence: captureMaskEvidenceSchema.optional(),
+    stability: stabilitySchema,
+    stabilitySampleCount: z.number().int().min(2).max(5),
+    topIssues: z.array(topIssueSchema),
+    diagnostics: z.array(visualDiagnosticSchema),
+    warnings: z.array(z.string()),
+  })
+  .strict();
+
+const trustedRequiredCaseSchema = z
+  .object({
+    caseId: nonEmptyTrimmed,
+    contractId: z.string().regex(CONTRACT_ID_PATTERN),
+    projectName: projectNameSchema,
+    repeatIndex: z.number().int().nonnegative(),
+    casePlanDigest: sha256DigestSchema,
+    contractDigest: sha256DigestSchema,
+    bindingDigest: sha256DigestSchema,
+    specFile: projectRelativePathSchema,
+    specFileDigest: sha256DigestSchema,
+    titlePath: z.array(nonEmptyTrimmed).min(1),
+  })
+  .strict();
+
+/**
+ * Authority supplied independently by protected CI/deployment metadata. A bundle's own
+ * selection, policy, source and endpoint strings are evidence to compare, never authority.
+ */
+export const authoritativeRunRequirementsSchema = z
+  .object({
+    formatVersion: z.literal(AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION),
+    kind: z.literal("framelia.authoritative-run-requirements"),
+    requiredCases: z.array(trustedRequiredCaseSchema).min(1),
+    policyDigest: sha256DigestSchema,
+    source: z
+      .object({
+        sourceDigest: sha256DigestSchema,
+        buildDigest: sha256DigestSchema,
+        dirty: z.literal(false),
+      })
+      .strict(),
+    servedBuild: z.discriminatedUnion("mode", [
+      z
+        .object({
+          mode: z.literal("ci-owned"),
+          observedBuildDigest: sha256DigestSchema,
+          freshServerOwnedByJob: z.literal(true),
+          jobIdentity: nonEmptyTrimmed,
+        })
+        .strict(),
+      z
+        .object({
+          mode: z.literal("deployment-attested"),
+          attestation: z
+            .object({
+              observedBuildDigest: sha256DigestSchema,
+              issuer: nonEmptyTrimmed,
+              subject: nonEmptyTrimmed,
+              proofDigest: sha256DigestSchema,
+              verifiedBy: nonEmptyTrimmed,
+            })
+            .strict(),
+        })
+        .strict(),
+    ]),
+    retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
+  })
+  .strict()
+  .superRefine((requirements, context) => {
+    const seen = new Set<string>();
+    requirements.requiredCases.forEach((entry, index) => {
+      if (seen.has(entry.caseId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredCases", index, "caseId"],
+          message: `duplicate trusted required case: ${entry.caseId}`,
+        });
+      }
+      seen.add(entry.caseId);
+    });
+  });
+
+export const signedAuthoritativeRunRequirementsSchema = z
+  .object({
+    formatVersion: z.literal(SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION),
+    kind: z.literal("framelia.signed-authoritative-run-requirements"),
+    payload: authoritativeRunRequirementsSchema,
+    signature: z
+      .string()
+      .regex(/^(?:[A-Za-z0-9+/_-]{4})*(?:[A-Za-z0-9+/_-]{2}(?:==)?|[A-Za-z0-9+/_-]{3}=?)?$/)
+      .min(40),
+  })
+  .strict();
 
 export const attemptRecordSchema = z
   .object({
     formatVersion: z.literal(ATTEMPT_FORMAT_VERSION),
     kind: z.literal("framelia.attempt"),
     attemptId: nonEmptyTrimmed,
+    runId: nonEmptyTrimmed,
     caseId: nonEmptyTrimmed,
     casePlanDigest: sha256DigestSchema,
     retryIndex: z.number().int().nonnegative(),
@@ -547,6 +764,11 @@ export type CasePlan = z.infer<typeof casePlanSchema>;
 export type RunSelection = z.infer<typeof runSelectionSchema>;
 export type RunPlan = z.infer<typeof runPlanSchema>;
 export type Diagnostic = z.infer<typeof diagnosticSchema>;
+export type AttemptScore = z.infer<typeof attemptScoreSchema>;
+export type AuthoritativeRunRequirements = z.infer<typeof authoritativeRunRequirementsSchema>;
+export type SignedAuthoritativeRunRequirements = z.infer<
+  typeof signedAuthoritativeRunRequirementsSchema
+>;
 export type AttemptRecord = z.infer<typeof attemptRecordSchema>;
 export type RunRecord = z.infer<typeof runRecordSchema>;
 export type CommandOutcome = z.infer<typeof commandOutcomeSchema>;

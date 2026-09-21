@@ -1,5 +1,4 @@
 import * as crypto from "node:crypto";
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import {
@@ -8,32 +7,18 @@ import {
   deriveDashboardVerdict,
   projectCapture,
   projectCaptureEvidence,
-  visualScoreArtifactSchema,
-  type VisualScoreArtifact,
-  type VerificationArtifact,
-  type VerificationRequest,
   type DashboardContractResult,
-  type DashboardCaptureEvidence,
   type DashboardDiagnostic,
   type DashboardRun,
   type DashboardSummary,
   type DashboardVerdict,
 } from "@framelia/contracts";
-import { FIGMA_BASELINE_ARTIFACT, RUN_ARTIFACT, type CaptureDefaults } from "@framelia/verify";
+import type { SelectedAttempt, SelectedCase, SelectedRun } from "@framelia/verify/run-bundle";
 
-type DashboardFileMap = Map<string, string>;
-
-export interface DashboardProjection {
+export interface SelectedRunDashboardProjection {
   run: DashboardRun;
-  files: DashboardFileMap;
-}
-
-function runIdFor(artifact: VerificationArtifact): string {
-  return crypto
-    .createHash("sha256")
-    .update(`${artifact.createdAt}\0${artifact.projectRoot}`)
-    .digest("hex")
-    .slice(0, 16);
+  /** Portable evidence key to current-machine absolute path; never serialized. */
+  files: Map<string, string>;
 }
 
 export function summarize(contracts: DashboardContractResult[]): DashboardSummary {
@@ -59,249 +44,297 @@ export function overallStatus(summary: DashboardSummary): DashboardVerdict {
   return "passed";
 }
 
-function virtualPath(id: string, name: string): string {
-  return `contracts/${encodeURIComponent(id)}/${name}`;
-}
-
-interface DashboardScore {
-  score: VisualScoreArtifact;
-  captureEvidence?: DashboardCaptureEvidence;
-}
-
-async function readScore(
-  outDir: string,
-  expectedUrl: string,
-  deviceScaleFactor?: number,
-): Promise<DashboardScore | undefined> {
-  try {
-    const raw: unknown = JSON.parse(
-      await fs.readFile(path.join(outDir, RUN_ARTIFACT.score), "utf8"),
-    );
-    const score = visualScoreArtifactSchema.parse(raw);
-    return {
-      score,
-      captureEvidence: projectCaptureEvidence(
-        score.captureEvidence,
-        expectedUrl,
-        deviceScaleFactor,
-      ),
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    console.error(
-      `framelia dashboard: failed to read ${RUN_ARTIFACT.score} in ${outDir}: ${String(error)}`,
-    );
-    return undefined;
+function evidenceFiles(root: string, selected: SelectedAttempt | undefined): Map<string, string> {
+  const files = new Map<string, string>();
+  if (!selected) return files;
+  for (const evidence of Object.values(selected.evidence)) {
+    if (evidence.availability === "available" && evidence.portablePath) {
+      files.set(evidence.portablePath, path.resolve(root, evidence.portablePath));
+    }
   }
+  return files;
 }
 
-function targetExpectedUrl(target: VerificationRequest["target"]): string {
-  return target.url;
-}
-
-function provenance(
-  score: VisualScoreArtifact,
-  contract: VerificationRequest["contracts"][number],
-): string {
-  if (score.baseline?.kind === "figma") {
-    const fileKey = score.baseline.fileKey ?? contract.baseline.fileKey;
-    const nodeId = score.baseline.nodeId ?? contract.baseline.nodeId;
-    return `figma://${fileKey}/${nodeId}`;
+function projectedStatus(
+  selectedCase: SelectedCase,
+  diagnostics: DashboardDiagnostic[],
+  runStatus: SelectedRun["record"]["status"],
+): DashboardVerdict {
+  const attempt = selectedCase.selectedAttempt;
+  if (!attempt) return runStatus === "running" ? "queued" : "blocked";
+  if (attempt.record.executionState !== "completed") {
+    return attempt.record.executionState === "incomplete" && runStatus === "running"
+      ? "running"
+      : "blocked";
   }
-  return score.baseline?.url ?? "Figma baseline";
+  if (!attempt.score || attempt.integrityIssues.length > 0) return "blocked";
+  return deriveDashboardVerdict({
+    resultOk: true,
+    pass: attempt.score.pass,
+    diagnostics,
+    maskApplied: attempt.score.maskEvidence?.status === "applied",
+  });
 }
 
-function unmatchedRegionDiagnostic(
-  contract: VerificationRequest["contracts"][number],
-  result: VerificationArtifact["results"][number],
-): DashboardDiagnostic | null {
-  if (result.ok) return null;
-  if (contract.scope.kind !== "region") return null;
-  if (result.error !== "SELECTOR_NOT_FOUND" && result.error !== "SELECTOR_AMBIGUOUS") return null;
-  return {
-    kind: "unmatched-region",
-    code: result.error,
-    message: result.message ?? "Region selector did not resolve to exactly one rendered element.",
-    blocking: true,
-  };
+function image(
+  selected: SelectedAttempt | undefined,
+  kind: "expected" | "actual" | "diff",
+): { path: string; hash?: string } | undefined {
+  const evidence = selected?.evidence[kind];
+  if (evidence?.availability !== "available" || !evidence.portablePath) return undefined;
+  return { path: evidence.portablePath, ...(evidence.digest ? { hash: evidence.digest } : {}) };
+}
+function sanitizePortableValue<T>(value: T, root: string): T {
+  if (typeof value === "string") return value.replaceAll(path.resolve(root), "<project-root>") as T;
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizePortableValue(entry, root)) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, sanitizePortableValue(entry, root)]),
+    ) as T;
+  }
+  return value;
 }
 
-interface ContractResultInput {
-  contract: VerificationRequest["contracts"][number];
-  result: VerificationArtifact["results"][number];
-  score: VisualScoreArtifact | undefined;
-  captureEvidence: DashboardCaptureEvidence | undefined;
-  rawTargetUrl: string;
-  createdAt: string;
-}
-
-interface ContractResultProjection {
-  result: DashboardContractResult;
-  files: readonly (readonly [string, string])[];
-}
-
-/**
- * Pure projection: diagnostics, status, and evidence shaping for one contract.
- * No I/O — score/captureEvidence must already be resolved by the caller, so this
- * can be exercised directly with in-memory fixtures instead of files on disk.
- */
-function deriveContractResult(input: ContractResultInput): ContractResultProjection {
-  const { contract, result, score, captureEvidence, rawTargetUrl, createdAt } = input;
-  const scoreDiagnostics = score?.diagnostics ? [...score.diagnostics] : [];
-  const diagnostics: DashboardDiagnostic[] = [
+function projectCase(
+  root: string,
+  selectedCase: SelectedCase,
+  runStatus: SelectedRun["record"]["status"],
+): DashboardContractResult {
+  const contract = selectedCase.plan.contract.authored;
+  const selected = selectedCase.selectedAttempt;
+  const score = selected?.score;
+  const baselineImage = image(selected, "expected");
+  const actualImage = image(selected, "actual");
+  const diffImage = image(selected, "diff");
+  const projectedCaptureEvidence = score?.captureEvidence
+    ? projectCaptureEvidence(score.captureEvidence, score.targetUrl)
+    : undefined;
+  const scoreDiagnostics: DashboardDiagnostic[] = score?.diagnostics ? [...score.diagnostics] : [];
+  const diagnostics = [
     ...scoreDiagnostics,
-    ...(result.ok ? deriveCaptureEvidenceDiagnostics(captureEvidence, scoreDiagnostics) : []),
-    ...(!result.ok
-      ? [unmatchedRegionDiagnostic(contract, result)].filter(
-          (diagnostic): diagnostic is DashboardDiagnostic => diagnostic !== null,
-        )
+    ...(selected?.record.executionState === "completed"
+      ? deriveCaptureEvidenceDiagnostics(projectedCaptureEvidence, scoreDiagnostics)
       : []),
   ];
-  const hasMask =
-    diagnostics.some((diagnostic) => diagnostic.kind === "masked-pass") ||
-    captureEvidence?.maskEvidence?.status === "applied";
-  const status: DashboardVerdict = deriveDashboardVerdict({
-    resultOk: result.ok,
-    pass: result.pass,
-    diagnostics,
-    maskApplied: hasMask,
-  });
-  const baselinePath = score?.artifacts?.baseline ?? score?.baseline?.path;
-  const actualPath = score?.artifacts?.actual ?? path.join(result.outDir, RUN_ARTIFACT.actual);
-  const diffPath = score?.artifacts?.diff ?? null;
-  const baselineVirtual = virtualPath(contract.id, FIGMA_BASELINE_ARTIFACT.image);
-  const actualVirtual = virtualPath(contract.id, RUN_ARTIFACT.actual);
-  const diffVirtual = virtualPath(contract.id, RUN_ARTIFACT.diff);
-  const scoreVirtual = virtualPath(contract.id, RUN_ARTIFACT.score);
-  const files: (readonly [string, string])[] = [];
-  if (score) files.push([scoreVirtual, path.resolve(path.join(result.outDir, RUN_ARTIFACT.score))]);
-  if (baselinePath) files.push([baselineVirtual, path.resolve(baselinePath)]);
-  if (score) files.push([actualVirtual, path.resolve(actualPath)]);
-  if (diffPath) files.push([diffVirtual, path.resolve(diffPath)]);
-  const artifactPaths = {
-    ...(score ? { score: scoreVirtual } : {}),
-    ...(baselinePath ? { baseline: baselineVirtual } : {}),
-    ...(score ? { actual: actualVirtual } : {}),
-    ...(diffPath ? { diff: diffVirtual } : {}),
-  };
-  const projectedCaptureEvidence = captureEvidence
-    ? { ...captureEvidence, artifactPaths }
-    : undefined;
-  const maskEvidence = projectedCaptureEvidence?.maskEvidence;
-  const hashes = score?.evidenceHashes;
-  const evidenceHash = hashes
-    ? `sha256:${crypto.createHash("sha256").update(JSON.stringify(hashes)).digest("hex")}`
-    : undefined;
-  const dashboardResult = assembleContractResult({
-    id: contract.id,
+  const blockers = [
+    ...(selected?.integrityIssues ?? []).map((issue) => ({
+      code: issue.code,
+      message: issue.message,
+    })),
+    ...(!selected
+      ? [{ code: "ATTEMPT_MISSING", message: "This selected case has no published attempt." }]
+      : selected.record.executionState !== "completed"
+        ? selected.record.diagnostics.map((issue) => ({ code: issue.code, message: issue.message }))
+        : []),
+  ];
+  const status = projectedStatus(selectedCase, diagnostics, runStatus);
+  const baselineKind = score?.baseline.kind === "web" ? "page" : "figma";
+  const projected = assembleContractResult({
+    id: selectedCase.caseId,
     name: contract.name,
-    tags: [contract.viewport.preset, contract.scope.kind],
+    tags: [contract.viewport.preset, contract.scope.kind, selectedCase.plan.project.name],
     status,
-    baselineKind: contract.baseline.kind,
-    ...(score && baselinePath
+    baselineKind,
+    ...(baselineImage
       ? {
           baseline: {
-            path: baselineVirtual,
-            hash: hashes?.baseline,
-            width: score.baselineSize?.width,
-            height: score.baselineSize?.height,
-            revision: score.baseline?.fetchedAt,
-            provenance: provenance(score, contract),
-          },
-          actual: {
-            path: actualVirtual,
-            hash: hashes?.actual,
-            width: score.actualSize?.width,
-            height: score.actualSize?.height,
-            url: rawTargetUrl,
+            ...baselineImage,
+            width: score?.baselineSize.width,
+            height: score?.baselineSize.height,
+            provenance:
+              score?.baseline.kind === "figma" && score.baseline.fileKey && score.baseline.nodeId
+                ? `figma://${score.baseline.fileKey}/${score.baseline.nodeId}`
+                : score?.baseline.sourceRunId
+                  ? `run://${score.baseline.sourceRunId}`
+                  : `snapshot://${selectedCase.plan.snapshotDigest}`,
+            ...(score?.baseline.fetchedAt ? { revision: score.baseline.fetchedAt } : {}),
+            ...(score?.baseline.promotedAt ? { promotedAt: score.baseline.promotedAt } : {}),
+            ...(score?.baseline.promotedBy ? { promotedBy: score.baseline.promotedBy } : {}),
+            ...(score?.baseline.sourceRunId ? { runId: score.baseline.sourceRunId } : {}),
           },
         }
       : {}),
-    ...(diffPath ? { diff: { path: diffVirtual, hash: hashes?.diff ?? undefined } } : {}),
+    ...(actualImage && score
+      ? {
+          actual: {
+            ...actualImage,
+            width: score.actualSize.width,
+            height: score.actualSize.height,
+            url: score.targetUrl,
+          },
+        }
+      : {}),
+    ...(diffImage ? { diff: diffImage } : {}),
     capture: projectCapture({
       viewport: { width: contract.viewport.width, height: contract.viewport.height },
       region:
         contract.scope.kind === "region"
           ? {
               selector: contract.scope.selector,
-              matchCount: result.ok ? 1 : 0,
+              matchCount: selected?.record.executionState === "completed" ? 1 : 0,
               stable: score?.stability === "stable",
               expectedSize: contract.scope.expectSize,
               actualSize:
                 projectedCaptureEvidence?.scope.kind === "region"
                   ? (projectedCaptureEvidence.elementRect ?? undefined)
                   : undefined,
-              reason: !result.ok
-                ? (result.message ?? result.error ?? "Region selector did not resolve.")
-                : undefined,
             }
           : undefined,
     }),
     ...(score ? { score } : {}),
-    ...(maskEvidence ? { maskEvidence } : {}),
+    ...(score?.maskEvidence ? { maskEvidence: score.maskEvidence } : {}),
     ...(projectedCaptureEvidence ? { captureEvidence: projectedCaptureEvidence } : {}),
-    blockers: result.ok
-      ? []
-      : [
-          {
-            code: result.error ?? "VERIFY_FAILED",
-            message: result.message ?? "Verification blocked.",
-          },
-        ],
+    blockers,
     diagnostics,
     topIssues: score?.topIssues ?? [],
-    ...(evidenceHash ? { evidenceHash } : {}),
-    finishedAt: createdAt,
+    ...(selected
+      ? {
+          evidenceHash: `sha256:${crypto
+            .createHash("sha256")
+            .update(
+              JSON.stringify(
+                Object.values(selected.evidence)
+                  .map((entry) => entry.digest)
+                  .filter(Boolean)
+                  .toSorted(),
+              ),
+            )
+            .digest("hex")}`,
+        }
+      : {}),
+    finishedAt:
+      selected?.record.completedAt ?? selected?.record.startedAt ?? new Date(0).toISOString(),
   });
-  return { result: dashboardResult, files };
+
+  return sanitizePortableValue(
+    {
+      ...projected,
+      sourceRunId: selectedCase.runId,
+      caseId: selectedCase.caseId,
+      contractId: contract.id,
+      projectName: selectedCase.plan.project.name,
+      repeatIndex: selectedCase.plan.repeatIndex,
+      targetPath: contract.target.path,
+      executionState: selected?.record.executionState ?? "incomplete",
+      visualVerdict: selected?.record.visualVerdict ?? "not-evaluated",
+      provenance: {
+        policyDigest: selectedCase.plan.policyDigest,
+        retryAcceptance: selectedCase.plan.retryAcceptance,
+        ...(selectedCase.plan.source.sourceDigest
+          ? { sourceDigest: selectedCase.plan.source.sourceDigest }
+          : {}),
+        ...(selectedCase.plan.source.buildDigest
+          ? { buildDigest: selectedCase.plan.source.buildDigest }
+          : {}),
+        ...(selectedCase.plan.source.dirty !== undefined
+          ? { dirty: selectedCase.plan.source.dirty }
+          : {}),
+        bindingDigest: selectedCase.plan.bindingDigest,
+        specFile: selectedCase.plan.registration.specFile,
+        specFileDigest: selectedCase.plan.registration.specDigest,
+        titlePath: selectedCase.plan.registration.titlePath,
+      },
+      ...(selectedCase.selectedAttemptId
+        ? { selectedAttemptId: selectedCase.selectedAttemptId }
+        : selected
+          ? { selectedAttemptId: selected.record.attemptId }
+          : {}),
+      attempts: selectedCase.attempts.map((attempt) => ({
+        runId: selectedCase.runId,
+        attemptId: attempt.record.attemptId,
+        casePlanDigest: attempt.record.casePlanDigest,
+        retryIndex: attempt.record.retryIndex,
+        selected: attempt.record.attemptId === selected?.record.attemptId,
+        executionState: attempt.record.executionState,
+        visualVerdict: attempt.record.visualVerdict,
+        baseline: attempt.score
+          ? {
+              snapshotDigest: attempt.score.baseline.snapshotDigest,
+              kind: attempt.score.baseline.kind,
+              ...(attempt.score.baseline.fileKey
+                ? { fileKey: attempt.score.baseline.fileKey }
+                : {}),
+              ...(attempt.score.baseline.nodeId ? { nodeId: attempt.score.baseline.nodeId } : {}),
+              ...(attempt.score.baseline.sourceRunId
+                ? { sourceRunId: attempt.score.baseline.sourceRunId }
+                : {}),
+            }
+          : undefined,
+        scoreProvenance: attempt.evidence.score.digest
+          ? {
+              formatVersion: attempt.score?.formatVersion,
+              digest: attempt.evidence.score.digest,
+            }
+          : undefined,
+        evidence: Object.fromEntries(
+          Object.entries(attempt.evidence).map(([kind, evidence]) => [
+            kind,
+            {
+              availability: evidence.availability,
+              ...(evidence.portablePath ? { path: evidence.portablePath } : {}),
+              ...(evidence.digest ? { digest: evidence.digest } : {}),
+              ...(evidence.message ? { message: evidence.message } : {}),
+            },
+          ]),
+        ) as NonNullable<DashboardContractResult["attempts"]>[number]["evidence"],
+        ...(attempt.score
+          ? {
+              comparison: {
+                matchRatio: attempt.score.matchRatio,
+                ssim: attempt.score.ssim,
+                avgDeltaE: attempt.score.avgDeltaE,
+                diffPixels: attempt.score.diffPixels,
+              },
+            }
+          : {}),
+        topIssues: attempt.score?.topIssues ?? [],
+        diagnostics: attempt.score?.diagnostics ?? [],
+        warnings: attempt.score?.warnings ?? [],
+      })),
+    },
+    root,
+  );
 }
 
-export async function projectArtifact(
-  artifact: VerificationArtifact,
+/** Projects exactly one already-validated selected run into the shared live/static wire model. */
+export function projectSelectedRun(
+  root: string,
+  selectedRun: SelectedRun,
   suiteName?: string,
-  defaults: CaptureDefaults = {},
-): Promise<DashboardProjection> {
-  const resultById = new Map(artifact.results.map((result) => [result.id, result]));
-  const rawTargetUrl = artifact.request.target.url;
-  const expectedUrl = targetExpectedUrl(artifact.request.target);
-  const projections = await Promise.all(
-    artifact.request.contracts.map(async (contract) => {
-      const result = resultById.get(contract.id);
-      if (!result)
-        throw new Error(`Verification artifact has no result for contract "${contract.id}".`);
-      const dashboardScore = await readScore(
-        result.outDir,
-        expectedUrl,
-        defaults.deviceScaleFactor,
-      );
-      return deriveContractResult({
-        contract,
-        result,
-        score: dashboardScore?.score,
-        captureEvidence: dashboardScore?.captureEvidence,
-        rawTargetUrl,
-        createdAt: artifact.createdAt,
-      });
-    }),
-  );
-  const files: DashboardFileMap = new Map();
-  const contracts = projections.map((projection) => {
-    for (const [key, value] of projection.files) files.set(key, value);
-    return projection.result;
+): SelectedRunDashboardProjection {
+  const files = new Map<string, string>();
+  const contracts = selectedRun.cases.map((selectedCase) => {
+    for (const attempt of selectedCase.attempts) {
+      for (const [key, value] of evidenceFiles(root, attempt)) files.set(key, value);
+    }
+    return projectCase(root, selectedCase, selectedRun.record.status);
   });
   const summary = summarize(contracts);
   return {
     files,
     run: {
-      schemaVersion: 1,
-      runId: runIdFor(artifact),
+      schemaVersion: 2,
+      runId: selectedRun.runId,
+      coverage: {
+        available: selectedRun.coverage.availableCaseIds.length,
+        required: selectedRun.coverage.requiredCaseIds.length,
+        selected: selectedRun.coverage.selectedCaseIds.length,
+        selectionMode: selectedRun.coverage.selectionMode,
+        availableCaseIds: selectedRun.coverage.availableCaseIds,
+        requiredCaseIds: selectedRun.coverage.requiredCaseIds,
+        selectedCaseIds: selectedRun.coverage.selectedCaseIds,
+      },
+      executionState: selectedRun.executionState,
+      visualVerdict: selectedRun.visualVerdict,
       ...(suiteName ? { suiteName } : {}),
       status: overallStatus(summary),
       summary,
       contracts,
-      startedAt: artifact.createdAt,
-      updatedAt: artifact.createdAt,
-      finishedAt: artifact.createdAt,
+      startedAt: selectedRun.record.createdAt,
+      updatedAt: selectedRun.record.finalizedAt ?? selectedRun.record.createdAt,
+      ...(selectedRun.record.finalizedAt ? { finishedAt: selectedRun.record.finalizedAt } : {}),
     },
   };
 }

@@ -8,7 +8,6 @@ import {
   FRAMELIA_DIR,
   VISUAL_ARTIFACT_DIR_PATTERN,
   VISUAL_CONTRACT_FILE,
-  VISUAL_VERIFICATION_FILE,
   VISUAL_VERIFICATIONS_DIR,
   VISUAL_VERIFICATIONS_ROOT,
   visualArtifactPath,
@@ -31,7 +30,6 @@ describe("derived path constants", () => {
     expect(FRAMELIA_DIR).toBe(".framelia");
     expect(VISUAL_VERIFICATIONS_DIR).toBe("visual-verifications");
     expect(VISUAL_CONTRACT_FILE).toBe("visual-contract.json");
-    expect(VISUAL_VERIFICATION_FILE).toBe("visual-verification.json");
     expect(DISCOVERY_DIR_NAME).toBe(".discovery");
   });
 });

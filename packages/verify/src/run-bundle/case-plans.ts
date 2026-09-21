@@ -26,7 +26,26 @@ export function readCasePlans(root: string, runId: string): Map<string, CasePlan
         `Case plan at ${filePath} is not valid JSON: ${error instanceof Error ? error.message : String(error)}.`,
       );
     }
-    const casePlan = casePlanSchema.parse(parsed);
+    const result = casePlanSchema.safeParse(parsed);
+    if (!result.success) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Case plan at ${filePath} is invalid: ${result.error.message}.`,
+      );
+    }
+    const casePlan = result.data;
+    if (casePlan.runId !== runId) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Case plan at ${filePath} belongs to run "${casePlan.runId}", not "${runId}".`,
+      );
+    }
+    if (casePlans.has(casePlan.caseId)) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Run "${runId}" contains duplicate case-plan records for "${casePlan.caseId}".`,
+      );
+    }
     casePlans.set(casePlan.caseId, casePlan);
   }
   return casePlans;

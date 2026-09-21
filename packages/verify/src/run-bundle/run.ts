@@ -53,6 +53,12 @@ export function freezeRunPlan(root: string, plan: RunPlan, casePlans: readonly C
   const seenCaseIds = new Set<string>();
   const files: StagedFile[] = casePlans.map((casePlan) => {
     const validated = casePlanSchema.parse(casePlan);
+    if (validated.runId !== validatedPlan.runId) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Case plan "${validated.caseId}" belongs to run "${validated.runId}", not run "${validatedPlan.runId}".`,
+      );
+    }
     if (seenCaseIds.has(validated.caseId)) {
       throw new AppError(
         "RUN_BUNDLE_INVALID",
@@ -202,6 +208,12 @@ export async function finalizeRunRecord(
 ): Promise<RunRecord> {
   return withRunLock(root, runId, async () => {
     const plan = readRunPlan(root, runId);
+    if (options.retryAcceptance !== plan.retryAcceptance) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Finalization retry policy "${options.retryAcceptance}" does not match frozen run policy "${plan.retryAcceptance}".`,
+      );
+    }
     const casePlans = readCasePlans(root, runId);
     const previous = fs.existsSync(runRecordPath(root, runId))
       ? readRunRecord(root, runId)
@@ -227,6 +239,16 @@ export async function finalizeRunRecord(
               "RUN_BUNDLE_INVALID",
               `attempt bundle at ${attemptPath}`,
             );
+            if (
+              attempt.runId !== runId ||
+              attempt.caseId !== selected.caseId ||
+              attempt.casePlanDigest !== selected.casePlanDigest
+            ) {
+              throw new AppError(
+                "RUN_BUNDLE_INVALID",
+                `Attempt "${attempt.attemptId}" does not match run/case/frozen-plan identity.`,
+              );
+            }
             attempts.push(attempt);
             try {
               validateAttemptEvidence(root, attempt);

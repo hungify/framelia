@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   ATTEMPT_FORMAT_VERSION,
+  ATTEMPT_SCORE_FORMAT_VERSION,
   authoredContractSchema,
   baselineSnapshotSchema,
   CASE_PLAN_FORMAT_VERSION,
@@ -38,6 +39,8 @@ import { makeSolidPng } from "../src/testing.ts";
 import { AppError } from "../src/types.ts";
 
 const A_DIGEST = `sha256:${"a".repeat(64)}`;
+const EXPECTED_DIGEST =
+  `sha256:${crypto.createHash("sha256").update("expected").digest("hex")}` as const;
 
 const temporaryDirectories: string[] = [];
 afterEach(() => {
@@ -56,22 +59,64 @@ function temporaryRoot(): string {
  *  `finalizeRunRecord`'s own input reconciliation (see `reconcileCasePlan`) will always
  *  report this fixture's inputs as "changed" (nothing really exists at `contract.file`),
  *  which is irrelevant to those tests' own focus (immutability, collision, membership). */
-function casePlanFixture(overrides: Partial<CasePlan> = {}): CasePlan {
-  return {
+function casePlanFixture(
+  overrides: Partial<Omit<CasePlan, "contract">> & {
+    contract?: Partial<CasePlan["contract"]>;
+  } = {},
+): CasePlan {
+  const contractId = overrides.contract?.id ?? "login.desktop";
+  const contractFile = overrides.contract?.file ?? "contracts/login.json";
+  const authored = authoredContractSchema.parse({
+    formatVersion: 1,
+    kind: "framelia.contract",
+    id: contractId,
+    name: contractId,
+    revision: 1,
+    target: { path: `/${contractId}` },
+    viewport: { preset: "desktop", width: 10, height: 10 },
+    scope: { kind: "page", pageReason: "fixture" },
+    baseline: { snapshotDigest: A_DIGEST },
+  });
+  const binding = contractBindingSchema.parse({
+    formatVersion: 1,
+    kind: "framelia.contract-binding",
+    contractId,
+    contractFile,
+    contractDigest: overrides.contract?.digest ?? A_DIGEST,
+  });
+  const base: CasePlan = {
     formatVersion: CASE_PLAN_FORMAT_VERSION,
     kind: "framelia.case-plan",
-    caseId: computeCaseId({ contractId: "login.desktop", projectName: "chromium", repeatIndex: 0 }),
-    contract: { id: "login.desktop", file: "contracts/login.json", digest: A_DIGEST },
+    runId: "pending-test-run",
+    caseId: computeCaseId({ contractId, projectName: "chromium", repeatIndex: 0 }),
+    contract: {
+      id: contractId,
+      file: contractFile,
+      digest: overrides.contract?.digest ?? A_DIGEST,
+      authored,
+    },
     snapshotDigest: A_DIGEST,
+    expectedDigest: EXPECTED_DIGEST,
+    expectedSize: { width: 10, height: 10 },
+    baselineSource: { kind: "figma", fileKey: "fixture", nodeId: "1:2" },
+    maxMaskedAreaRatio: 0.25,
+    stabilitySamples: 2,
     policyDigest: A_DIGEST,
     bindingDigest: A_DIGEST,
+    binding,
+    registration: {
+      specFile: "specs/fixture.spec.ts",
+      specDigest: A_DIGEST,
+      titlePath: ["fixture"],
+    },
     specFile: "specs/fixture.spec.ts",
     specFileDigest: A_DIGEST,
     project: { name: "chromium", runtimeDigest: A_DIGEST },
     repeatIndex: 0,
+    retryAcceptance: "require-first-attempt",
     source: {},
-    ...overrides,
   };
+  return { ...base, ...overrides, contract: { ...base.contract, ...overrides.contract } };
 }
 
 /**
@@ -150,20 +195,34 @@ async function realCasePlanFixture(
   return casePlanSchema.parse({
     formatVersion: CASE_PLAN_FORMAT_VERSION,
     kind: "framelia.case-plan",
+    runId: "pending-test-run",
     caseId: computeCaseId({ contractId, projectName, repeatIndex }),
-    contract: { id: contractId, file: contractFile, digest: contractDigest },
+    contract: { id: contractId, file: contractFile, digest: contractDigest, authored: contract },
+    expectedDigest: imageDigest,
+    expectedSize: viewport,
+    baselineSource: snapshot.source,
+    maxMaskedAreaRatio: 0.25,
+    stabilitySamples: 2,
     snapshotDigest,
     policyDigest: policy.policyDigest!,
     bindingDigest: canonicalJsonDigest(binding),
+    binding,
+    registration: {
+      specFile,
+      specDigest: specFileDigest,
+      titlePath: [projectName, specFile, contractId],
+    },
     specFile,
     specFileDigest,
     project: { name: projectName, runtimeDigest: A_DIGEST },
     repeatIndex,
+    retryAcceptance: "require-first-attempt",
     source: {},
   });
 }
 
 function runPlanFixture(runId: string, casePlans: readonly CasePlan[]): RunPlan {
+  for (const casePlan of casePlans) casePlan.runId = runId;
   const planned = casePlans.map((casePlan) => ({
     caseId: casePlan.caseId,
     casePlanDigest: canonicalJsonDigest(casePlan),
@@ -172,6 +231,7 @@ function runPlanFixture(runId: string, casePlans: readonly CasePlan[]): RunPlan 
     formatVersion: RUN_PLAN_FORMAT_VERSION,
     kind: "framelia.run-plan",
     runId,
+    retryAcceptance: casePlans[0]?.retryAcceptance ?? "require-first-attempt",
     policyDigest: A_DIGEST,
     selection: { mode: "all", contracts: [...new Set(casePlans.map((c) => c.contract.id))] },
     availableCases: planned,
@@ -189,6 +249,7 @@ function attemptFixture(
     formatVersion: ATTEMPT_FORMAT_VERSION,
     kind: "framelia.attempt",
     attemptId: computeAttemptId(casePlan.caseId, retryIndex),
+    runId: casePlan.runId,
     caseId: casePlan.caseId,
     casePlanDigest: canonicalJsonDigest(casePlan),
     retryIndex,
@@ -198,6 +259,72 @@ function attemptFixture(
     completedAt: "2026-09-14T12:00:01.000Z",
     diagnostics: [],
     ...overrides,
+  };
+}
+
+function completeEvidence(actual: Buffer): {
+  expected: Buffer;
+  actual: Buffer;
+  score: Buffer;
+} {
+  return {
+    expected: Buffer.from("expected"),
+    actual,
+    score: Buffer.from(
+      JSON.stringify({
+        formatVersion: ATTEMPT_SCORE_FORMAT_VERSION,
+        kind: "framelia.attempt-score",
+        pass: true,
+        runType: "final",
+        matchRatio: 1,
+        ssim: 1,
+        avgDeltaE: 0,
+        diffPixels: 0,
+        baselineSize: { width: 10, height: 10 },
+        actualSize: { width: 10, height: 10 },
+        targetUrl: "https://example.test/login",
+        baseline: {
+          snapshotDigest: A_DIGEST,
+          kind: "figma",
+          fileKey: "fixture",
+          nodeId: "1:2",
+        },
+        attachmentBaseName: "fixture",
+        resolvedThreshold: {
+          name: "page",
+          minMatch: 0.99,
+          maxDiffPixels: null,
+          minSSIM: 0.97,
+          maxAvgDeltaE: 4,
+          maxAreaGapPercent: 5,
+          cluster: true,
+          stabilityMaxDiffRatio: 0.002,
+          gateEligible: true,
+          styleGateEligible: false,
+        },
+        profile: "page",
+        scope: { kind: "page", fullPage: true },
+        captureEvidence: {
+          finalUrl: "https://example.test/login",
+          startedAt: "2026-09-14T12:00:00.000Z",
+          finishedAt: "2026-09-14T12:00:01.000Z",
+          capturedAt: "2026-09-14T12:00:01.000Z",
+          viewport: { width: 10, height: 10 },
+          scope: { kind: "page", fullPage: true },
+          elementRect: null,
+          readiness: { status: "passed" },
+          fonts: { supported: true, status: "loaded", failed: [] },
+          screenshotHashes: [A_DIGEST, A_DIGEST],
+          warnings: [],
+          actions: [],
+        },
+        stability: "stable",
+        stabilitySampleCount: 2,
+        topIssues: [],
+        diagnostics: [],
+        warnings: [],
+      }),
+    ),
   };
 }
 
@@ -229,13 +356,14 @@ describe("publishAttempt", () => {
       root,
       runId,
       attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
-      {
-        actual: Buffer.from("attempt-0-actual"),
-      },
+      completeEvidence(Buffer.from("attempt-0-actual")),
     );
-    await publishAttempt(root, runId, attemptFixture(casePlan, 1), {
-      actual: Buffer.from("attempt-1-actual"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("attempt-1-actual")),
+    );
 
     const bundle = readRunBundle(root, runId);
     expect(bundle.attempts.size).toBe(2);
@@ -251,14 +379,20 @@ describe("publishAttempt", () => {
     const runId = "run-collision";
     setUpRun(root, runId, [casePlan]);
 
-    await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("first-actual"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("first-actual")),
+    );
 
     await expect(
-      publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-        actual: Buffer.from("second-actual-should-never-land"),
-      }),
+      publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 0),
+        completeEvidence(Buffer.from("second-actual-should-never-land")),
+      ),
     ).rejects.toThrow(/already published/i);
 
     // The rejected second write must never have mutated the first attempt's own evidence.
@@ -299,7 +433,7 @@ describe("publishAttempt", () => {
           visualVerdict: "passed",
           completedAt: undefined,
         }),
-        { actual: Buffer.from("actual") },
+        completeEvidence(Buffer.from("actual")),
       ),
     ).rejects.toThrow(/visual verdict requires executionState/);
   });
@@ -311,9 +445,12 @@ describe("publishAttempt", () => {
     setUpRun(root, runId, [casePlan]);
 
     await expect(
-      publishAttempt(root, runId, attemptFixture(casePlan, 0, { casePlanDigest: A_DIGEST }), {
-        actual: Buffer.from("actual"),
-      }),
+      publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 0, { casePlanDigest: A_DIGEST }),
+        completeEvidence(Buffer.from("actual")),
+      ),
     ).rejects.toThrow(/casePlanDigest.*does not match/);
   });
 
@@ -328,9 +465,7 @@ describe("publishAttempt", () => {
         root,
         runId,
         attemptFixture({ ...casePlan, caseId: "not-a-selected-case" }, 0),
-        {
-          actual: Buffer.from("actual"),
-        },
+        completeEvidence(Buffer.from("actual")),
       ),
     ).rejects.toThrow(/not part of run .* selected cases/);
   });
@@ -340,15 +475,21 @@ describe("publishAttempt", () => {
     const casePlan = casePlanFixture();
     const runId = "run-sealed";
     setUpRun(root, runId, [casePlan]);
-    await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("attempt-0"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("attempt-0")),
+    );
     await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
 
     await expect(
-      publishAttempt(root, runId, attemptFixture(casePlan, 1), {
-        actual: Buffer.from("attempt-1-too-late"),
-      }),
+      publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 1),
+        completeEvidence(Buffer.from("attempt-1-too-late")),
+      ),
     ).rejects.toThrow(/already finalized/);
   });
 });
@@ -368,12 +509,18 @@ describe("two runs in one project root", () => {
     setUpRun(root, "run-a", [casePlanA]);
     setUpRun(root, "run-b", [casePlanB]);
 
-    await publishAttempt(root, "run-a", attemptFixture(casePlanA, 0), {
-      actual: Buffer.from("run-a-actual"),
-    });
-    await publishAttempt(root, "run-b", attemptFixture(casePlanB, 0), {
-      actual: Buffer.from("run-b-actual"),
-    });
+    await publishAttempt(
+      root,
+      "run-a",
+      attemptFixture(casePlanA, 0),
+      completeEvidence(Buffer.from("run-a-actual")),
+    );
+    await publishAttempt(
+      root,
+      "run-b",
+      attemptFixture(casePlanB, 0),
+      completeEvidence(Buffer.from("run-b-actual")),
+    );
 
     const bundleA = readRunBundle(root, "run-a");
     const bundleB = readRunBundle(root, "run-b");
@@ -391,7 +538,7 @@ describe("readRunBundle after copying the bundle elsewhere", () => {
     const runId = "run-portable";
     setUpRun(writerRoot, runId, [casePlan]);
     await publishAttempt(writerRoot, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("portable-actual"),
+      ...completeEvidence(Buffer.from("portable-actual")),
       diff: Buffer.from("portable-diff"),
     });
     await finalizeRunRecord(writerRoot, runId, { retryAcceptance: "require-first-attempt" });
@@ -412,33 +559,33 @@ describe("readRunBundle after copying the bundle elsewhere", () => {
 });
 
 describe("finalizeRunRecord", () => {
-  it("selects the highest passing retry under allow-passed-after-retry, and never rescues a first-attempt failure under require-first-attempt", async () => {
+  it("selects the highest passing retry only under the retry policy frozen into the run", async () => {
     const root = temporaryRoot();
     const casePlan = await realCasePlanFixture(root);
+    casePlan.retryAcceptance = "allow-passed-after-retry";
     const runId = "run-retry-policy";
     setUpRun(root, runId, [casePlan]);
     await publishAttempt(
       root,
       runId,
       attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
-      {
-        actual: Buffer.from("attempt-0"),
-      },
+      completeEvidence(Buffer.from("attempt-0")),
     );
-    await publishAttempt(root, runId, attemptFixture(casePlan, 1), {
-      actual: Buffer.from("attempt-1"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("attempt-1")),
+    );
 
+    await expect(
+      finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" }),
+    ).rejects.toThrow(/does not match frozen run policy/);
     const allowRetry = await finalizeRunRecord(root, runId, {
       retryAcceptance: "allow-passed-after-retry",
     });
     expect(allowRetry.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 1));
     expect(allowRetry.cases[0]?.attemptIds).toHaveLength(2);
-
-    const firstOnly = await finalizeRunRecord(root, runId, {
-      retryAcceptance: "require-first-attempt",
-    });
-    expect(firstOnly.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 0));
   });
 
   it("finalizes with status finalized and finalizedAt regardless of prior running state", async () => {
@@ -448,9 +595,12 @@ describe("finalizeRunRecord", () => {
     setUpRun(root, runId, [casePlan]);
     expect(readRunRecord(root, runId).status).toBe("running");
 
-    await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("actual"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("actual")),
+    );
     const finalized = await finalizeRunRecord(root, runId, {
       retryAcceptance: "require-first-attempt",
     });
@@ -478,9 +628,12 @@ describe("finalizeRunRecord", () => {
     setUpRun(root, runId, [casePlan]);
     // Only retry 1 was ever published (e.g. the first attempt's own publish crashed) --
     // require-first-attempt must never treat this as if retry 1 were "the first attempt".
-    await publishAttempt(root, runId, attemptFixture(casePlan, 1), {
-      actual: Buffer.from("attempt-1"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("attempt-1")),
+    );
 
     const finalized = await finalizeRunRecord(root, runId, {
       retryAcceptance: "require-first-attempt",
@@ -494,9 +647,12 @@ describe("finalizeRunRecord", () => {
     const casePlan = await realCasePlanFixture(root);
     const runId = "run-tampered-selection";
     setUpRun(root, runId, [casePlan]);
-    const attempt = await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("actual-bytes"),
-    });
+    const attempt = await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("actual-bytes")),
+    );
     fs.writeFileSync(path.join(root, attempt.evidence.actual!.path), "tampered-after-publish");
 
     const finalized = await finalizeRunRecord(root, runId, {
@@ -513,9 +669,12 @@ describe("finalizeRunRecord input reconciliation", () => {
     const casePlan = await realCasePlanFixture(root);
     const runId = "run-contract-drift";
     setUpRun(root, runId, [casePlan]);
-    const attempt = await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("actual"),
-    });
+    const attempt = await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("actual")),
+    );
 
     // Edit the contract file on disk *after* the case plan was frozen -- its own digest
     // now disagrees with what `casePlan.contract.digest` recorded.
@@ -540,9 +699,12 @@ describe("finalizeRunRecord input reconciliation", () => {
     const casePlan = await realCasePlanFixture(root);
     const runId = "run-baseline-drift";
     setUpRun(root, runId, [casePlan]);
-    const attempt = await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("actual"),
-    });
+    const attempt = await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("actual")),
+    );
 
     // Overwrite the pinned baseline's own image bytes in place (the same root-relative
     // path `realCasePlanFixture` pinned it at: `<contract-id>.png`) -- the snapshot
@@ -564,9 +726,12 @@ describe("finalizeRunRecord input reconciliation", () => {
     const casePlan = await realCasePlanFixture(root);
     const runId = "run-no-drift";
     setUpRun(root, runId, [casePlan]);
-    const attempt = await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("actual"),
-    });
+    const attempt = await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("actual")),
+    );
 
     const finalized = await finalizeRunRecord(root, runId, {
       retryAcceptance: "require-first-attempt",
@@ -622,9 +787,12 @@ describe("readRunBundle tamper detection", () => {
     const casePlan = casePlanFixture();
     const runId = "run-tampered";
     setUpRun(root, runId, [casePlan]);
-    await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("original-actual"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("original-actual")),
+    );
 
     const bundle = readRunBundle(root, runId);
     const attempt = bundle.attempts.get(computeAttemptId(casePlan.caseId, 0))!;
@@ -638,9 +806,12 @@ describe("readRunBundle tamper detection", () => {
     const casePlan = casePlanFixture();
     const runId = "run-omitted-case";
     setUpRun(root, runId, [casePlan]);
-    await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("actual"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("actual")),
+    );
     await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
 
     const recordPath = runRecordPath(root, runId);
@@ -656,13 +827,19 @@ describe("readRunBundle tamper detection", () => {
     const casePlan = casePlanFixture();
     const runId = "run-omitted-attempt";
     setUpRun(root, runId, [casePlan]);
-    await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("attempt-0"),
-    });
-    await publishAttempt(root, runId, attemptFixture(casePlan, 1), {
-      actual: Buffer.from("attempt-1"),
-    });
-    await finalizeRunRecord(root, runId, { retryAcceptance: "allow-passed-after-retry" });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("attempt-0")),
+    );
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("attempt-1")),
+    );
+    await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
 
     const recordPath = runRecordPath(root, runId);
     const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
@@ -734,13 +911,19 @@ describe("cross-process lock", () => {
     const casePlan = casePlanFixture();
     const runId = "run-lock-race";
     setUpRun(root, runId, [casePlan]);
-    await publishAttempt(root, runId, attemptFixture(casePlan, 0), {
-      actual: Buffer.from("attempt-0"),
-    });
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("attempt-0")),
+    );
 
+    const retryEvidence = completeEvidence(Buffer.from("attempt-1"));
     const publishPayload = JSON.stringify({
       attempt: attemptFixture(casePlan, 1),
-      files: { actual: Buffer.from("attempt-1").toString("base64") },
+      files: Object.fromEntries(
+        Object.entries(retryEvidence).map(([kind, bytes]) => [kind, bytes.toString("base64")]),
+      ),
     });
     const finalizePayload = JSON.stringify({ retryAcceptance: "require-first-attempt" });
 

@@ -258,6 +258,7 @@ export interface DashboardRun {
   };
   executionState?: "running" | "completed" | "incomplete" | "error";
   visualVerdict?: DashboardVisualVerdict;
+  diagnostics?: DashboardDiagnostic[];
   suiteName?: string;
   status: DashboardVerdict;
   summary: DashboardSummary;

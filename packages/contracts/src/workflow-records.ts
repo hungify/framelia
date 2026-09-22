@@ -30,13 +30,34 @@ export const SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 1 as const;
 export const COLLECTION_FORMAT_VERSION = 1;
 export const CASE_PLAN_FORMAT_VERSION = 2;
 export const RUN_PLAN_FORMAT_VERSION = 1;
-export const RUN_FORMAT_VERSION = 1;
+export const RUN_FORMAT_VERSION = 2;
 export const ATTEMPT_FORMAT_VERSION = 2;
 export const COMMAND_OUTCOME_FORMAT_VERSION = 1;
 export const ATTEMPT_SCORE_FORMAT_VERSION = 1;
-export const AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 1;
+export const AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 2;
 
 export const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+export const httpOriginSchema = nonEmptyTrimmed.superRefine((value, context) => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    context.addIssue({ code: "custom", message: "must be a valid URL origin" });
+    return;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    context.addIssue({ code: "custom", message: "must use http or https" });
+  }
+  if (url.username || url.password) {
+    context.addIssue({ code: "custom", message: "must not contain credentials" });
+  }
+  if (value !== url.origin || url.pathname !== "/" || url.search || url.hash) {
+    context.addIssue({
+      code: "custom",
+      message: "must be a normalized URL origin without path, query, or fragment",
+    });
+  }
+});
 
 export const projectRelativePathSchema = nonEmptyTrimmed.refine(
   (value) => {
@@ -553,6 +574,11 @@ export const authoritativeRunRequirementsSchema = z
   .object({
     formatVersion: z.literal(AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION),
     kind: z.literal("framelia.authoritative-run-requirements"),
+    runId: nonEmptyTrimmed,
+    issuedAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime(),
+    jobIdentity: nonEmptyTrimmed,
+    audience: nonEmptyTrimmed,
     requiredCases: z.array(trustedRequiredCaseSchema).min(1),
     policyDigest: sha256DigestSchema,
     source: z
@@ -567,8 +593,8 @@ export const authoritativeRunRequirementsSchema = z
         .object({
           mode: z.literal("ci-owned"),
           observedBuildDigest: sha256DigestSchema,
+          observedOrigin: httpOriginSchema,
           freshServerOwnedByJob: z.literal(true),
-          jobIdentity: nonEmptyTrimmed,
         })
         .strict(),
       z
@@ -577,6 +603,7 @@ export const authoritativeRunRequirementsSchema = z
           attestation: z
             .object({
               observedBuildDigest: sha256DigestSchema,
+              observedOrigin: httpOriginSchema,
               issuer: nonEmptyTrimmed,
               subject: nonEmptyTrimmed,
               proofDigest: sha256DigestSchema,
@@ -601,6 +628,13 @@ export const authoritativeRunRequirementsSchema = z
       }
       seen.add(entry.caseId);
     });
+    if (Date.parse(requirements.expiresAt) <= Date.parse(requirements.issuedAt)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "must be later than issuedAt",
+      });
+    }
   });
 
 export const signedAuthoritativeRunRequirementsSchema = z
@@ -661,15 +695,29 @@ export const attemptRecordSchema = z
     }
   });
 
+export const runRecordStatusSchema = z.enum([
+  "planned",
+  "running",
+  "finalized",
+  "incomplete",
+  "error",
+]);
+export type RunRecordStatus = z.infer<typeof runRecordStatusSchema>;
+
+export function isTerminalRunStatus(status: RunRecordStatus): boolean {
+  return status === "finalized" || status === "incomplete" || status === "error";
+}
+
 export const runRecordSchema = z
   .object({
     formatVersion: z.literal(RUN_FORMAT_VERSION),
     kind: z.literal("framelia.run"),
     runId: nonEmptyTrimmed,
     planDigest: sha256DigestSchema,
-    status: z.enum(["planned", "running", "finalized", "incomplete", "error"]),
+    status: runRecordStatusSchema,
     createdAt: z.iso.datetime(),
     finalizedAt: z.iso.datetime().optional(),
+    diagnostics: z.array(diagnosticSchema),
     cases: z.array(
       z
         .object({
@@ -712,11 +760,11 @@ export const runRecordSchema = z
         });
       }
     });
-    if (run.status === "finalized" && !run.finalizedAt) {
+    if (isTerminalRunStatus(run.status) && !run.finalizedAt) {
       context.addIssue({
         code: "custom",
         path: ["finalizedAt"],
-        message: "finalized run must have finalizedAt",
+        message: "terminal run must have finalizedAt",
       });
     }
   });

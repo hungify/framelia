@@ -10,7 +10,12 @@ import {
 } from "@framelia/verify/run-bundle";
 import { z } from "zod";
 
-import { TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV } from "../cli-constants.ts";
+import {
+  AUTHORITY_AUDIENCE_ENV,
+  MAX_SIGNED_REQUIREMENTS_VALIDITY_MS,
+  PROTECTED_JOB_IDENTITY_ENV,
+  TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV,
+} from "../cli-constants.ts";
 import { UsageError, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
@@ -40,7 +45,14 @@ interface IncompleteGateVerdict {
 
 export type DoneGateResult = CliResult<
   | (AuthoritativeRunVerdict & {
-      readonly requirements: { role: "protected-signed-envelope" };
+      readonly requirements: {
+        role: "protected-signed-envelope";
+        runId: string;
+        issuedAt: string;
+        expiresAt: string;
+        jobIdentity: string;
+        audience: string;
+      };
       readonly verifier: {
         algorithm: "Ed25519";
         trustRoot: "external-to-project";
@@ -77,6 +89,7 @@ function decodeSignature(value: string): Buffer {
 export async function doneGateCommand(
   options: DoneGateOptions,
   runtime: CliRuntime,
+  now: () => Date = () => new Date(),
 ): Promise<DoneGateResult> {
   const parsed = doneGateOptionsSchema.safeParse(options);
   if (!parsed.success) throw usageErrorFromZodError(parsed.error);
@@ -174,18 +187,76 @@ export async function doneGateCommand(
       "The authoritative requirements signature is invalid for the protected trust root.",
     );
   }
+  const payload = envelope.data.payload;
+  if (payload.runId !== parsed.data.run) {
+    return incomplete(
+      "SIGNED_REQUIREMENTS_RUN_MISMATCH",
+      `Signed requirements name run "${payload.runId}", not requested run "${parsed.data.run}".`,
+    );
+  }
+  const currentTime = now().getTime();
+  const issuedAt = Date.parse(payload.issuedAt);
+  const expiresAt = Date.parse(payload.expiresAt);
+  if (expiresAt - issuedAt > MAX_SIGNED_REQUIREMENTS_VALIDITY_MS) {
+    return incomplete(
+      "SIGNED_REQUIREMENTS_WINDOW_TOO_LARGE",
+      "The signed requirements validity window exceeds the protected maximum.",
+    );
+  }
+  if (currentTime < issuedAt) {
+    return incomplete(
+      "SIGNED_REQUIREMENTS_NOT_YET_VALID",
+      "The signed requirements are not yet valid.",
+    );
+  }
+  if (currentTime >= expiresAt) {
+    return incomplete("SIGNED_REQUIREMENTS_EXPIRED", "The signed requirements have expired.");
+  }
+  const protectedJobIdentity = runtime.env[PROTECTED_JOB_IDENTITY_ENV];
+  if (!protectedJobIdentity) {
+    return incomplete(
+      "PROTECTED_JOB_IDENTITY_MISSING",
+      `${PROTECTED_JOB_IDENTITY_ENV} must be supplied by protected job runtime metadata.`,
+    );
+  }
+  if (protectedJobIdentity !== payload.jobIdentity) {
+    return incomplete(
+      "PROTECTED_JOB_IDENTITY_MISMATCH",
+      "Signed requirements do not match the protected runtime job identity.",
+    );
+  }
+  const protectedAudience = runtime.env[AUTHORITY_AUDIENCE_ENV];
+  if (!protectedAudience) {
+    return incomplete(
+      "PROTECTED_AUTHORITY_AUDIENCE_MISSING",
+      `${AUTHORITY_AUDIENCE_ENV} must be supplied by protected job runtime metadata.`,
+    );
+  }
+  if (protectedAudience !== payload.audience) {
+    return incomplete(
+      "PROTECTED_AUTHORITY_AUDIENCE_MISMATCH",
+      "Signed requirements do not match the protected runtime audience.",
+    );
+  }
 
   const keyFingerprint = `sha256:${crypto
     .createHash("sha256")
     .update(publicKey.export({ type: "spki", format: "der" }))
     .digest("hex")}`;
   try {
-    const verdict = evaluateAuthoritativeRun(project.root, parsed.data.run, envelope.data.payload);
+    const verdict = evaluateAuthoritativeRun(project.root, parsed.data.run, payload);
     return {
       ok: verdict.exitCode === 0,
       exitCode: verdict.exitCode,
       body: {
-        requirements: { role: "protected-signed-envelope" },
+        requirements: {
+          role: "protected-signed-envelope",
+          runId: payload.runId,
+          issuedAt: payload.issuedAt,
+          expiresAt: payload.expiresAt,
+          jobIdentity: payload.jobIdentity,
+          audience: payload.audience,
+        },
         verifier: {
           algorithm: "Ed25519",
           trustRoot: "external-to-project",

@@ -35,7 +35,11 @@ function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function validateAuthoritativeAttempt(casePlan: CasePlan, attempt: SelectedAttempt): string[] {
+function validateAuthoritativeAttempt(
+  casePlan: CasePlan,
+  attempt: SelectedAttempt,
+  trustedObservedOrigin: string,
+): string[] {
   const score = attempt.score;
   if (!score) return ["versioned score is unavailable"];
   const contract = casePlan.contract.authored;
@@ -78,6 +82,15 @@ function validateAuthoritativeAttempt(casePlan: CasePlan, attempt: SelectedAttem
     reasons.push("expected image evidence does not match the frozen baseline image digest");
   }
   const targetUrl = new URL(score.targetUrl);
+  if (targetUrl.origin !== trustedObservedOrigin) {
+    reasons.push("score target URL origin does not match the trusted observed served origin");
+  }
+  const capturedFinalOrigin = score.captureEvidence
+    ? new URL(score.captureEvidence.finalUrl).origin
+    : undefined;
+  if (capturedFinalOrigin !== trustedObservedOrigin) {
+    reasons.push("captured final URL origin does not match the trusted observed served origin");
+  }
   if (`${targetUrl.pathname}${targetUrl.search}` !== contract.target.path) {
     reasons.push("score target URL path does not match the frozen contract target");
   }
@@ -209,6 +222,7 @@ export interface SelectedCase {
   selectedAttempt?: SelectedAttempt;
   attempts: SelectedAttempt[];
   missingAttemptIds: string[];
+  invalidAttempts: Array<{ attemptId: string; issues: Diagnostic[] }>;
 }
 
 export interface SelectedRun {
@@ -340,10 +354,18 @@ function readEvidence(
  * missing or hash-invalid evidence is retained as per-attempt availability diagnostics.
  */
 export function readSelectedRun(root: string, runId: string): SelectedRun {
-  const { bundle, missingAttemptIds } = readRunBundleRecords(root, runId, false);
+  const { bundle, missingAttemptIds, attemptReadIssues } = readRunBundleRecords(
+    root,
+    runId,
+    false,
+    true,
+  );
   const { plan, record, casePlans, attempts } = bundle;
   const recordByCase = new Map(record.cases.map((entry) => [entry.caseId, entry]));
-  const issues: Diagnostic[] = [];
+  const issues: Diagnostic[] = [
+    ...record.diagnostics,
+    ...attemptReadIssues.map((issue) => issue.diagnostic),
+  ];
 
   const cases = plan.selectedCases.map((selected): SelectedCase => {
     const casePlan = casePlans.get(selected.caseId)!;
@@ -393,6 +415,9 @@ export function readSelectedRun(root: string, runId: string): SelectedRun {
     const caseMissingAttemptIds = (caseRecord?.attemptIds ?? []).filter((id) =>
       missingAttemptIds.has(id),
     );
+    const invalidAttempts = attemptReadIssues
+      .filter((issue) => issue.caseId === selected.caseId)
+      .map((issue) => ({ attemptId: issue.attemptId, issues: [issue.diagnostic] }));
     for (const attemptId of caseMissingAttemptIds) {
       issues.push({
         code: "attempt-missing",
@@ -406,6 +431,7 @@ export function readSelectedRun(root: string, runId: string): SelectedRun {
       plan: casePlan,
       attempts: caseAttempts,
       missingAttemptIds: caseMissingAttemptIds,
+      invalidAttempts,
       ...(selectedAttemptId ? { selectedAttemptId } : {}),
       ...(selectedAttempt ? { selectedAttempt } : {}),
     };
@@ -475,6 +501,13 @@ export interface AuthoritativeRunVerdict {
   visualVerdict: "passed" | "mismatched" | "not-evaluated";
   exitCode: 0 | 1 | 2;
   servedBuild: AuthoritativeRunRequirements["servedBuild"];
+  authority: {
+    runId: string;
+    issuedAt: string;
+    expiresAt: string;
+    jobIdentity: string;
+    audience: string;
+  };
   issues: AuthoritativeRunIssue[];
   cases: AuthoritativeCaseVerdict[];
   next?: { command: string; argv: string[] };
@@ -492,8 +525,17 @@ export function evaluateAuthoritativeRun(
   const trusted = authoritativeRunRequirementsSchema.parse(trustedRequirements);
   const selected = readSelectedRun(root, runId);
   const issues: AuthoritativeRunIssue[] = [];
+  for (const diagnostic of selected.record.diagnostics) {
+    issues.push({ code: diagnostic.code, message: diagnostic.message });
+  }
   const trustedByCase = new Map(trusted.requiredCases.map((entry) => [entry.caseId, entry]));
   const selectedByCase = new Map(selected.cases.map((entry) => [entry.caseId, entry]));
+  if (trusted.runId !== runId) {
+    issues.push({
+      code: "trusted-run-mismatch",
+      message: `Trusted requirements name run "${trusted.runId}", not selected run "${runId}".`,
+    });
+  }
 
   if (selected.record.status !== "finalized") {
     issues.push({ code: "run-not-finalized", message: "Selected run is not finalized." });
@@ -532,6 +574,10 @@ export function evaluateAuthoritativeRun(
     trusted.servedBuild.mode === "ci-owned"
       ? trusted.servedBuild.observedBuildDigest
       : trusted.servedBuild.attestation.observedBuildDigest;
+  const observedOrigin =
+    trusted.servedBuild.mode === "ci-owned"
+      ? trusted.servedBuild.observedOrigin
+      : trusted.servedBuild.attestation.observedOrigin;
   if (observedBuildDigest !== trusted.source.buildDigest) {
     issues.push({
       code: "served-build-mismatch",
@@ -640,6 +686,16 @@ export function evaluateAuthoritativeRun(
         });
       }
     }
+    for (const invalidAttempt of selectedCase.invalidAttempts) {
+      for (const integrity of invalidAttempt.issues) {
+        caseIssues.push({
+          code: integrity.code,
+          caseId: required.caseId,
+          attemptId: invalidAttempt.attemptId,
+          message: integrity.message,
+        });
+      }
+    }
 
     const completed = selectedCase.attempts.filter(
       (attempt) => attempt.record.executionState === "completed",
@@ -649,7 +705,9 @@ export function evaluateAuthoritativeRun(
         ? selectedCase.attempts.find((attempt) => attempt.record.retryIndex === 0)
         : (completed.findLast((attempt) => attempt.record.visualVerdict === "passed") ??
           completed.at(-1));
-    const authorityReasons = observed ? validateAuthoritativeAttempt(plan, observed) : [];
+    const authorityReasons = observed
+      ? validateAuthoritativeAttempt(plan, observed, observedOrigin)
+      : [];
     for (const reason of authorityReasons) {
       caseIssues.push({
         code: "attempt-authority-invalid",
@@ -707,6 +765,17 @@ export function evaluateAuthoritativeRun(
       ? "passed"
       : "not-evaluated";
   const incomplete = issues.length > 0 || cases.some((entry) => !entry.acceptedAttemptId);
+  if (visualVerdict === "mismatched") {
+    issues.push(
+      ...cases
+        .filter((entry) => entry.visualVerdict === "mismatched")
+        .map((entry) => ({
+          code: "visual-mismatch",
+          caseId: entry.caseId,
+          message: `Required case "${entry.caseId}" does not match its frozen baseline.`,
+        })),
+    );
+  }
   const exitCode = incomplete ? 2 : visualVerdict === "mismatched" ? 1 : 0;
   return {
     runId,
@@ -714,6 +783,13 @@ export function evaluateAuthoritativeRun(
     visualVerdict,
     exitCode,
     servedBuild: trusted.servedBuild,
+    authority: {
+      runId: trusted.runId,
+      issuedAt: trusted.issuedAt,
+      expiresAt: trusted.expiresAt,
+      jobIdentity: trusted.jobIdentity,
+      audience: trusted.audience,
+    },
     issues,
     cases,
     ...(incomplete ? { next: { command: "pnpm", argv: ["exec", "playwright", "test"] } } : {}),

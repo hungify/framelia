@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   attemptRecordSchema,
+  authoritativeRunRequirementsSchema,
   authoredContractSchema,
   baselineSnapshotSchema,
   collectionManifestSchema,
@@ -247,12 +248,13 @@ describe("snapshot and execution units", () => {
 
   it("finalizes only with explicit time and an attempt belonging to each case", () => {
     const run = {
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "framelia.run",
       runId: "run-1",
       planDigest: A_DIGEST,
       status: "finalized",
       createdAt: "2026-09-14T12:00:00.000Z",
+      diagnostics: [],
       cases: [
         {
           caseId: "login.desktop/chromium/0",
@@ -301,5 +303,65 @@ describe("snapshot and execution units", () => {
       evidence: {},
     });
     expect(attempt.retryIndex).toBe(1);
+  });
+});
+
+describe("authoritative run requirements", () => {
+  const requirements = {
+    formatVersion: 2,
+    kind: "framelia.authoritative-run-requirements",
+    runId: "run-authoritative",
+    issuedAt: "2026-09-21T00:00:00.000Z",
+    expiresAt: "2026-09-21T00:05:00.000Z",
+    jobIdentity: "protected-job",
+    audience: "framelia-done-gate",
+    requiredCases: [
+      {
+        caseId: "login.desktop@chromium#0",
+        contractId: "login.desktop",
+        projectName: "chromium",
+        repeatIndex: 0,
+        casePlanDigest: A_DIGEST,
+        contractDigest: A_DIGEST,
+        bindingDigest: B_DIGEST,
+        specFile: "login.spec.ts",
+        specFileDigest: B_DIGEST,
+        titlePath: ["chromium", "login"],
+      },
+    ],
+    policyDigest: A_DIGEST,
+    source: { sourceDigest: A_DIGEST, buildDigest: B_DIGEST, dirty: false },
+    servedBuild: {
+      mode: "ci-owned",
+      observedBuildDigest: B_DIGEST,
+      observedOrigin: "https://preview.example.test",
+      freshServerOwnedByJob: true,
+    },
+    retryAcceptance: "require-first-attempt",
+  };
+
+  it("requires a normalized HTTP(S) origin and an ordered validity window", () => {
+    expect(authoritativeRunRequirementsSchema.safeParse(requirements).success).toBe(true);
+    expect(
+      authoritativeRunRequirementsSchema.safeParse({ ...requirements, formatVersion: 1 }).success,
+    ).toBe(false);
+    for (const observedOrigin of [
+      "https://preview.example.test/path",
+      "https://user:secret@preview.example.test",
+      "file:///tmp/build",
+    ]) {
+      expect(
+        authoritativeRunRequirementsSchema.safeParse({
+          ...requirements,
+          servedBuild: { ...requirements.servedBuild, observedOrigin },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      authoritativeRunRequirementsSchema.safeParse({
+        ...requirements,
+        expiresAt: requirements.issuedAt,
+      }).success,
+    ).toBe(false);
   });
 });

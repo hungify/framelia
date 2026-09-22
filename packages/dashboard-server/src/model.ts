@@ -13,6 +13,7 @@ import {
   type DashboardSummary,
   type DashboardVerdict,
 } from "@framelia/contracts";
+import { sanitizePortableValue } from "@framelia/verify";
 import type { SelectedAttempt, SelectedCase, SelectedRun } from "@framelia/verify/run-bundle";
 
 export interface SelectedRunDashboardProjection {
@@ -60,6 +61,7 @@ function projectedStatus(
   diagnostics: DashboardDiagnostic[],
   runStatus: SelectedRun["record"]["status"],
 ): DashboardVerdict {
+  if (runStatus === "error" || runStatus === "incomplete") return "blocked";
   const attempt = selectedCase.selectedAttempt;
   if (!attempt) return runStatus === "running" ? "queued" : "blocked";
   if (attempt.record.executionState !== "completed") {
@@ -83,18 +85,6 @@ function image(
   const evidence = selected?.evidence[kind];
   if (evidence?.availability !== "available" || !evidence.portablePath) return undefined;
   return { path: evidence.portablePath, ...(evidence.digest ? { hash: evidence.digest } : {}) };
-}
-function sanitizePortableValue<T>(value: T, root: string): T {
-  if (typeof value === "string") return value.replaceAll(path.resolve(root), "<project-root>") as T;
-  if (Array.isArray(value)) {
-    return value.map((entry) => sanitizePortableValue(entry, root)) as T;
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, sanitizePortableValue(entry, root)]),
-    ) as T;
-  }
-  return value;
 }
 
 function projectCase(
@@ -128,6 +118,12 @@ function projectCase(
       : selected.record.executionState !== "completed"
         ? selected.record.diagnostics.map((issue) => ({ code: issue.code, message: issue.message }))
         : []),
+    ...selectedCase.invalidAttempts.flatMap((attempt) =>
+      attempt.issues.map((issue) => ({
+        code: issue.code,
+        message: `${attempt.attemptId}: ${issue.message}`,
+      })),
+    ),
   ];
   const status = projectedStatus(selectedCase, diagnostics, runStatus);
   const baselineKind = score?.baseline.kind === "web" ? "page" : "figma";
@@ -328,6 +324,16 @@ export function projectSelectedRun(
       },
       executionState: selectedRun.executionState,
       visualVerdict: selectedRun.visualVerdict,
+      ...(selectedRun.integrityIssues.length > 0
+        ? {
+            diagnostics: selectedRun.integrityIssues.map((issue) => ({
+              kind: "warning" as const,
+              code: issue.code,
+              message: issue.message,
+              blocking: true,
+            })),
+          }
+        : {}),
       ...(suiteName ? { suiteName } : {}),
       status: overallStatus(summary),
       summary,

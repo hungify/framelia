@@ -23,12 +23,18 @@ import {
   type SourceIdentity,
   type TestRegistration,
 } from "@framelia/contracts/workflow";
-import { canonicalJsonDigest, readPinnedBaseline, type CanonicalJsonValue } from "@framelia/verify";
+import {
+  canonicalJsonDigest,
+  readPinnedBaseline,
+  sanitizePortableValue,
+  type CanonicalJsonValue,
+} from "@framelia/verify";
 import {
   computeAttemptId,
   computeCaseId,
   type AttemptEvidenceFiles,
 } from "@framelia/verify/run-bundle";
+import type { BrowserContextOptions } from "@playwright/test";
 import type { FullProject, Suite, TestCase, TestResult } from "@playwright/test/reporter";
 
 import { CONTRACT_ANNOTATION_TYPE } from "./define-figma-tests.ts";
@@ -67,19 +73,35 @@ function findFileSuite(suite: Suite | undefined): Suite | undefined {
 }
 
 /**
- * "Project runtime identity" for a case plan's `project.runtimeDigest` (workflow-
- * records.ts's own text doesn't fully pin this down -- see this repo's PR description for
- * the judgment call): the resolved Playwright project's name plus its own `use.viewport`/
- * `use.deviceScaleFactor` -- the two `use` options that directly affect what a visual
- * capture looks like. Any other `use` option (locale, colorScheme, storageState, ...)
- * either doesn't bear on pixel output or is already covered by the contract/policy
- * digests elsewhere in the case plan.
+ * Secrets-safe runtime identity for public Playwright context values that can change
+ * pixels or application behavior. Deliberately excludes storage state, headers,
+ * credentials, callbacks, regular expressions, URLs, and filesystem paths.
  */
-function computeProjectRuntimeDigest(project: FullProject | undefined): `sha256:${string}` {
-  const relevant = {
+export function computeProjectRuntimeDigest(project: FullProject | undefined): `sha256:${string}` {
+  // Playwright's reporter `FullProject.use` omits inherited BrowserContextOptions from its
+  // declaration even though those public values are present in the reporter payload.
+  const use = project?.use as (FullProject["use"] & BrowserContextOptions) | undefined;
+  const relevant: CanonicalJsonValue = {
     name: project?.name ?? null,
-    viewport: (project?.use.viewport ?? null) as CanonicalJsonValue,
-    deviceScaleFactor: project?.use.deviceScaleFactor ?? null,
+    browserName: use?.browserName ?? null,
+    viewport: (use?.viewport ?? null) as CanonicalJsonValue,
+    screen: (use?.screen ?? null) as CanonicalJsonValue,
+    deviceScaleFactor: use?.deviceScaleFactor ?? null,
+    locale: use?.locale ?? null,
+    timezoneId: use?.timezoneId ?? null,
+    colorScheme: use?.colorScheme ?? null,
+    reducedMotion: use?.reducedMotion ?? null,
+    forcedColors: use?.forcedColors ?? null,
+    contrast: use?.contrast ?? null,
+    userAgent: use?.userAgent ?? null,
+    isMobile: use?.isMobile ?? null,
+    hasTouch: use?.hasTouch ?? null,
+    javaScriptEnabled: use?.javaScriptEnabled ?? null,
+    serviceWorkers: use?.serviceWorkers ?? null,
+    offline: use?.offline ?? null,
+    ignoreHTTPSErrors: use?.ignoreHTTPSErrors ?? null,
+    bypassCSP: use?.bypassCSP ?? null,
+    permissions: [...(use?.permissions ?? [])].toSorted(),
   };
   return canonicalJsonDigest(relevant);
 }
@@ -269,25 +291,7 @@ function mapAttemptOutcome(
 }
 
 function sanitizeExecutionMessage(message: string, projectRoot: string): string {
-  const root = path.resolve(projectRoot);
-  return message
-    .replaceAll(`file://${root}`, "file://<project-root>")
-    .replaceAll(root, "<project-root>");
-}
-
-function sanitizePortableValue<T>(value: T, projectRoot: string): T {
-  if (typeof value === "string") {
-    return sanitizeExecutionMessage(value, projectRoot) as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => sanitizePortableValue(entry, projectRoot)) as T;
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, sanitizePortableValue(entry, projectRoot)]),
-    ) as T;
-  }
-  return value;
+  return sanitizePortableValue(message, projectRoot);
 }
 
 function buildDiagnostics(

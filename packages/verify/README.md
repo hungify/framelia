@@ -60,7 +60,6 @@ const outcome = await captureReadyPage(page, {
   outPath: "actual.png",
   scope: { kind: "page", fullPage: false },
   screenshot: { masks: [] },
-  stabilitySamples: 3,
 });
 ```
 
@@ -72,10 +71,12 @@ web-baseline provider, since web-vs-web comparison is `@framelia/playwright`'s `
 `toMatchUrl`, diffing two already-navigated pages directly rather than through a persisted
 baseline pointer.
 
-Each ready-page capture takes exactly `stabilitySamples` back-to-back screenshots without
-navigation or reload. It retains only the primary image, persists every sample hash, and deletes
-the private sample files on success or failure. The selected-run gate accepts stability only when
-the sample count equals the frozen case policy and every hash agrees.
+Generic ready-page capture is single-shot by default. A caller may request an explicit sample
+count to take that many back-to-back screenshots without navigation or reload. Capture retains
+only the primary image, persists every sample hash, and deletes private sample images on success
+or failure. Authored contract helpers still pass the resolved 2–5 sample policy explicitly; the
+selected-run gate accepts stability only when the sample count equals that frozen case policy and
+every hash agrees.
 
 ## Manual integration tests
 

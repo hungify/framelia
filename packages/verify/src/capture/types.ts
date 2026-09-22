@@ -41,7 +41,7 @@ export interface ReadyCaptureSpec {
   outPath: string;
   scope: CaptureScope;
   screenshot: { masks?: VisualMask[]; maxMaskedAreaRatio?: number };
-  stabilitySamples: number;
+  stabilitySamples?: number;
   timeoutMs?: number;
   devtoolsSelector?: true | string;
   /** Device pixel ratio to capture at (matches the Page's own context configuration --

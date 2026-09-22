@@ -4,9 +4,10 @@ import {
   RUN_PLAN_FORMAT_VERSION,
   runPlanSchema,
   type CasePlan,
+  type Diagnostic,
   type SourceIdentity,
 } from "@framelia/contracts/workflow";
-import { canonicalJsonDigest } from "@framelia/verify";
+import { canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
 import {
   finalizeRunRecord,
   freezeRunPlan,
@@ -112,6 +113,7 @@ export default class FrameliaReporter implements Reporter {
    *  prevent durable run-bundle recording (see onBegin's own doc comment). */
   #runBundleReady?: Promise<void>;
   #runBundlePending: Promise<void>[] = [];
+  #publicationDiagnostics: Diagnostic[] = [];
   #selectedListeners = new Set<(event: DashboardEvent) => void>();
   #selectedSequence = 0;
 
@@ -206,20 +208,12 @@ export default class FrameliaReporter implements Reporter {
   }
 
   /**
-   * Freezes a `RunPlan` (and starts its `RunRecord`) covering every `framelia.contract`-
-   * annotated test this suite collected. `contractAnnotatedTests IS the "available"/
-   * "selected" set for this run` -- full contract-discovery-vs-collection reconciliation
-   * (what a real subset/`--test-list` selection would narrow `selectedCases` down from)
-   * is #79 (WP6)'s collection-transport job, not this Reporter's: with only Playwright's
-   * own collected suite visible here, every collected case IS what was required and
-   * selected for this particular invocation, so `selection.mode` is always `"all"` and
-   * `requiredCases`/`selectedCases`/`availableCases` are identical. A run with zero
-   * annotated tests has nothing to freeze (`runPlanSchema` requires at least one case)
-   * and is silently skipped -- an ordinary matcher-only suite never gets a run bundle.
-   * Likewise skipped when the project has no resolvable `policyDigest` (no
-   * `framelia.config.*` found): case-plan/run-plan digests need one real policy digest to
-   * anchor to, matching `resolveContractProjectMatrix`'s own `PROJECT_POLICY_INCOMPLETE`
-   * precedent for the same underlying requirement.
+   * Freezes only the contract tests visible in this direct Playwright invocation.
+   * Until WP6 supplies an independently frozen discovery matrix, collected tests are
+   * exact selected membership but never proof of the full required matrix. Direct
+   * reporter plans therefore use `selection.mode: "subset"`, leave `requiredCases`
+   * empty, and rely on the independently signed gate requirements for completeness.
+   * A run with zero annotated tests or no resolvable policy digest is not published.
    */
   async #initializeRunBundle(tests: TestCase[], policy: ResolvedProjectPolicy): Promise<void> {
     if (!policy.policyDigest) return;
@@ -252,9 +246,9 @@ export default class FrameliaReporter implements Reporter {
       runId,
       policyDigest: policy.policyDigest,
       retryAcceptance: policy.retryAcceptance,
-      selection: { mode: "all", contracts },
+      selection: { mode: "subset", contracts },
       availableCases: planned,
-      requiredCases: planned,
+      requiredCases: [],
       selectedCases: planned,
     });
 
@@ -335,9 +329,13 @@ export default class FrameliaReporter implements Reporter {
         };
         for (const listener of this.#selectedListeners) listener(event);
       } catch (error: unknown) {
-        console.error(
-          `framelia reporter: failed to publish run-bundle attempt for ${sanitizeTestId(test)}: ${String(error)}`,
-        );
+        const diagnostic: Diagnostic = {
+          code: "attempt-publication-failed",
+          stage: "publication",
+          message: `Attempt publication failed for "${caseEntry.casePlan.caseId}": ${portableErrorMessage(error, bundle.root)}`,
+        };
+        this.#publicationDiagnostics.push(diagnostic);
+        console.error(`framelia reporter: ${diagnostic.message}`);
       }
     };
     this.#runBundlePending.push(
@@ -356,6 +354,7 @@ export default class FrameliaReporter implements Reporter {
       try {
         await finalizeRunRecord(this.#runBundle.root, this.#runBundle.runId, {
           retryAcceptance: this.#runBundle.retryAcceptance,
+          diagnostics: this.#publicationDiagnostics,
         });
       } catch (error: unknown) {
         console.error(

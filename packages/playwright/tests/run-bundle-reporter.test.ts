@@ -22,6 +22,7 @@ import { makeSolidPng } from "@framelia/verify/testing";
 import { chromium } from "@playwright/test";
 import type {
   FullConfig,
+  FullResult,
   FullProject,
   Suite,
   TestCase,
@@ -129,10 +130,14 @@ function pinContract(
  *  basename, and a project whose `.testDir` is its directory -- `path.resolve(testDir,
  *  title)` reconstructs `specFile` exactly, the same way real Playwright's own
  *  `testInfo.titlePath`/file-suite title (relative to `project.testDir`) does. */
-function fakeProjectSuite(projectName: string, specFile: string): Suite {
+function fakeProjectSuite(
+  projectName: string,
+  specFile: string,
+  projectUse: Partial<FullProject["use"]> = {},
+): Suite {
   const project = {
     name: projectName,
-    use: { viewport: null },
+    use: { viewport: null, ...projectUse },
     testDir: path.dirname(specFile),
   } as unknown as FullProject;
   return {
@@ -164,6 +169,7 @@ function fakeContractTest(options: {
   specDigest?: `sha256:${string}`;
   projectName?: string;
   repeatEachIndex?: number;
+  projectUse?: Partial<FullProject["use"]>;
 }): TestCase {
   const registration = {
     formatVersion: 1,
@@ -181,7 +187,11 @@ function fakeContractTest(options: {
     titlePath: () => ["project", "file.spec.ts", options.id],
     annotations: [{ type: "framelia.contract", description: JSON.stringify(registration) }],
     location: { file: options.specFile, line: 1, column: 1 },
-    parent: fakeProjectSuite(options.projectName ?? "chromium", options.specFile),
+    parent: fakeProjectSuite(
+      options.projectName ?? "chromium",
+      options.specFile,
+      options.projectUse,
+    ),
     repeatEachIndex: options.repeatEachIndex ?? 0,
   } as unknown as TestCase;
 }
@@ -311,14 +321,95 @@ describe("FrameliaReporter selected-run publication", () => {
       test,
       fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
     );
-    await reporter.onEnd({ status: "passed" } as any);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
 
     const bundle = readRunBundle(root, "run-passing");
     expect(bundle.record.status).toBe("finalized");
+    expect(bundle.plan.selection).toEqual({ mode: "subset", contracts: ["login.desktop"] });
+    expect(bundle.plan.requiredCases).toEqual([]);
+    expect(bundle.plan.selectedCases.map((entry) => entry.caseId)).toEqual([
+      "login.desktop@chromium#0",
+    ]);
     expect(bundle.record.finalizedAt).toBeDefined();
     expect(bundle.attempts.size).toBe(1);
     const [attempt] = [...bundle.attempts.values()];
     expect(attempt).toMatchObject({ executionState: "completed", visualVerdict: "passed" });
+  });
+  it("persists an attempt publication failure and prevents authoritative pass", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const sourceDigest = `sha256:${"c".repeat(64)}` as const;
+    const buildDigest = `sha256:${"b".repeat(64)}` as const;
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-publication-failure",
+      source: { sourceDigest, buildDigest, dirty: false },
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const result = fakeAttemptResult({
+      status: "passed",
+      score: scoreAttachment({ targetUrl: "http://localhost/login.desktop" }),
+      actualImageDir: imageDir,
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    reporter.onTestEnd(test, result);
+    reporter.onTestEnd(test, result);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+
+    const selected = readSelectedRun(root, "run-publication-failure");
+    expect(selected.record).toMatchObject({
+      status: "error",
+      diagnostics: [expect.objectContaining({ code: "attempt-publication-failed" })],
+    });
+    expect(selected.executionState).toBe("error");
+    const casePlan = selected.cases[0]!.plan;
+    const requirements: AuthoritativeRunRequirements = {
+      formatVersion: 2,
+      kind: "framelia.authoritative-run-requirements",
+      runId: selected.runId,
+      issuedAt: "2026-09-21T00:00:00.000Z",
+      expiresAt: "2026-09-21T00:05:00.000Z",
+      jobIdentity: "protected-job",
+      audience: "framelia-done-gate",
+      requiredCases: [
+        {
+          caseId: casePlan.caseId,
+          contractId: casePlan.contract.id,
+          projectName: casePlan.project.name,
+          repeatIndex: casePlan.repeatIndex,
+          casePlanDigest: canonicalJsonDigest(casePlan),
+          contractDigest: casePlan.contract.digest,
+          bindingDigest: casePlan.bindingDigest,
+          specFile: casePlan.registration.specFile,
+          specFileDigest: casePlan.registration.specDigest,
+          titlePath: casePlan.registration.titlePath,
+        },
+      ],
+      policyDigest: casePlan.policyDigest,
+      source: { sourceDigest, buildDigest, dirty: false },
+      servedBuild: {
+        mode: "ci-owned",
+        observedBuildDigest: buildDigest,
+        observedOrigin: "http://localhost",
+        freshServerOwnedByJob: true,
+      },
+      retryAcceptance: casePlan.retryAcceptance,
+    };
+    expect(evaluateAuthoritativeRun(root, selected.runId, requirements)).toMatchObject({
+      exitCode: 2,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "attempt-publication-failed" }),
+      ]),
+    });
   });
 
   it("projects exactly the selected run when annotated and low-level tests are mixed", async () => {
@@ -362,8 +453,14 @@ describe("FrameliaReporter selected-run publication", () => {
       contractId: "login.desktop",
       sourceRunId: "run-mixed",
     });
+    expect(run.coverage).toMatchObject({
+      selectionMode: "subset",
+      required: 0,
+      selected: 1,
+      selectedCaseIds: ["login.desktop@chromium#0"],
+    });
     expect(JSON.stringify(run)).not.toContain("low-level");
-    await reporter.onEnd({ status: "passed" } as any);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
   });
 
   it("publishes a real capture score that the selected reader and authoritative gate accept", async () => {
@@ -380,10 +477,11 @@ describe("FrameliaReporter selected-run publication", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("server address unavailable");
+    const servedOrigin = `http://127.0.0.1:${address.port}`;
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 100, height: 80 } });
     const page = await context.newPage();
-    await page.goto(`http://127.0.0.1:${address.port}/login.desktop`);
+    await page.goto(`${servedOrigin}/login.desktop`);
     const imageBytes = await page.screenshot({ animations: "disabled" });
     const binding = pinContract(root, {
       id: "login.desktop",
@@ -436,13 +534,18 @@ describe("FrameliaReporter selected-run publication", () => {
         duration: 1_000,
         attachments: [...imageAttachments, ...jsonAttachments],
       } as TestResult);
-      await reporter.onEnd({ status: "passed" } as any);
+      await reporter.onEnd({ status: "passed" } as unknown as FullResult);
 
       const selected = readSelectedRun(root, "run-real-capture");
       const casePlan = selected.cases[0]!.plan;
       const requirements: AuthoritativeRunRequirements = {
-        formatVersion: 1,
+        formatVersion: 2,
         kind: "framelia.authoritative-run-requirements",
+        runId: "run-real-capture",
+        issuedAt: "2026-09-21T00:00:00.000Z",
+        expiresAt: "2026-09-21T00:05:00.000Z",
+        jobIdentity: "protected-real-capture-test",
+        audience: "framelia-done-gate",
         requiredCases: [
           {
             caseId: casePlan.caseId,
@@ -462,8 +565,8 @@ describe("FrameliaReporter selected-run publication", () => {
         servedBuild: {
           mode: "ci-owned",
           observedBuildDigest: buildDigest,
+          observedOrigin: servedOrigin,
           freshServerOwnedByJob: true,
-          jobIdentity: "protected-real-capture-test",
         },
         retryAcceptance: casePlan.retryAcceptance,
       };
@@ -517,7 +620,7 @@ describe("FrameliaReporter selected-run publication", () => {
         actualImageDir: imageDir,
       }),
     );
-    await reporter.onEnd({ status: "passed" } as any);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
 
     const bundle = readRunBundle(root, "run-retries");
     expect(bundle.attempts.size).toBe(2);
@@ -548,7 +651,7 @@ describe("FrameliaReporter selected-run publication", () => {
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
     reporter.onTestEnd(test, fakeAttemptResult({ status: "skipped" }));
-    await reporter.onEnd({ status: "passed" } as any);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
 
     const bundle = readRunBundle(root, "run-skipped");
     const [attempt] = [...bundle.attempts.values()];
@@ -573,7 +676,7 @@ describe("FrameliaReporter selected-run publication", () => {
 
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
     reporter.onTestEnd(test, fakeAttemptResult({ status: "interrupted" }));
-    await reporter.onEnd({ status: "interrupted" } as any);
+    await reporter.onEnd({ status: "interrupted" } as unknown as FullResult);
 
     const bundle = readRunBundle(root, "run-interrupted");
     const [attempt] = [...bundle.attempts.values()];
@@ -606,7 +709,7 @@ describe("FrameliaReporter selected-run publication", () => {
       test,
       fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
     );
-    await reporter.onEnd({ status: "passed" } as any);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
 
     const bundle = readRunBundle(root, "run-dashboard-down");
     expect(bundle.record.status).toBe("finalized");
@@ -652,7 +755,7 @@ describe("FrameliaReporter selected-run publication", () => {
         }),
       }),
     );
-    await reporter.onEnd({ status: "failed" } as any);
+    await reporter.onEnd({ status: "failed" } as unknown as FullResult);
     const selected = readSelectedRun(root, "run-portable-error");
     const attempt = selected.cases[0]!.selectedAttempt!;
     expect(attempt.record.diagnostics[0]?.message).toContain("<project-root>/src/page.ts");
@@ -670,13 +773,50 @@ describe("FrameliaReporter selected-run publication", () => {
       runId: "run-no-contracts",
     });
     reporter.onBegin(fakeConfig(root), fakeSuite([]));
-    await reporter.onEnd({ status: "passed" } as any);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
 
     expect(fs.existsSync(path.join(root, ".framelia", "runs"))).toBe(false);
   });
 });
 
 describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix)", () => {
+  it("changes runtime and case-plan digests for browser, locale, and color scheme", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const specFile = path.join(root, "login.spec.ts");
+    const projectUses: Array<Partial<FullProject["use"]>> = [
+      { browserName: "chromium", locale: "en-US", colorScheme: "light" },
+      { browserName: "firefox", locale: "en-US", colorScheme: "light" },
+      { browserName: "chromium", locale: "fr-FR", colorScheme: "light" },
+      { browserName: "chromium", locale: "en-US", colorScheme: "dark" },
+    ];
+    const results = await Promise.all(
+      projectUses.map((projectUse, index) =>
+        buildCasePlanForTest(
+          fakeContractTest({
+            id: `runtime-${index}`,
+            binding,
+            specFile,
+            root,
+            projectUse,
+          }),
+          {
+            projectRoot: root,
+            runId: "runtime-identity-run",
+            retryAcceptance: "require-first-attempt",
+            maxMaskedAreaRatio: 0.15,
+            stabilitySamples: 2,
+            policyDigest: `sha256:${"0".repeat(64)}`,
+            source: {},
+          },
+        ),
+      ),
+    );
+
+    expect(new Set(results.map((result) => result.casePlan.project.runtimeDigest)).size).toBe(4);
+    expect(new Set(results.map((result) => canonicalJsonDigest(result.casePlan))).size).toBe(4);
+  });
+
   it("freezes the spec digest captured at defineFigmaTests registration time, not the file's content when buildCasePlanForTest later reads it", async () => {
     const root = tempDir("framelia-spec-digest-regression-");
     fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");

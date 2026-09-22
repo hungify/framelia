@@ -181,6 +181,8 @@ The authoritative gate additionally requires a protected Ed25519-signed requirem
 
 ```bash
 export FRAMELIA_TRUSTED_REQUIREMENTS_PUBLIC_KEY=/opt/framelia/trust/requirements-ed25519.pub.pem
+export FRAMELIA_PROTECTED_JOB_IDENTITY=github:example/app:visual-gate
+export FRAMELIA_AUTHORITY_AUDIENCE=framelia-done-gate
 npx framelia done-gate \
   --project-root "$PWD" \
   --run <run-id> \
@@ -189,12 +191,19 @@ npx framelia done-gate \
 
 The public key path must resolve outside the project checkout. Keep the corresponding private key
 only in a protected CI/deployment signing service; never put it in the repository, expose it to a
-pull-request job, or make product code a signing authority. The protected adapter signs canonical
-JSON only after it has observed the exact required case matrix, source/build identity,
-served-build proof, policy digest, binding and spec identities, and retry policy. Branch
-protection should trust only that protected job. The requirements envelope may be copied into the
-workspace, but it is not trusted unless its signature verifies against the pinned external public
-key.
+pull-request job, or make product code a signing authority. Supply the expected job identity and
+audience as protected job environment, not project config or CLI arguments. The signed payload
+must name the same run, job identity, and audience; have a current validity window no longer than
+15 minutes; and bind the observed HTTP(S) origin as well as the served build digest.
+
+`done-gate` intentionally does not load project `.env` files; configure all three trust variables
+in the protected runner environment.
+
+The protected adapter signs canonical JSON only after it has observed the exact required case
+matrix, source/build identity, served-build origin and proof, policy digest, binding and spec
+identities, and retry policy. Branch protection should trust only that protected job. The
+requirements envelope may be copied into the workspace, but it is not trusted unless its signature
+verifies against the pinned external public key and all protected identity/time bindings match.
 
 Legacy `visual-verification.json` input is deliberately unsupported as authority because it lacks
 the frozen source/build and case-plan identities. Rerun the annotated Playwright suite to produce
@@ -251,6 +260,8 @@ Exit `1` is a valid comparison result, not an infrastructure failure.
 - name: Gate selected run
   env:
     FRAMELIA_TRUSTED_REQUIREMENTS_PUBLIC_KEY: /opt/framelia/trust/requirements-ed25519.pub.pem
+    FRAMELIA_PROTECTED_JOB_IDENTITY: github:example/app:visual-gate
+    FRAMELIA_AUTHORITY_AUDIENCE: framelia-done-gate
   run: |
     npx framelia done-gate \
       --project-root "$PWD" \

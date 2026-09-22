@@ -11,9 +11,24 @@ import { canonicalJson, type CanonicalJsonValue } from "@framelia/verify";
 import { evaluateAuthoritativeRun } from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV } from "../src/cli-constants.ts";
+import {
+  AUTHORITY_AUDIENCE_ENV,
+  PROTECTED_JOB_IDENTITY_ENV,
+  TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV,
+} from "../src/cli-constants.ts";
 import { doneGateCommand } from "../src/internal/done-gate.ts";
-import { createSelectedRun, FIXTURE_BUILD_DIGEST, FIXTURE_DIGEST } from "./selected-run-fixture.ts";
+import {
+  createSelectedRun,
+  FIXTURE_AUDIENCE,
+  FIXTURE_BUILD_DIGEST,
+  FIXTURE_DIGEST,
+  FIXTURE_JOB_IDENTITY,
+  FIXTURE_SERVED_ORIGIN,
+} from "./selected-run-fixture.ts";
+
+function validAuthorityNow(): Date {
+  return new Date("2026-09-21T12:02:00.000Z");
+}
 
 const temporaryDirectories: string[] = [];
 afterEach(() => {
@@ -63,8 +78,13 @@ function signedRequirements(
   return { requirements, publicKey, privateKey: pair.privateKey };
 }
 
-function keyEnv(publicKey: string): NodeJS.ProcessEnv {
-  return { [TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV]: publicKey };
+function keyEnv(publicKey: string, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    [TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV]: publicKey,
+    [PROTECTED_JOB_IDENTITY_ENV]: FIXTURE_JOB_IDENTITY,
+    [AUTHORITY_AUDIENCE_ENV]: FIXTURE_AUDIENCE,
+    ...overrides,
+  };
 }
 
 function findRunFile(root: string, suffix: string): string {
@@ -138,6 +158,19 @@ describe("bundle-native authoritative evaluation", () => {
       "scope remap",
       (score: Record<string, unknown>) => {
         score.scope = { kind: "region", selector: "#other" };
+      },
+    ],
+    [
+      "served origin remap",
+      (score: Record<string, unknown>) => {
+        score.targetUrl = "https://evil.example/login";
+      },
+    ],
+    [
+      "captured final origin remap",
+      (score: Record<string, unknown>) => {
+        const capture = score.captureEvidence as { finalUrl: string };
+        capture.finalUrl = "https://evil.example/login";
       },
     ],
     [
@@ -254,6 +287,7 @@ describe("bundle-native authoritative evaluation", () => {
         mode: "deployment-attested" as const,
         attestation: {
           observedBuildDigest: FIXTURE_BUILD_DIGEST,
+          observedOrigin: FIXTURE_SERVED_ORIGIN,
           issuer: "deployment-control-plane",
           subject: "production/login",
           proofDigest: FIXTURE_DIGEST,
@@ -292,6 +326,7 @@ describe("signed done-gate authority boundary", () => {
                 mode,
                 attestation: {
                   observedBuildDigest: FIXTURE_BUILD_DIGEST,
+                  observedOrigin: FIXTURE_SERVED_ORIGIN,
                   issuer: "deployment-control-plane",
                   subject: "production/login",
                   proofDigest: FIXTURE_DIGEST,
@@ -312,7 +347,19 @@ describe("signed done-gate authority boundary", () => {
       expect(result.exitCode).toBe(0);
       expect(result.body).toMatchObject({
         exitCode: 0,
-        requirements: { role: "protected-signed-envelope" },
+        requirements: {
+          role: "protected-signed-envelope",
+          runId: payload.runId,
+          issuedAt: payload.issuedAt,
+          expiresAt: payload.expiresAt,
+          jobIdentity: FIXTURE_JOB_IDENTITY,
+          audience: FIXTURE_AUDIENCE,
+        },
+        authority: {
+          runId: payload.runId,
+          jobIdentity: FIXTURE_JOB_IDENTITY,
+          audience: FIXTURE_AUDIENCE,
+        },
         verifier: {
           algorithm: "Ed25519",
           trustRoot: "external-to-project",
@@ -325,6 +372,90 @@ describe("signed done-gate authority boundary", () => {
       expect(output).not.toContain(signed.publicKey);
     },
   );
+
+  it("binds signed requirements to run, validity window, protected job, and audience", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root, {
+      issuedAt: "2026-09-21T12:00:00.000Z",
+      expiresAt: "2026-09-21T12:05:00.000Z",
+    });
+    const signed = signedRequirements(root, fixture.requirements);
+    const options = {
+      artifact: undefined,
+      run: "run-selected",
+      requirements: signed.requirements,
+      projectRoot: root,
+    };
+
+    const anotherRun = signedRequirements(root, {
+      ...fixture.requirements,
+      runId: "run-other",
+    });
+    await expect(
+      doneGateCommand(
+        { ...options, requirements: anotherRun.requirements },
+        runtime(root, keyEnv(anotherRun.publicKey)),
+        validAuthorityNow,
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { issues: [{ code: "SIGNED_REQUIREMENTS_RUN_MISMATCH" }] },
+    });
+    await expect(
+      doneGateCommand(
+        options,
+        runtime(root, keyEnv(signed.publicKey)),
+        () => new Date("2026-09-21T11:59:59.000Z"),
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { issues: [{ code: "SIGNED_REQUIREMENTS_NOT_YET_VALID" }] },
+    });
+    const longWindow = signedRequirements(root, {
+      ...fixture.requirements,
+      expiresAt: "2026-09-21T12:20:00.000Z",
+    });
+    await expect(
+      doneGateCommand(
+        { ...options, requirements: longWindow.requirements },
+        runtime(root, keyEnv(longWindow.publicKey)),
+        validAuthorityNow,
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { issues: [{ code: "SIGNED_REQUIREMENTS_WINDOW_TOO_LARGE" }] },
+    });
+    await expect(
+      doneGateCommand(
+        options,
+        runtime(root, keyEnv(signed.publicKey)),
+        () => new Date("2026-09-21T12:05:00.000Z"),
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { issues: [{ code: "SIGNED_REQUIREMENTS_EXPIRED" }] },
+    });
+    await expect(
+      doneGateCommand(
+        options,
+        runtime(root, keyEnv(signed.publicKey, { [PROTECTED_JOB_IDENTITY_ENV]: "other-job" })),
+        validAuthorityNow,
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { issues: [{ code: "PROTECTED_JOB_IDENTITY_MISMATCH" }] },
+    });
+    await expect(
+      doneGateCommand(
+        options,
+        runtime(root, keyEnv(signed.publicKey, { [AUTHORITY_AUDIENCE_ENV]: "other-audience" })),
+        validAuthorityNow,
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { issues: [{ code: "PROTECTED_AUTHORITY_AUDIENCE_MISMATCH" }] },
+    });
+  });
 
   it("rejects a payload modified after signing", async () => {
     const root = temporaryRoot();
@@ -425,7 +556,53 @@ describe("signed done-gate authority boundary", () => {
     );
     expect(partial).toMatchObject({
       exitCode: 2,
-      body: { issues: [{ code: "RUN_BUNDLE_INVALID" }] },
+      body: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "attempt-publication-partial" }),
+        ]),
+      },
+    });
+  });
+  it("retains an unaffected mismatch when another selected attempt record is malformed", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root, {
+      attempts: [false],
+      secondCase: { pass: true },
+    });
+    const secondCaseId = fixture.plan.selectedCases[1]!.caseId;
+    const attempts = path.join(root, ".framelia", "runs");
+    const secondAttemptFile = fs
+      .readdirSync(attempts, { recursive: true })
+      .map(String)
+      .filter((entry) => entry.endsWith("attempt.json"))
+      .map((entry) => path.join(attempts, entry))
+      .find((attemptFile) => {
+        const record = JSON.parse(fs.readFileSync(attemptFile, "utf8")) as { caseId?: unknown };
+        return record.caseId === secondCaseId;
+      });
+    if (!secondAttemptFile) throw new Error(`attempt for ${secondCaseId} not found`);
+    fs.writeFileSync(secondAttemptFile, "{");
+
+    const signed = signedRequirements(root, fixture.requirements);
+    const result = await doneGateCommand(
+      {
+        artifact: undefined,
+        run: "run-selected",
+        requirements: signed.requirements,
+        projectRoot: root,
+      },
+      runtime(root, keyEnv(signed.publicKey)),
+    );
+
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        visualVerdict: "mismatched",
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "visual-mismatch" }),
+          expect.objectContaining({ code: "attempt-record-invalid" }),
+        ]),
+      },
     });
   });
 

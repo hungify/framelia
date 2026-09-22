@@ -287,5 +287,10 @@ Reporter reads matcher score/image attachments from Playwright's main process bo
 matcher call gets its own evidence directory. Passing calls attach expected/actual/diff images so
 Reporter can persist the same evidence required by `framelia done-gate`.
 
+A reporter invocation knows only Playwright's selected tests, so its run plan is always marked as
+a subset and never claims to be the complete required matrix. Protected signed requirements
+supply the authoritative full matrix to `framelia done-gate`. Attempt publication failures are
+persisted on the final run record and shown in the dashboard; a run with one cannot pass the gate.
+
 Web-to-web matcher results remain runtime/dashboard evidence. Contract and done-gate artifacts are
 Figma-baselined after schema-v4 pivot.

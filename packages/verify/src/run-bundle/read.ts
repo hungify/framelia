@@ -3,13 +3,16 @@ import * as path from "node:path";
 
 import {
   attemptRecordSchema,
+  isTerminalRunStatus,
   type AttemptRecord,
   type CasePlan,
+  type Diagnostic,
   type RunPlan,
   type RunRecord,
 } from "@framelia/contracts/workflow";
 
 import { canonicalJsonDigest } from "../canonical-json.ts";
+import { portableErrorMessage } from "../portable.ts";
 import { AppError } from "../types.ts";
 import { readCasePlans } from "./case-plans.ts";
 import { validateAttemptEvidence } from "./evidence.ts";
@@ -50,9 +53,16 @@ export function readRunBundle(root: string, runId: string): RunBundle {
   return readRunBundleRecords(root, runId, true).bundle;
 }
 
+export interface AttemptReadIssue {
+  caseId: string;
+  attemptId: string;
+  diagnostic: Diagnostic;
+}
+
 export interface RunBundleRecordRead {
   bundle: RunBundle;
   missingAttemptIds: ReadonlySet<string>;
+  attemptReadIssues: readonly AttemptReadIssue[];
 }
 
 /**
@@ -65,9 +75,11 @@ export function readRunBundleRecords(
   root: string,
   runId: string,
   validateEvidenceFiles: boolean,
+  tolerateMalformedAttempts = false,
 ): RunBundleRecordRead {
   const plan = readRunPlan(root, runId);
   const record = readRunRecord(root, runId);
+  const terminal = isTerminalRunStatus(record.status);
   if (plan.runId !== runId || record.runId !== runId) {
     throw new AppError(
       "RUN_BUNDLE_INVALID",
@@ -128,6 +140,7 @@ export function readRunBundleRecords(
     }
   }
   const attempts = new Map<string, AttemptRecord>();
+  const attemptReadIssues: AttemptReadIssue[] = [];
   const onDiskAttemptIdsByCase = new Map<string, Set<string>>();
   for (const selected of plan.selectedCases) {
     const onDiskAttemptIds = new Set<string>();
@@ -139,12 +152,39 @@ export function readRunBundleRecords(
       if (!entry.isDirectory()) continue;
       const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
       if (!fs.existsSync(attemptPath)) {
-        throw new AppError(
-          "RUN_BUNDLE_INVALID",
-          `Attempt directory "${entry.name}" for case "${selected.caseId}" is missing attempt.json.`,
-        );
+        if (!tolerateMalformedAttempts) {
+          throw new AppError(
+            "RUN_BUNDLE_INVALID",
+            `Attempt directory "${entry.name}" for case "${selected.caseId}" is missing attempt.json.`,
+          );
+        }
+        attemptReadIssues.push({
+          caseId: selected.caseId,
+          attemptId: entry.name,
+          diagnostic: {
+            code: "attempt-publication-partial",
+            stage: "publication",
+            message: `Attempt directory "${entry.name}" is missing attempt.json.`,
+          },
+        });
+        continue;
       }
-      const attempt = readAttemptRecord(attemptPath);
+      let attempt: AttemptRecord;
+      try {
+        attempt = readAttemptRecord(attemptPath);
+      } catch (error) {
+        if (!tolerateMalformedAttempts) throw error;
+        attemptReadIssues.push({
+          caseId: selected.caseId,
+          attemptId: entry.name,
+          diagnostic: {
+            code: "attempt-record-invalid",
+            stage: "publication",
+            message: portableErrorMessage(error, root),
+          },
+        });
+        continue;
+      }
       if (attempt.runId !== runId || attempt.caseId !== selected.caseId) {
         throw new AppError(
           "RUN_BUNDLE_INVALID",
@@ -229,29 +269,33 @@ export function readRunBundleRecords(
         );
       }
     }
-    if (record.status === "finalized") {
+    if (terminal) {
       const onDisk = onDiskAttemptIdsByCase.get(caseEntry.caseId) ?? new Set<string>();
       const recorded = new Set(caseEntry.attemptIds);
       const missingFromRecord = [...onDisk].filter((id) => !recorded.has(id));
       if (missingFromRecord.length > 0) {
         throw new AppError(
           "RUN_BUNDLE_INVALID",
-          `Run "${runId}" is finalized but case "${caseEntry.caseId}"'s record omits published attempt(s): ${missingFromRecord.join(", ")}.`,
+          `Terminal run "${runId}" (${record.status}) case "${caseEntry.caseId}" record omits published attempt(s): ${missingFromRecord.join(", ")}.`,
         );
       }
     }
   }
-  if (record.status === "finalized") {
+  if (terminal) {
     const missingCases = [...selectedCaseIds].filter((caseId) => !recordCaseIds.has(caseId));
     if (missingCases.length > 0) {
       throw new AppError(
         "RUN_BUNDLE_INVALID",
-        `Run "${runId}" is finalized but its record omits selected case(s): ${missingCases.join(", ")}.`,
+        `Terminal run "${runId}" (${record.status}) record omits selected case(s): ${missingCases.join(", ")}.`,
       );
     }
   }
 
-  return { bundle: { plan, record, casePlans, attempts }, missingAttemptIds };
+  return {
+    bundle: { plan, record, casePlans, attempts },
+    missingAttemptIds,
+    attemptReadIssues,
+  };
 }
 
 function readAttemptRecord(filePath: string): AttemptRecord {

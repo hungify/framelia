@@ -169,13 +169,14 @@ function selectedRunFixture(): SelectedRun {
       selectedCases: [{ caseId: casePlan.caseId, casePlanDigest: DIGEST }],
     },
     record: {
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "framelia.run",
       runId: "run-42",
       planDigest: DIGEST,
       status: "finalized",
       createdAt: "2026-09-15T00:00:00.000Z",
       finalizedAt: "2026-09-15T00:00:02.000Z",
+      diagnostics: [],
       cases: [
         {
           caseId: casePlan.caseId,
@@ -201,6 +202,7 @@ function selectedRunFixture(): SelectedRun {
         selectedAttempt: attempt,
         attempts: [attempt],
         missingAttemptIds: [],
+        invalidAttempts: [],
       },
     ],
     integrityIssues: [],
@@ -261,6 +263,32 @@ describe("projectSelectedRun", () => {
         }),
       ],
     });
+  });
+
+  it("projects persisted run publication diagnostics as blocking dashboard warnings", () => {
+    const selectedRun = selectedRunFixture();
+    const diagnostic = {
+      code: "attempt-publication-failed",
+      stage: "publication" as const,
+      message: "attempt evidence could not be committed",
+    };
+    selectedRun.record.status = "error";
+    selectedRun.record.diagnostics = [diagnostic];
+    selectedRun.integrityIssues = [diagnostic];
+    selectedRun.executionState = "error";
+
+    const projection = projectSelectedRun("/copied-root", selectedRun);
+    expect(projection.run.status).toBe("blocked");
+    expect(projection.run.contracts[0]?.status).toBe("blocked");
+
+    expect(projection.run.diagnostics).toEqual([
+      {
+        kind: "warning",
+        code: diagnostic.code,
+        message: diagnostic.message,
+        blocking: true,
+      },
+    ]);
   });
 });
 

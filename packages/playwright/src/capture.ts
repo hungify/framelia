@@ -1,4 +1,3 @@
-import { MIN_STABILITY_SAMPLES } from "@framelia/contracts";
 import type { CaptureCoreOutcome, ReadyCaptureSpec } from "@framelia/verify/internal";
 import { captureReadyPage } from "@framelia/verify/internal";
 import type { Page } from "@playwright/test";
@@ -33,7 +32,7 @@ export async function captureActual(
       ? { kind: "region", selector: options.selector, expectedSize: options.expectedSize }
       : { kind: "page", fullPage: options.fullPage ?? false },
     screenshot: { masks: options.masks, maxMaskedAreaRatio: options.maxMaskedAreaRatio },
-    stabilitySamples: options.stabilitySamples ?? MIN_STABILITY_SAMPLES,
+    stabilitySamples: options.stabilitySamples ?? 1,
     timeoutMs: options.timeoutMs,
     fontPolicy: options.fontPolicy,
     animationPolicy: options.animationPolicy,

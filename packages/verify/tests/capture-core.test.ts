@@ -64,6 +64,32 @@ describe("captureReadyPage", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+  it("defaults generic capture to one screenshot", async () => {
+    const app = await server();
+    const context = await browser.newContext();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const screenshot = vi.spyOn(page, "screenshot");
+
+      const outcome = await captureReadyPage(page, {
+        outPath: path.join(tmpDir, "capture.png"),
+        scope: { kind: "page", fullPage: false },
+        screenshot: {},
+        timeoutMs: 2_000,
+      });
+
+      if (!outcome.ok) throw new Error(`capture failed: ${outcome.error} ${outcome.message}`);
+      expect(screenshot).toHaveBeenCalledTimes(1);
+      expect(outcome.screenshotHashes).toHaveLength(1);
+    } finally {
+      vi.restoreAllMocks();
+      await context.close();
+      await app.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
   it("hashes every stability sample and detects a changed third capture", async () => {
     const app = await server();

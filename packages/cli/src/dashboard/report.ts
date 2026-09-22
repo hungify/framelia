@@ -6,7 +6,7 @@ import {
   projectSelectedRun,
   type DashboardSource,
 } from "@framelia/dashboard-server";
-import { JSON_INDENT_SPACES } from "@framelia/verify";
+import { JSON_INDENT_SPACES, sanitizePortableValue } from "@framelia/verify";
 import { readSelectedRun } from "@framelia/verify/run-bundle";
 
 export const DASHBOARD_RUN_FILE = "selected-run.json";
@@ -32,21 +32,6 @@ async function isPreviousFrameliaReport(outputDirectory: string): Promise<boolea
     .readFile(path.join(outputDirectory, REPORT_MARKER_FILE), "utf8")
     .then((raw) => (JSON.parse(raw) as { marker?: string }).marker === REPORT_MARKER)
     .catch(() => false);
-}
-
-function sanitizePortableValue<T>(value: T, projectRoot: string): T {
-  if (typeof value === "string") {
-    return value.replaceAll(path.resolve(projectRoot), "<project-root>") as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => sanitizePortableValue(entry, projectRoot)) as T;
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, sanitizePortableValue(entry, projectRoot)]),
-    ) as T;
-  }
-  return value;
 }
 
 async function copyPortableEvidence(

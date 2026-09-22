@@ -31,6 +31,7 @@ import {
   publishAttempt,
   publishBundleUnit,
   readRunBundle,
+  readSelectedRun,
   readRunRecord,
   runRecordPath,
   startRunRecord,
@@ -470,28 +471,35 @@ describe("publishAttempt", () => {
     ).rejects.toThrow(/not part of run .* selected cases/);
   });
 
-  it("rejects publishing a new attempt once the run has already been finalized", async () => {
-    const root = temporaryRoot();
-    const casePlan = casePlanFixture();
-    const runId = "run-sealed";
-    setUpRun(root, runId, [casePlan]);
-    await publishAttempt(
-      root,
-      runId,
-      attemptFixture(casePlan, 0),
-      completeEvidence(Buffer.from("attempt-0")),
-    );
-    await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
-
-    await expect(
-      publishAttempt(
+  it.each(["finalized", "incomplete", "error"] as const)(
+    "rejects publishing a new attempt once the run is terminal (%s)",
+    async (status) => {
+      const root = temporaryRoot();
+      const casePlan = casePlanFixture();
+      const runId = `run-sealed-${status}`;
+      setUpRun(root, runId, [casePlan]);
+      await publishAttempt(
         root,
         runId,
-        attemptFixture(casePlan, 1),
-        completeEvidence(Buffer.from("attempt-1-too-late")),
-      ),
-    ).rejects.toThrow(/already finalized/);
-  });
+        attemptFixture(casePlan, 0),
+        completeEvidence(Buffer.from("attempt-0")),
+      );
+      await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
+      const recordPath = runRecordPath(root, runId);
+      const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+      record.status = status;
+      fs.writeFileSync(recordPath, JSON.stringify(record));
+
+      await expect(
+        publishAttempt(
+          root,
+          runId,
+          attemptFixture(casePlan, 1),
+          completeEvidence(Buffer.from("attempt-1-too-late")),
+        ),
+      ).rejects.toThrow(/already terminal/);
+    },
+  );
 });
 
 describe("two runs in one project root", () => {
@@ -800,11 +808,10 @@ describe("readRunBundle tamper detection", () => {
 
     expect(() => readRunBundle(root, runId)).toThrow(/does not match its recorded digest/);
   });
-
-  it("throws when a finalized run record omits a selected case entirely", async () => {
+  it("keeps the strict reader fail-fast for a malformed attempt record", async () => {
     const root = temporaryRoot();
     const casePlan = casePlanFixture();
-    const runId = "run-omitted-case";
+    const runId = "run-malformed-attempt";
     setUpRun(root, runId, [casePlan]);
     await publishAttempt(
       root,
@@ -813,42 +820,83 @@ describe("readRunBundle tamper detection", () => {
       completeEvidence(Buffer.from("actual")),
     );
     await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
+    const runsDirectory = path.join(root, ".framelia", "runs");
+    const attemptRecord = fs
+      .readdirSync(runsDirectory, { recursive: true })
+      .map(String)
+      .find((entry) => entry.endsWith("attempt.json"));
+    if (!attemptRecord) throw new Error("published attempt record not found");
+    fs.writeFileSync(path.join(runsDirectory, attemptRecord), "{");
 
-    const recordPath = runRecordPath(root, runId);
-    const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
-    record.cases = [];
-    fs.writeFileSync(recordPath, JSON.stringify(record));
-
-    expect(() => readRunBundle(root, runId)).toThrow(/omits selected case/);
+    expect(() => readRunBundle(root, runId)).toThrow(AppError);
   });
 
-  it("throws when a finalized run record omits a published attempt for one of its cases", async () => {
-    const root = temporaryRoot();
-    const casePlan = casePlanFixture();
-    const runId = "run-omitted-attempt";
-    setUpRun(root, runId, [casePlan]);
-    await publishAttempt(
-      root,
-      runId,
-      attemptFixture(casePlan, 0),
-      completeEvidence(Buffer.from("attempt-0")),
-    );
-    await publishAttempt(
-      root,
-      runId,
-      attemptFixture(casePlan, 1),
-      completeEvidence(Buffer.from("attempt-1")),
-    );
-    await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
+  it.each(["finalized", "incomplete", "error"] as const)(
+    "rejects a terminal %s record that omits a selected case after sealing",
+    async (status) => {
+      const root = temporaryRoot();
+      const casePlan = casePlanFixture();
+      const runId = `run-omitted-case-${status}`;
+      setUpRun(root, runId, [casePlan]);
+      await publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 0),
+        completeEvidence(Buffer.from("actual")),
+      );
+      await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
 
-    const recordPath = runRecordPath(root, runId);
-    const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
-    record.cases[0].attemptIds = [computeAttemptId(casePlan.caseId, 0)];
-    record.cases[0].selectedAttemptId = computeAttemptId(casePlan.caseId, 0);
-    fs.writeFileSync(recordPath, JSON.stringify(record));
+      const recordPath = runRecordPath(root, runId);
+      const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+      record.status = status;
+      record.diagnostics =
+        status === "finalized"
+          ? []
+          : [{ code: `terminal-${status}`, stage: "finalization", message: status }];
+      record.cases = [];
+      fs.writeFileSync(recordPath, JSON.stringify(record));
 
-    expect(() => readRunBundle(root, runId)).toThrow(/omits published attempt/);
-  });
+      expect(() => readRunBundle(root, runId)).toThrow(/omits selected case/);
+      expect(() => readSelectedRun(root, runId)).toThrow(/omits selected case/);
+    },
+  );
+
+  it.each(["finalized", "incomplete", "error"] as const)(
+    "rejects a terminal %s record when an on-disk attempt is absent from sealed membership",
+    async (status) => {
+      const root = temporaryRoot();
+      const casePlan = casePlanFixture();
+      const runId = `run-omitted-attempt-${status}`;
+      setUpRun(root, runId, [casePlan]);
+      await publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 0),
+        completeEvidence(Buffer.from("attempt-0")),
+      );
+      await publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 1),
+        completeEvidence(Buffer.from("attempt-1")),
+      );
+      await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
+
+      const recordPath = runRecordPath(root, runId);
+      const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+      record.status = status;
+      record.diagnostics =
+        status === "finalized"
+          ? []
+          : [{ code: `terminal-${status}`, stage: "finalization", message: status }];
+      record.cases[0].attemptIds = [computeAttemptId(casePlan.caseId, 0)];
+      record.cases[0].selectedAttemptId = computeAttemptId(casePlan.caseId, 0);
+      fs.writeFileSync(recordPath, JSON.stringify(record));
+
+      expect(() => readRunBundle(root, runId)).toThrow(/omits published attempt/);
+      expect(() => readSelectedRun(root, runId)).toThrow(/omits published attempt/);
+    },
+  );
 
   it("throws when a record references a case the frozen plan never selected", () => {
     const root = temporaryRoot();

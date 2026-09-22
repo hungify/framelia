@@ -23,6 +23,7 @@ export type { DiffRegionAttribution, SelectorBounds } from "./compare/attributio
 export type { DiffCluster } from "./compare/pixel.ts";
 export { canonicalJson, canonicalJsonDigest } from "./canonical-json.ts";
 export type { CanonicalJsonValue } from "./canonical-json.ts";
+export { portableErrorMessage, sanitizePortableValue } from "./portable.ts";
 export { fetchBaseline, baselineMetaPath, readBaselineMeta } from "./baseline/figma-fetch.ts";
 export type {
   FetchBaselineOptions,

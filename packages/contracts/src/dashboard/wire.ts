@@ -105,6 +105,7 @@ export const dashboardRunSchema = z
       .optional(),
     executionState: z.enum(["running", "completed", "incomplete", "error"]).optional(),
     visualVerdict: dashboardVisualVerdictSchema.optional(),
+    diagnostics: z.array(z.object({ code: z.string(), message: z.string() }).loose()).optional(),
     suiteName: z.string().min(1).optional(),
     status: dashboardVerdictSchema,
     summary: dashboardSummarySchema,

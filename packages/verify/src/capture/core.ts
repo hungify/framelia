@@ -21,17 +21,16 @@ import { MASK_COLOR } from "./types.ts";
 /**
  * Navigation-free capture: screenshots a `Page` the caller has already
  * navigated, authenticated, and interacted with — no `goto`/`reload`, no
- * navigation-action execution, and no readiness-selector/event wait. It takes two
- * back-to-back samples without reloading so the durable score can prove whether the
- * caller-owned state was pixel-stable. Intended for callers (e.g.
- * `@framelia/playwright` matchers) that already own reaching the state they want to
- * capture.
+ * navigation-action execution, and no readiness-selector/event wait. Generic callers
+ * take one screenshot by default; authored workflows explicitly request back-to-back
+ * stability samples without reloading.
  */
 export async function captureReadyPage(
   page: Page,
   spec: ReadyCaptureSpec,
 ): Promise<CaptureCoreOutcome> {
   const timeoutMs = spec.timeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
+  const stabilitySamples = spec.stabilitySamples ?? 1;
   const startedAt = new Date().toISOString();
   const warnings: string[] = [];
   if (page.isClosed()) {
@@ -88,7 +87,7 @@ export async function captureReadyPage(
   if (!resolvedMasks.ok) return resolvedMasks.reject;
   const { locators: maskLocators, evidence: maskEvidence } = resolvedMasks;
   const capturedAt = new Date().toISOString();
-  const samplePaths = Array.from({ length: spec.stabilitySamples - 1 }, (_, index) =>
+  const samplePaths = Array.from({ length: stabilitySamples - 1 }, (_, index) =>
     path.join(
       path.dirname(spec.outPath),
       `.${path.basename(spec.outPath)}.stability-${index + 1}.png`,

@@ -110,7 +110,7 @@ describe("runToMatchFigma", () => {
 
       expect(result.pass).toBe(true);
       expect(attachCalls).toHaveLength(3);
-      // Durable evidence attaches on pass so Reporter can persist a VerificationArtifact.
+      // The score attachment lets the Reporter publish durable attempt evidence.
       expect(attachJsonCalls).toHaveLength(1);
       expect(attachJsonCalls[0]?.name).toContain("-framelia-score");
       expect(attachJsonCalls[0]?.data).toMatchObject({ pass: true, baselineKind: "figma" });

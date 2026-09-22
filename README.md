@@ -6,40 +6,36 @@ web-to-web visual verification, plus a CLI for browsing and gating the evidence 
 ## Architecture
 
 Framelia does not own navigation, authentication, or browser-context creation — a developer's own
-`@playwright/test` suite does, and calls a framelia matcher at the point it wants to capture and
-diff. `@framelia/playwright`'s Reporter drives a live dashboard during that run and persists a
-portable artifact afterward; the CLI never coordinates capture itself.
+`@playwright/test` suite does, and calls a Framelia matcher at the point it wants to capture and
+diff. `@framelia/playwright`'s Reporter drives a live dashboard and publishes immutable
+run/case/attempt records plus digest-addressed evidence under `.framelia/runs/<run-id>/`.
 
 ```mermaid
 flowchart LR
-  Dev["Developer's Playwright test<br/>(own navigation/auth)"] --> Matcher["toMatchFigma / toMatchPage / toMatchUrl"]
-  Matcher --> Figma["Figma baseline"]
-  Matcher --> Capture["Navigation-free capture"]
-  Figma --> Pipeline["Compare + attach"]
-  Capture --> Pipeline
-  Pipeline --> Reporter["Playwright Reporter"]
-
-  Reporter --> Events["Live results"]
-  Events --> Server["Hono + SSE server<br/>(@framelia/dashboard-server)"]
+  Dev["Developer's Playwright test<br/>(own navigation/auth)"] --> Matcher["defineFigmaTests / matchers"]
+  Matcher --> Capture["Navigation-free N-sample capture"]
+  Capture --> Compare["Compare + score"]
+  Compare --> Reporter["Playwright Reporter"]
+  Reporter --> Run["Selected run bundle"]
+  Reporter --> Server["Hono + SSE server"]
   Server --> Dashboard["Vue dashboard"]
-  Reporter --> Artifact["Versioned artifact<br/>(figma-baselined results only)"]
-
-  Artifact --> Open["framelia open"]
-  Artifact --> Report["framelia report"]
-  Artifact --> DoneGate["framelia done-gate"]
+  Run --> Open["framelia open --run"]
+  Run --> Report["framelia report --run"]
+  Run --> DoneGate["framelia done-gate --run"]
 ```
 
-Artifact remains source of truth. Live events only update progress before final artifact lands. No database, hosted service, account, or cloud state.
+The selected run bundle is the durable source of truth. Live events only report progress before
+attempt publication/finalization. No database, hosted service, account, or cloud state is involved.
 
 ### Runtime modes
 
-| Command                                        | Engine run                    | Server | Browser UI                | Output                                       |
-| ---------------------------------------------- | ----------------------------- | ------ | ------------------------- | -------------------------------------------- |
-| `npx playwright test` (matchers, no reporter)  | Yes (your Playwright process) | No     | No                        | Test pass/fail + attachments                 |
-| `npx playwright test` (with framelia Reporter) | Yes (your Playwright process) | Yes    | Live dashboard            | Test pass/fail + JSON artifact + live events |
-| `framelia open`                                | No                            | Yes    | Archived dashboard        | Existing artifact                            |
-| `framelia report`                              | No                            | No     | Portable static dashboard | Static report directory                      |
-| `framelia done-gate`                           | No                            | No     | No                        | Independent persisted-evidence verdict       |
+| Command                                        | Engine run                    | Server | Browser UI                | Output                             |
+| ---------------------------------------------- | ----------------------------- | ------ | ------------------------- | ---------------------------------- |
+| `npx playwright test` (matchers, no reporter)  | Yes (your Playwright process) | No     | No                        | Test pass/fail + attachments       |
+| `npx playwright test` (with Framelia Reporter) | Yes (your Playwright process) | Yes    | Live selected-run view    | Immutable run bundle + live events |
+| `framelia open --run <id>`                     | No                            | Yes    | Selected-run dashboard    | Existing run bundle                |
+| `framelia report --run <id>`                   | No                            | No     | Portable static dashboard | Relocatable selected-run report    |
+| `framelia done-gate --run <id>`                | No                            | No     | No                        | Trusted authoritative run verdict  |
 
 ## Workspace
 
@@ -47,8 +43,8 @@ Artifact remains source of truth. Live events only update progress before final 
 apps/
 └── dashboard/               # Vue/Vite + Nuxt UI; depends only on contracts
 packages/
-├── contracts/               # versioned request, artifact, dashboard, event contracts
-├── verify/                  # baseline resolution, capture primitive, compare, done-gate
+├── contracts/               # versioned authored, workflow, dashboard, and event contracts
+├── verify/                  # baseline resolution, capture, comparison, and run-bundle readers
 ├── dashboard-server/        # Hono/SSE server + result-projection, shared by cli and playwright
 ├── playwright/              # toMatchFigma / toMatchPage / toMatchUrl matchers + Reporter
 └── cli/                     # framelia binary: init, contract create, status, schema,
@@ -122,22 +118,20 @@ npx playwright test
 
 The Reporter prints the dashboard URL and keeps the server up until the Playwright process exits.
 
-Open an existing artifact without rerunning:
+Open one durable run without rerunning:
 
 ```bash
-pnpm framelia open \
-  --artifact /absolute/path/to/visual-verification.json
+pnpm framelia open --project-root "$PWD" --run <run-id>
 ```
 
 ### Run dashboard with HMR
 
-Use mock mode above for normal UI work. To debug real artifact/API integration, start archived dashboard backend first:
+Use mock mode above for normal UI work. To debug a real selected-run/API integration, start its
+dashboard backend first:
 
 ```bash
 pnpm build
-pnpm framelia open \
-  --artifact /absolute/path/to/visual-verification.json \
-  --no-open
+pnpm framelia open --project-root "$PWD" --run <run-id> --no-open
 ```
 
 Command prints backend URL such as `http://127.0.0.1:43127`. Keep process running. In second terminal, pass URL to Vite proxy:

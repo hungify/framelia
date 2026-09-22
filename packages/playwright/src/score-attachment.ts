@@ -21,6 +21,7 @@ export interface FrameliaScoreAttachment {
   clusterCheck?: boolean;
   /** Explicit per-contract threshold overrides compare() actually ran with. */
   profileOverrides?: ProfileOverrides;
+  styleToleranceOverrides?: StyleToleranceOverrides;
   /** Explicit gateEligible override the matcher call was given, if any. */
   gateEligible?: boolean;
   /** Explicit styleGateEligible override the matcher call was given, if any. */
@@ -43,7 +44,7 @@ export interface FrameliaScoreAttachment {
   baselineVersion?: number;
   baselineRunId?: string;
 }
-import type { VisualMask } from "@framelia/contracts";
+import type { StyleToleranceOverrides, VisualMask } from "@framelia/contracts";
 import type {
   CompareOutcome,
   ExpectSize,
@@ -65,6 +66,7 @@ export interface ScoreAttachmentBase {
   profile: ProfileName;
   clusterCheck?: boolean;
   profileOverrides?: ProfileOverrides;
+  styleToleranceOverrides?: StyleToleranceOverrides;
   gateEligible?: boolean;
   styleGateEligible?: boolean;
   scope: MatcherScope;

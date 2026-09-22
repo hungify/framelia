@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createSelectedRun } from "./selected-run-fixture.ts";
+
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const binPath = path.join(packageRoot, "bin", "framelia.js");
 
@@ -133,44 +135,46 @@ describe("golden baseline: compare is result-producing (exit 0/1, never a usage 
 
 describe("golden baseline: fast-failing required-flag routes", () => {
   it.each([
-    ["open", ["open"], "--artifact"],
-    ["report", ["report"], "--artifact"],
-    ["done-gate", ["done-gate"], "--artifact"],
-    ["auth", ["auth"], "--url"],
-    ["contract suggest-masks", ["contract", "suggest-masks"], "--target-url"],
-    ["baseline promote", ["baseline", "promote"], "--key"],
-  ])("`%s` fails fast on a missing required flag, exit 2, stderr only", (_label, args, flag) => {
+    ["open", ["open"], "Expected input for flag --run"],
+    ["report", ["report"], "Expected input for flag --run"],
+    ["done-gate", ["done-gate"], "done-gate requires --run <id>"],
+    ["auth", ["auth"], "Expected input for flag --url"],
+    [
+      "contract suggest-masks",
+      ["contract", "suggest-masks"],
+      "Expected input for flag --target-url",
+    ],
+    ["baseline promote", ["baseline", "promote"], "Expected input for flag --key"],
+  ])("`%s` fails fast on a missing required flag, exit 2, stderr only", (_label, args, message) => {
     const result = run(args);
     expect(result.status).toBe(2);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain(`Expected input for flag ${flag}`);
+    expect(result.stderr).toContain(message);
   });
 });
 
-describe("golden baseline: file-read failures surface as plain usage-boundary errors (exit 2)", () => {
-  it("`done-gate` on a missing artifact file", () => {
-    const result = run(["done-gate", "--artifact", "does-not-exist.json"]);
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Cannot read JSON does-not-exist.json");
-    expect(result.stderr).toContain("ENOENT");
-  });
-
-  it("`report` on a missing artifact file", () => {
-    const outputDirectory = tempDir("framelia-report-out-");
+describe("golden baseline: trusted-input read failures are usage errors (exit 2)", () => {
+  it("`done-gate` on a missing protected requirements file", () => {
     const result = run([
-      "report",
-      "--artifact",
+      "done-gate",
+      "--run",
+      "run-selected",
+      "--requirements",
       "does-not-exist.json",
-      "--output",
-      outputDirectory,
     ]);
     expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain(
-      `Cannot read verification artifact ${path.resolve(process.cwd(), "does-not-exist.json")}`,
-    );
-    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      executionState: "incomplete",
+      exitCode: 2,
+      issues: [
+        {
+          code: "SIGNED_REQUIREMENTS_UNREADABLE",
+          message: "The protected signed requirements envelope could not be read.",
+        },
+      ],
+    });
+    expect(result.stdout).not.toContain("does-not-exist.json");
   });
 });
 
@@ -258,9 +262,10 @@ describe("golden baseline: dashboard bare default command", () => {
     const port = await reservePort();
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-dashboard-golden-"));
     fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {};\n");
+    await createSelectedRun(projectRoot);
     const child = spawn(
       process.execPath,
-      [binPath, "dashboard", "--port", String(port), "--no-open"],
+      [binPath, "dashboard", "--run", "run-selected", "--port", String(port), "--no-open"],
       {
         stdio: ["ignore", "pipe", "pipe"],
         cwd: projectRoot,

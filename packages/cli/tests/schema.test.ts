@@ -11,11 +11,11 @@ describe("schemaCommand", () => {
     );
   });
 
-  it("returns the verification artifact JSON Schema for target 'artifact'", () => {
-    const schema = schemaCommand({ target: "artifact" }).body;
+  it("returns the signed authoritative requirements envelope schema", () => {
+    const schema = schemaCommand({ target: "requirements" }).body;
     expect(schema.type).toBe("object");
     expect(Object.keys(schema.properties ?? {})).toEqual(
-      expect.arrayContaining(["schemaVersion", "kind", "request", "results"]),
+      expect.arrayContaining(["formatVersion", "kind", "payload", "signature"]),
     );
   });
 });

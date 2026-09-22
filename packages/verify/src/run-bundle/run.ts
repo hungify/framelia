@@ -9,12 +9,14 @@ import {
   runRecordSchema,
   type AttemptRecord,
   type CasePlan,
+  type Diagnostic,
   type RunPlan,
   type RunRecord,
 } from "@framelia/contracts/workflow";
 
 import { canonicalJsonDigest } from "../canonical-json.ts";
 import { writeFileAtomic } from "../fs-atomic.ts";
+import { portableErrorMessage } from "../portable.ts";
 import type { RetryAcceptancePolicy } from "../project-policy.ts";
 import { AppError } from "../types.ts";
 import { readCasePlans } from "./case-plans.ts";
@@ -53,6 +55,12 @@ export function freezeRunPlan(root: string, plan: RunPlan, casePlans: readonly C
   const seenCaseIds = new Set<string>();
   const files: StagedFile[] = casePlans.map((casePlan) => {
     const validated = casePlanSchema.parse(casePlan);
+    if (validated.runId !== validatedPlan.runId) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Case plan "${validated.caseId}" belongs to run "${validated.runId}", not run "${validatedPlan.runId}".`,
+      );
+    }
     if (seenCaseIds.has(validated.caseId)) {
       throw new AppError(
         "RUN_BUNDLE_INVALID",
@@ -112,13 +120,14 @@ export function readRunPlan(root: string, runId: string): RunPlan {
 
 /**
  * Publishes/overwrites the run's own coordination record (`run.json`). Unlike a run plan
- * or an attempt, this record is *not* immutable: it starts at `status: "running"` when the
- * run begins and is republished at `status: "finalized"` once every attempt has landed.
- * This mutability is safe because exactly one process -- the run's own coordinator/
- * finalizer -- ever calls this function for a given `runId`; workers publish attempts
- * (via `publishAttempt`), never `run.json` itself, so there is no concurrent-writer race
- * on this file to guard against. Each call is still a single-file atomic write
- * (`writeFileAtomic`), so a reader never observes a torn `run.json`.
+ * or an attempt, this record is *not* immutable while work is active: it starts at
+ * `status: "running"` and is sealed as `finalized`, `incomplete`, or `error` once every
+ * attempt publication has settled. This mutability is safe because exactly one process --
+ * the run's own coordinator/finalizer -- ever calls this function for a given `runId`;
+ * workers publish attempts (via `publishAttempt`), never `run.json` itself, so there is
+ * no concurrent-writer race on this file to guard against. Each call is still a
+ * single-file atomic write (`writeFileAtomic`), so a reader never observes a torn
+ * `run.json`.
  */
 export function publishRunRecord(root: string, record: RunRecord): void {
   const validated = runRecordSchema.parse(record);
@@ -134,6 +143,7 @@ export function startRunRecord(root: string, plan: RunPlan, createdAt: string): 
     planDigest: canonicalJsonDigest(runPlanSchema.parse(plan)),
     status: "running",
     createdAt,
+    diagnostics: [],
     cases: plan.selectedCases.map((entry) => ({ caseId: entry.caseId, attemptIds: [] })),
   });
   publishRunRecord(root, record);
@@ -176,12 +186,12 @@ function selectFinalAttempt(
  * this is what lets multiple workers publish attempts for the same run concurrently
  * without any of them needing to touch `run.json` themselves or coordinate through a
  * shared, lockable list. `child exit alone is not successful finalization`: only this
- * call, republishing `run.json` with `status: "finalized"`, counts -- a crashed or
+ * call, republishing `run.json` with a sealed terminal status, counts -- a crashed or
  * killed coordinator that never reaches this call leaves `run.json` at `"running"`
  * forever, correctly signaling "never authoritatively finalized" to any reader.
  *
  * Runs its whole body inside `withRunLock` -- the same lock `publishAttempt` takes for
- * its own finalized-status check + publish -- so this scan is never racing a concurrent
+ * its own terminal-status check + publish -- so this scan is never racing a concurrent
  * attempt publication: whichever of the two acquires the lock first runs to completion
  * before the other starts (see lock.ts's own doc comment for why a bare status check
  * alone isn't enough).
@@ -198,45 +208,95 @@ function selectFinalAttempt(
 export async function finalizeRunRecord(
   root: string,
   runId: string,
-  options: { retryAcceptance: RetryAcceptancePolicy; now?: () => Date },
+  options: {
+    retryAcceptance: RetryAcceptancePolicy;
+    now?: () => Date;
+    diagnostics?: readonly Diagnostic[];
+  },
 ): Promise<RunRecord> {
   return withRunLock(root, runId, async () => {
     const plan = readRunPlan(root, runId);
+    if (options.retryAcceptance !== plan.retryAcceptance) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Finalization retry policy "${options.retryAcceptance}" does not match frozen run policy "${plan.retryAcceptance}".`,
+      );
+    }
     const casePlans = readCasePlans(root, runId);
     const previous = fs.existsSync(runRecordPath(root, runId))
       ? readRunRecord(root, runId)
       : undefined;
     const now = options.now?.() ?? new Date();
 
-    const cases: RunRecord["cases"] = await Promise.all(
+    const caseResults = await Promise.all(
       plan.selectedCases.map(async (selected) => {
+        const diagnostics: Diagnostic[] = [];
         const dir = attemptsDir(root, runId, selected.caseId);
         const attempts: AttemptRecord[] = [];
-        // Excludes an attempt whose evidence was modified/deleted after publication from
-        // becoming the authoritative selectedAttemptId, without dropping it from attemptIds
-        // -- retry history stays intact for audit even when one attempt's evidence didn't.
         const evidenceVerifiedAttempts: AttemptRecord[] = [];
         if (fs.existsSync(dir)) {
-          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          for (const entry of fs
+            .readdirSync(dir, { withFileTypes: true })
+            .toSorted((left, right) => left.name.localeCompare(right.name))) {
             if (!entry.isDirectory()) continue;
             const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
-            if (!fs.existsSync(attemptPath)) continue;
-            const attempt = parseJsonFile(
-              attemptPath,
-              attemptRecordSchema,
-              "RUN_BUNDLE_INVALID",
-              `attempt bundle at ${attemptPath}`,
-            );
+            if (!fs.existsSync(attemptPath)) {
+              diagnostics.push({
+                code: "attempt-publication-partial",
+                stage: "publication",
+                message: `Case "${selected.caseId}" contains partial attempt directory "${entry.name}".`,
+              });
+              continue;
+            }
+            let attempt: AttemptRecord;
+            try {
+              attempt = parseJsonFile(
+                attemptPath,
+                attemptRecordSchema,
+                "RUN_BUNDLE_INVALID",
+                `attempt bundle at ${attemptPath}`,
+              );
+            } catch (error) {
+              diagnostics.push({
+                code: "attempt-record-invalid",
+                stage: "publication",
+                message: portableErrorMessage(error, root),
+              });
+              continue;
+            }
+            if (
+              attempt.runId !== runId ||
+              attempt.caseId !== selected.caseId ||
+              attempt.casePlanDigest !== selected.casePlanDigest
+            ) {
+              diagnostics.push({
+                code: "attempt-identity-invalid",
+                stage: "publication",
+                message: `Attempt "${attempt.attemptId}" does not match run/case/frozen-plan identity.`,
+              });
+              continue;
+            }
             attempts.push(attempt);
             try {
               validateAttemptEvidence(root, attempt);
               evidenceVerifiedAttempts.push(attempt);
-            } catch {
-              // Tampered/missing evidence: excluded from selection candidates above, kept
-              // in attemptIds below for audit -- see this function's own doc comment.
+            } catch (error) {
+              diagnostics.push({
+                code: "attempt-evidence-invalid",
+                stage: "evidence",
+                message: portableErrorMessage(error, root),
+              });
             }
           }
         }
+        attempts.sort(
+          (left, right) =>
+            left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
+        );
+        evidenceVerifiedAttempts.sort(
+          (left, right) =>
+            left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
+        );
 
         const casePlan = casePlans.get(selected.caseId);
         const reconciliation = casePlan
@@ -250,22 +310,41 @@ export async function finalizeRunRecord(
           ? selectFinalAttempt(evidenceVerifiedAttempts, options.retryAcceptance)
           : undefined;
         return {
-          caseId: selected.caseId,
-          attemptIds: attempts.map((attempt) => attempt.attemptId),
-          ...(selectedAttemptId ? { selectedAttemptId } : {}),
+          entry: {
+            caseId: selected.caseId,
+            attemptIds: attempts.map((attempt) => attempt.attemptId),
+            ...(selectedAttemptId ? { selectedAttemptId } : {}),
+          },
+          diagnostics,
         };
       }),
     );
-
+    const publicationDiagnostics = [...(options.diagnostics ?? [])].toSorted(
+      (left, right) =>
+        left.code.localeCompare(right.code) ||
+        left.stage.localeCompare(right.stage) ||
+        left.message.localeCompare(right.message),
+    );
+    const diagnostics = [
+      ...publicationDiagnostics,
+      ...caseResults.flatMap((result) => result.diagnostics),
+    ];
+    const status =
+      publicationDiagnostics.length > 0
+        ? "error"
+        : diagnostics.length > 0
+          ? "incomplete"
+          : "finalized";
     const record = runRecordSchema.parse({
       formatVersion: RUN_FORMAT_VERSION,
       kind: "framelia.run",
       runId,
       planDigest: canonicalJsonDigest(plan),
-      status: "finalized",
+      status,
       createdAt: previous?.createdAt ?? now.toISOString(),
       finalizedAt: now.toISOString(),
-      cases,
+      diagnostics,
+      cases: caseResults.map((result) => result.entry),
     });
     publishRunRecord(root, record);
     return record;

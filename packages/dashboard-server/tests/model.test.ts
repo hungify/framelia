@@ -1,230 +1,294 @@
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
+import type { SelectedRun } from "@framelia/verify/run-bundle";
+import { describe, expect, it } from "vitest";
 
-import { SCHEMA_VERSION, type VerificationArtifact } from "@framelia/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { overallStatus, projectSelectedRun, summarize } from "../src/model.ts";
 
-import { overallStatus, projectArtifact, summarize } from "../src/model.ts";
+const DIGEST = `sha256:${"a".repeat(64)}`;
 
-const temporaryDirectories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
-  );
-});
-
-const captureEvidence = {
-  finalUrl: "https://actual.test",
-  startedAt: "2026-08-08T00:00:00.000Z",
-  capturedAt: "2026-08-08T00:00:01.000Z",
-  finishedAt: "2026-08-08T00:00:02.000Z",
-  viewport: { width: 320, height: 240 },
-  readiness: { selector: "#app", matchCount: 1, status: "passed" },
-  fonts: { supported: true, status: "loaded", failed: [] },
-  scope: { kind: "page", fullPage: true },
-  screenshotHashes: [`sha256:${"d".repeat(64)}`],
-  warnings: [],
-  actions: [],
-  maskEvidence: null,
-  elementRect: null,
-};
-
-async function fixture(): Promise<{ artifact: VerificationArtifact }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "framelia-dashboard-server-"));
-  temporaryDirectories.push(root);
-  const outDir = path.join(root, ".framelia/visual-verifications/home");
-  await fs.mkdir(outDir, { recursive: true });
-  const baselinePath = path.join(outDir, "web-baseline.png");
-  const actualPath = path.join(outDir, "actual.png");
-  const diffPath = path.join(outDir, "diff.png");
-  await fs.writeFile(baselinePath, Buffer.from([1, 2, 3]));
-  await fs.writeFile(actualPath, Buffer.from([4, 5, 6]));
-  await fs.writeFile(diffPath, Buffer.from([7, 8, 9]));
-  await fs.writeFile(
-    path.join(outDir, "visual-score.json"),
-    JSON.stringify({
-      schemaVersion: SCHEMA_VERSION,
-      ok: true,
-      pass: true,
-      matchRatio: 0.995,
-      ssim: 0.98,
-      avgDeltaE: 1.2,
-      diffPixels: 10,
-      baselineSize: { width: 320, height: 240 },
-      actualSize: { width: 320, height: 240 },
-      baseline: { kind: "web", path: baselinePath, url: "https://baseline.test", revision: "main" },
-      target: { url: "https://actual.test" },
-      selector: null,
-      stability: "stable",
-      evidenceHashes: {
-        baseline: `sha256:${"a".repeat(64)}`,
-        actual: `sha256:${"b".repeat(64)}`,
-        diff: `sha256:${"c".repeat(64)}`,
-      },
-      artifacts: { baseline: baselinePath, actual: actualPath, diff: diffPath },
-      captureEvidence,
-    }),
-  );
-  const artifact: VerificationArtifact = {
-    schemaVersion: SCHEMA_VERSION,
-    kind: "framelia.visual-verification",
-    createdAt: new Date().toISOString(),
-    projectRoot: root,
-    request: {
-      schemaVersion: SCHEMA_VERSION,
-      target: { kind: "web", url: "https://actual.test" },
-      contracts: [
-        {
-          id: "home",
-          name: "Home",
-          baseline: { kind: "figma", fileKey: "abc123", nodeId: "1:2" },
-          viewport: { preset: "desktop", width: 320, height: 240 },
-          outDir: ".framelia/visual-verifications/home",
-          scope: { kind: "page", pageReason: "release page" },
-        },
-      ],
-    },
-    ok: true,
-    allPassed: true,
-    results: [{ id: "home", ok: true, pass: true, outDir }],
+function selectedRunFixture(): SelectedRun {
+  const authored = {
+    formatVersion: 1 as const,
+    kind: "framelia.contract" as const,
+    id: "home",
+    name: "Home page",
+    revision: 1,
+    target: { path: "/home" },
+    viewport: { preset: "desktop", width: 320, height: 240 },
+    scope: { kind: "page" as const, pageReason: "release page" },
+    baseline: { snapshotDigest: DIGEST },
+    required: true,
   };
-  return { artifact };
-}
-
-describe("projectArtifact (relocated to @framelia/dashboard-server, U5)", () => {
-  it("projects a clean pass with resolved comparison evidence", async () => {
-    const { artifact } = await fixture();
-    const projection = await projectArtifact(artifact);
-    expect(projection.run).toMatchObject({
-      status: "passed",
-      summary: { total: 1, passed: 1 },
-      contracts: [
-        {
-          id: "home",
-          status: "passed",
-          comparison: { matchRatio: 0.995, ssim: 0.98 },
-        },
-      ],
-    });
-    expect(projection.files.size).toBe(4);
-  });
-
-  it("blocks missing capture evidence instead of projecting a pass", async () => {
-    const { artifact } = await fixture();
-    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
-    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
-    delete score.captureEvidence;
-    await fs.writeFile(scorePath, JSON.stringify(score));
-
-    const projection = await projectArtifact(artifact);
-    expect(projection.run.contracts[0]).toMatchObject({
-      status: "blocked",
-      diagnostics: [expect.objectContaining({ code: "CAPTURE_EVIDENCE_MISSING", blocking: true })],
-    });
-  });
-
-  it("projects style-comparison topIssues onto the contract result", async () => {
-    const { artifact } = await fixture();
-    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
-    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
-    score.topIssues = [
+  const binding = {
+    formatVersion: 1 as const,
+    kind: "framelia.contract-binding" as const,
+    contractId: "home",
+    contractFile: "contracts/home.json",
+    contractDigest: DIGEST,
+  };
+  const casePlan = {
+    formatVersion: 2 as const,
+    kind: "framelia.case-plan" as const,
+    runId: "run-42",
+    caseId: "home@chromium#0",
+    contract: { id: "home", file: "contracts/home.json", digest: DIGEST, authored },
+    snapshotDigest: DIGEST,
+    expectedDigest: DIGEST,
+    expectedSize: { width: 320, height: 240 },
+    baselineSource: { kind: "figma" as const, fileKey: "file-key", nodeId: "1:2" },
+    maxMaskedAreaRatio: 0.25,
+    stabilitySamples: 2,
+    policyDigest: DIGEST,
+    bindingDigest: DIGEST,
+    binding,
+    registration: {
+      specFile: "tests/home.spec.ts",
+      specDigest: DIGEST,
+      titlePath: ["chromium", "home"],
+    },
+    specFile: "tests/home.spec.ts",
+    specFileDigest: DIGEST,
+    project: { name: "chromium", runtimeDigest: DIGEST },
+    repeatIndex: 0,
+    retryAcceptance: "require-first-attempt" as const,
+    source: { sourceDigest: DIGEST, buildDigest: DIGEST, dirty: false },
+  };
+  const score = {
+    formatVersion: 1 as const,
+    kind: "framelia.attempt-score" as const,
+    runType: "final" as const,
+    pass: true,
+    matchRatio: 0.995,
+    ssim: 0.99,
+    avgDeltaE: 1.2,
+    diffPixels: 10,
+    baselineSize: { width: 320, height: 240 },
+    actualSize: { width: 320, height: 240 },
+    targetUrl: "https://example.test/home",
+    baseline: {
+      snapshotDigest: DIGEST,
+      kind: "figma" as const,
+      fileKey: "file-key",
+      nodeId: "1:2",
+    },
+    attachmentBaseName: "home",
+    resolvedThreshold: {
+      name: "page" as const,
+      minMatch: 0.99,
+      maxDiffPixels: null,
+      minSSIM: 0.97,
+      maxAvgDeltaE: 4,
+      maxAreaGapPercent: 5,
+      cluster: true,
+      stabilityMaxDiffRatio: 0.002,
+      gateEligible: true,
+      styleGateEligible: false,
+    },
+    profile: "page" as const,
+    scope: { kind: "page" as const, fullPage: false },
+    captureEvidence: {
+      finalUrl: "https://example.test/home",
+      startedAt: "2026-09-15T00:00:00.000Z",
+      finishedAt: "2026-09-15T00:00:01.000Z",
+      capturedAt: "2026-09-15T00:00:01.000Z",
+      viewport: { width: 320, height: 240 },
+      scope: { kind: "page" as const, fullPage: false },
+      elementRect: null,
+      readiness: { status: "passed" as const },
+      fonts: { supported: true, status: "loaded" as const, failed: [] },
+      screenshotHashes: [DIGEST, DIGEST],
+      warnings: [],
+      actions: [],
+    },
+    stability: "stable" as const,
+    stabilitySampleCount: 2,
+    topIssues: [
       {
-        severity: "low",
-        kind: "style-color",
-        message: "style mismatch on color: expected #000000ff, actual #111111ff",
-        hint: "Check the rendered element's CSS against the Figma node's style.",
-        repairCandidate: true,
-        blocking: false,
-      },
-    ];
-    await fs.writeFile(scorePath, JSON.stringify(score));
-
-    const projection = await projectArtifact(artifact);
-    expect(projection.run.contracts[0]).toMatchObject({
-      status: "passed",
-      topIssues: [expect.objectContaining({ kind: "style-color" })],
-    });
-  });
-
-  it("carries each style issue's originating check-point selector through the projection", async () => {
-    const { artifact } = await fixture();
-    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
-    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
-    score.topIssues = [
-      {
-        severity: "low",
-        kind: "style-color",
-        message: "style mismatch on color: expected #000000ff, actual #111111ff",
+        severity: "low" as const,
+        kind: "style-color" as const,
+        message: "expected black, rendered gray",
         repairCandidate: true,
         blocking: false,
         selector: "header",
       },
+    ],
+    diagnostics: [],
+    warnings: [],
+  };
+  const evidence = {
+    expected: {
+      kind: "expected" as const,
+      availability: "available" as const,
+      portablePath: ".framelia/runs/run/cases/home/attempts/0/expected.png",
+      digest: DIGEST,
+    },
+    actual: {
+      kind: "actual" as const,
+      availability: "available" as const,
+      portablePath: ".framelia/runs/run/cases/home/attempts/0/actual.png",
+      digest: DIGEST,
+    },
+    diff: { kind: "diff" as const, availability: "not-recorded" as const },
+    score: {
+      kind: "score" as const,
+      availability: "available" as const,
+      portablePath: ".framelia/runs/run/cases/home/attempts/0/score.json",
+      digest: DIGEST,
+    },
+  };
+  const attemptRecord = {
+    formatVersion: 2 as const,
+    kind: "framelia.attempt" as const,
+    runId: "run-42",
+    attemptId: "home@chromium#0::attempt-0",
+    caseId: "home@chromium#0",
+    casePlanDigest: DIGEST,
+    retryIndex: 0,
+    executionState: "completed" as const,
+    visualVerdict: "passed" as const,
+    startedAt: "2026-09-15T00:00:00.000Z",
+    completedAt: "2026-09-15T00:00:01.000Z",
+    diagnostics: [],
+    evidence: {
+      expected: { path: evidence.expected.portablePath, digest: DIGEST },
+      actual: { path: evidence.actual.portablePath, digest: DIGEST },
+      score: { path: evidence.score.portablePath, digest: DIGEST },
+    },
+  };
+  const attempt = { record: attemptRecord, score, evidence, integrityIssues: [] };
+  return {
+    runId: "run-42",
+    plan: {
+      formatVersion: 1,
+      kind: "framelia.run-plan",
+      runId: "run-42",
+      policyDigest: DIGEST,
+      retryAcceptance: "require-first-attempt",
+      selection: { mode: "all", contracts: ["home"] },
+      availableCases: [{ caseId: casePlan.caseId, casePlanDigest: DIGEST }],
+      requiredCases: [{ caseId: casePlan.caseId, casePlanDigest: DIGEST }],
+      selectedCases: [{ caseId: casePlan.caseId, casePlanDigest: DIGEST }],
+    },
+    record: {
+      formatVersion: 2,
+      kind: "framelia.run",
+      runId: "run-42",
+      planDigest: DIGEST,
+      status: "finalized",
+      createdAt: "2026-09-15T00:00:00.000Z",
+      finalizedAt: "2026-09-15T00:00:02.000Z",
+      diagnostics: [],
+      cases: [
+        {
+          caseId: casePlan.caseId,
+          attemptIds: [attemptRecord.attemptId],
+          selectedAttemptId: attemptRecord.attemptId,
+        },
+      ],
+    },
+    coverage: {
+      availableCaseIds: [casePlan.caseId],
+      requiredCaseIds: [casePlan.caseId],
+      selectedCaseIds: [casePlan.caseId],
+      selectionMode: "all",
+    },
+    executionState: "completed",
+    visualVerdict: "passed",
+    cases: [
       {
-        severity: "low",
-        kind: "style-typography",
-        message: "style mismatch on font-size: expected 16px, actual 14px",
-        repairCandidate: true,
-        blocking: false,
-        selector: ".hero",
+        runId: "run-42",
+        caseId: casePlan.caseId,
+        plan: casePlan,
+        selectedAttemptId: attemptRecord.attemptId,
+        selectedAttempt: attempt,
+        attempts: [attempt],
+        missingAttemptIds: [],
+        invalidAttempts: [],
       },
-    ];
-    await fs.writeFile(scorePath, JSON.stringify(score));
+    ],
+    integrityIssues: [],
+  };
+}
 
-    const projection = await projectArtifact(artifact);
-    expect(projection.run.contracts[0]?.topIssues).toEqual([
-      expect.objectContaining({ kind: "style-color", selector: "header" }),
-      expect.objectContaining({ kind: "style-typography", selector: ".hero" }),
+describe("projectSelectedRun", () => {
+  it("keeps run/case/attempt identity, measured diagnostics, and portable evidence together", () => {
+    const projection = projectSelectedRun("/copied-root", selectedRunFixture());
+    expect(projection.run).toMatchObject({
+      schemaVersion: 2,
+      runId: "run-42",
+      coverage: { available: 1, required: 1, selected: 1 },
+      executionState: "completed",
+      visualVerdict: "passed",
+      contracts: [
+        {
+          sourceRunId: "run-42",
+          caseId: "home@chromium#0",
+          contractId: "home",
+          projectName: "chromium",
+          repeatIndex: 0,
+          targetPath: "/home",
+          comparison: { matchRatio: 0.995, ssim: 0.99, diffPixels: 10 },
+          topIssues: [expect.objectContaining({ kind: "style-color", selector: "header" })],
+          attempts: [
+            expect.objectContaining({ attemptId: "home@chromium#0::attempt-0", selected: true }),
+          ],
+          provenance: {
+            policyDigest: DIGEST,
+            retryAcceptance: "require-first-attempt",
+            bindingDigest: DIGEST,
+            specFile: "tests/home.spec.ts",
+            specFileDigest: DIGEST,
+            titlePath: ["chromium", "home"],
+          },
+        },
+      ],
+    });
+    expect([...projection.files.keys()]).toEqual([
+      ".framelia/runs/run/cases/home/attempts/0/expected.png",
+      ".framelia/runs/run/cases/home/attempts/0/actual.png",
+      ".framelia/runs/run/cases/home/attempts/0/score.json",
     ]);
   });
 
-  it("omits topIssues from the contract result when the score has none", async () => {
-    const { artifact } = await fixture();
-    const projection = await projectArtifact(artifact);
-    expect(projection.run.contracts[0]?.topIssues).toBeUndefined();
-  });
-
-  it("derives resolvedThreshold from the persisted profile/clusterCheck (#8)", async () => {
-    const { artifact } = await fixture();
-    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
-    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, unknown>;
-    score.profile = "component/strict";
-    score.clusterCheck = true;
-    await fs.writeFile(scorePath, JSON.stringify(score));
-
-    const projection = await projectArtifact(artifact);
+  it("never projects a score with blocking diagnostics as passed", () => {
+    const selectedRun = selectedRunFixture();
+    selectedRun.cases[0]!.selectedAttempt!.score!.diagnostics = [
+      { kind: "warning", code: "READINESS_FAILED", message: "not ready", blocking: true },
+    ];
+    const projection = projectSelectedRun("/copied-root", selectedRun);
     expect(projection.run.contracts[0]).toMatchObject({
-      resolvedThreshold: {
-        name: "component/strict",
-        minMatch: 0.995,
-        maxDiffPixels: 500,
-        minSSIM: 0.985,
-        maxAvgDeltaE: 3.0,
-        cluster: true,
-      },
+      status: "blocked",
+      attempts: [
+        expect.objectContaining({
+          diagnostics: [expect.objectContaining({ code: "READINESS_FAILED", blocking: true })],
+        }),
+      ],
     });
   });
 
-  it("keeps masked-pass contracts out of the clean passed count", async () => {
-    const { artifact } = await fixture();
-    const scorePath = path.join(artifact.results[0]!.outDir, "visual-score.json");
-    const score = JSON.parse(await fs.readFile(scorePath, "utf8")) as Record<string, any>;
-    score.diagnostics = [
-      {
-        kind: "masked-pass",
-        code: "MASKED_PASS",
-        message: "1 declared mask region(s).",
-        blocking: false,
-      },
-    ];
-    await fs.writeFile(scorePath, JSON.stringify(score));
+  it("projects persisted run publication diagnostics as blocking dashboard warnings", () => {
+    const selectedRun = selectedRunFixture();
+    const diagnostic = {
+      code: "attempt-publication-failed",
+      stage: "publication" as const,
+      message: "attempt evidence could not be committed",
+    };
+    selectedRun.record.status = "error";
+    selectedRun.record.diagnostics = [diagnostic];
+    selectedRun.integrityIssues = [diagnostic];
+    selectedRun.executionState = "error";
 
-    const projection = await projectArtifact(artifact);
-    expect(projection.run.status).toBe("masked-pass");
-    expect(projection.run.summary).toMatchObject({ passed: 0, "masked-pass": 1 });
+    const projection = projectSelectedRun("/copied-root", selectedRun);
+    expect(projection.run.status).toBe("blocked");
+    expect(projection.run.contracts[0]?.status).toBe("blocked");
+
+    expect(projection.run.diagnostics).toEqual([
+      {
+        kind: "warning",
+        code: diagnostic.code,
+        message: diagnostic.message,
+        blocking: true,
+      },
+    ]);
   });
 });
 
@@ -246,19 +310,6 @@ describe("summarize / overallStatus", () => {
       { ...base, status: "failed" },
       { ...base, status: "masked-pass" },
     ]);
-    expect(summary).toMatchObject({
-      total: 5,
-      running: 1,
-      queued: 1,
-      blocked: 1,
-      failed: 1,
-      "masked-pass": 1,
-    });
     expect(overallStatus(summary)).toBe("running");
-  });
-
-  it("reports passed when every contract passed cleanly", () => {
-    const summary = summarize([]);
-    expect(overallStatus(summary)).toBe("passed");
   });
 });

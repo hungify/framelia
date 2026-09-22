@@ -1,7 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { attemptRecordSchema, type AttemptRecord } from "@framelia/contracts/workflow";
+import {
+  attemptRecordSchema,
+  attemptScoreSchema,
+  isTerminalRunStatus,
+  type AttemptRecord,
+} from "@framelia/contracts/workflow";
 
 import { sha256Hex } from "../hash.ts";
 import { AppError } from "../types.ts";
@@ -37,15 +42,15 @@ export interface AttemptEvidenceFiles {
  * `casePlanDigest` that disagrees with what was frozen for it, is rejected outright,
  * rather than silently accepted and only ever discovered later by `readRunBundle`.
  *
- * Also rejects publishing once the run's own coordination record already reads
- * `status: "finalized"` -- finalization is meant to seal a run's authoritative
- * membership, so a late worker publishing after that point is refused rather than
- * silently accepted and never reflected in the sealed `RunRecord`. The whole function
- * body (this check included) runs inside `withRunLock`, the same lock
- * `finalizeRunRecord` takes for its own attempts-directory scan + publish -- so this
- * check is never racing finalization's own scan: whichever of the two acquires the lock
- * first runs to completion before the other starts, closing the check-then-act window a
- * bare status check alone would leave open.
+ * Also rejects publishing once the run's own coordination record has any terminal
+ * status (`finalized`, `incomplete`, or `error`). Finalization seals authoritative
+ * membership even when diagnostics prevented a clean final verdict, so a late worker
+ * cannot add evidence absent from the sealed `RunRecord`. The whole function body
+ * (this check included) runs inside `withRunLock`, the same lock `finalizeRunRecord`
+ * takes for its own attempts-directory scan + publish -- so this check is never racing
+ * finalization's own scan: whichever of the two acquires the lock first runs to
+ * completion before the other starts, closing the check-then-act window a bare status
+ * check alone would leave open.
  *
  * `attempt` omits `evidence`: this function is the sole author of that field, derived
  * from `files`. Passing a `visualVerdict: "passed"` attempt with no `actual` capture is
@@ -61,6 +66,12 @@ export function publishAttempt(
 ): Promise<AttemptRecord> {
   return withRunLock(root, runId, () => {
     const plan = readRunPlan(root, runId);
+    if (attempt.runId !== runId) {
+      throw new AppError(
+        "RUN_BUNDLE_INVALID",
+        `Attempt "${attempt.attemptId}" belongs to run "${attempt.runId}", not run "${runId}".`,
+      );
+    }
     const selected = plan.selectedCases.find((entry) => entry.caseId === attempt.caseId);
     if (!selected) {
       throw new AppError(
@@ -74,17 +85,17 @@ export function publishAttempt(
         `Attempt "${attempt.attemptId}"'s casePlanDigest (${attempt.casePlanDigest}) does not match run "${runId}"'s frozen plan digest for case "${attempt.caseId}" (${selected.casePlanDigest}).`,
       );
     }
-    if (
-      fs.existsSync(runRecordPath(root, runId)) &&
-      readRunRecord(root, runId).status === "finalized"
-    ) {
+    const existingRecord = fs.existsSync(runRecordPath(root, runId))
+      ? readRunRecord(root, runId)
+      : undefined;
+    if (existingRecord && isTerminalRunStatus(existingRecord.status)) {
       throw new AppError(
         "RUN_BUNDLE_INVALID",
-        `Run "${runId}" is already finalized; attempt "${attempt.attemptId}" cannot be published after finalization sealed the run's membership.`,
+        `Run "${runId}" is already terminal (${existingRecord.status}); attempt "${attempt.attemptId}" cannot be published after finalization sealed the run's membership.`,
       );
     }
 
-    // Test-only seam: widens the window between the finalized-check above and the
+    // Test-only seam: widens the window between the terminal-status check above and the
     // publish below, so a test can force real, deterministic lock contention against a
     // concurrent `finalizeRunRecord` call (see lock.test.ts) -- inert unless a test sets
     // this env var. Never set outside tests.
@@ -111,11 +122,23 @@ export function publishAttempt(
     }
 
     const record = attemptRecordSchema.parse({ ...attempt, evidence });
-    if (record.visualVerdict === "passed" && !record.evidence.actual) {
-      throw new AppError(
-        "RUN_BUNDLE_INVALID",
-        `Attempt ${record.attemptId} claims visualVerdict "passed" but publishes no actual-capture evidence; refusing to publish a pass with no capture behind it.`,
-      );
+    if (record.executionState === "completed" && record.visualVerdict !== "not-evaluated") {
+      for (const required of ["expected", "actual", "score"] as const) {
+        if (!record.evidence[required]) {
+          throw new AppError(
+            "RUN_BUNDLE_INVALID",
+            `Attempt ${record.attemptId} is completed/evaluated but publishes no ${required} evidence.`,
+          );
+        }
+      }
+      try {
+        attemptScoreSchema.parse(JSON.parse(files.score!.toString("utf8")));
+      } catch (error) {
+        throw new AppError(
+          "RUN_BUNDLE_INVALID",
+          `Attempt ${record.attemptId} score evidence is not a valid versioned score: ${error instanceof Error ? error.message : String(error)}.`,
+        );
+      }
     }
 
     staged.push({

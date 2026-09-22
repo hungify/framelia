@@ -86,8 +86,11 @@ export async function run(
   options: { process?: CliRuntime; loadProjectEnv?: boolean } = {},
 ): Promise<void> {
   const context = buildContext({ process: options.process, version: PACKAGE_VERSION });
-  if (options.loadProjectEnv !== false)
+  // Authority identity must come from the protected process environment. In particular,
+  // a checkout-controlled .env file must never be able to supply done-gate trust metadata.
+  if (options.loadProjectEnv !== false && argv[0] !== "done-gate") {
     loadProjectEnv(context.process.cwd(), { env: context.process.env });
+  }
   await runApplication(app, argv, context);
   context.process.exitCode = normalizeStricliExitCode(context.process.exitCode);
 }

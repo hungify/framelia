@@ -5,7 +5,7 @@ import * as path from "node:path";
 
 import { chromium } from "@playwright/test";
 import { PNG } from "pngjs";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { captureReadyPage } from "../src/capture/core.ts";
 
@@ -46,6 +46,7 @@ describe("captureReadyPage", () => {
         outPath: path.join(tmpDir, "capture.png"),
         scope: { kind: "page", fullPage: false },
         screenshot: {},
+        stabilitySamples: 3,
         timeoutMs: 2_000,
       });
 
@@ -53,8 +54,145 @@ describe("captureReadyPage", () => {
       expect(outcome.capturePaths).toEqual([path.join(tmpDir, "capture.png")]);
       expect(outcome.finalUrl).toBe(`${app.url}/`);
       expect(fs.existsSync(outcome.capturePaths[0]!)).toBe(true);
+      expect(outcome.screenshotHashes).toHaveLength(3);
+      expect(new Set(outcome.screenshotHashes).size).toBe(1);
+      expect(fs.readdirSync(tmpDir)).toEqual(["capture.png"]);
       expect(outcome.fonts.supported).toBe(true);
     } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+  it("defaults generic capture to one screenshot", async () => {
+    const app = await server();
+    const context = await browser.newContext();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const screenshot = vi.spyOn(page, "screenshot");
+
+      const outcome = await captureReadyPage(page, {
+        outPath: path.join(tmpDir, "capture.png"),
+        scope: { kind: "page", fullPage: false },
+        screenshot: {},
+        timeoutMs: 2_000,
+      });
+
+      if (!outcome.ok) throw new Error(`capture failed: ${outcome.error} ${outcome.message}`);
+      expect(screenshot).toHaveBeenCalledTimes(1);
+      expect(outcome.screenshotHashes).toHaveLength(1);
+    } finally {
+      vi.restoreAllMocks();
+      await context.close();
+      await app.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes every stability sample and detects a changed third capture", async () => {
+    const app = await server();
+    const context = await browser.newContext();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const screenshot = page.screenshot.bind(page);
+      let captureCount = 0;
+      vi.spyOn(page, "screenshot").mockImplementation(async (options) => {
+        captureCount += 1;
+        if (captureCount === 3) {
+          await page.evaluate(() => {
+            document.body.style.background = "rgb(255, 0, 0)";
+          });
+        }
+        return screenshot(options);
+      });
+
+      const outcome = await captureReadyPage(page, {
+        outPath: path.join(tmpDir, "capture.png"),
+        scope: { kind: "page", fullPage: false },
+        screenshot: {},
+        stabilitySamples: 3,
+        timeoutMs: 2_000,
+      });
+
+      if (!outcome.ok) throw new Error(`capture failed: ${outcome.error} ${outcome.message}`);
+      expect(outcome.screenshotHashes).toHaveLength(3);
+      expect(new Set(outcome.screenshotHashes).size).toBe(2);
+      expect(fs.readdirSync(tmpDir)).toEqual(["capture.png"]);
+    } finally {
+      vi.restoreAllMocks();
+      await context.close();
+      await app.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes private stability samples when a later screenshot fails", async () => {
+    const app = await server();
+    const context = await browser.newContext();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const screenshot = page.screenshot.bind(page);
+      let captureCount = 0;
+      vi.spyOn(page, "screenshot").mockImplementation(async (options) => {
+        captureCount += 1;
+        if (captureCount === 3) throw new Error("third sample failed");
+        return screenshot(options);
+      });
+
+      const outcome = await captureReadyPage(page, {
+        outPath: path.join(tmpDir, "capture.png"),
+        scope: { kind: "page", fullPage: false },
+        screenshot: {},
+        stabilitySamples: 3,
+        timeoutMs: 2_000,
+      });
+
+      expect(outcome.ok).toBe(false);
+      expect(fs.readdirSync(tmpDir)).toEqual(["capture.png"]);
+    } finally {
+      vi.restoreAllMocks();
+      await context.close();
+      await app.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes every private sample when hashing one sample fails", async () => {
+    const app = await server();
+    const context = await browser.newContext();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const screenshot = page.screenshot.bind(page);
+      let captureCount = 0;
+      vi.spyOn(page, "screenshot").mockImplementation(async (options) => {
+        captureCount += 1;
+        const bytes = await screenshot(options);
+        if (captureCount === 3) {
+          fs.rmSync(path.join(tmpDir, ".capture.png.stability-1.png"));
+        }
+        return bytes;
+      });
+
+      await expect(
+        captureReadyPage(page, {
+          outPath: path.join(tmpDir, "capture.png"),
+          scope: { kind: "page", fullPage: false },
+          screenshot: {},
+          stabilitySamples: 3,
+          timeoutMs: 2_000,
+        }),
+      ).rejects.toThrow(/ENOENT|no such file/i);
+      expect(fs.readdirSync(tmpDir)).toEqual(["capture.png"]);
+    } finally {
+      vi.restoreAllMocks();
       await context.close();
       await app.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -73,6 +211,7 @@ describe("captureReadyPage", () => {
         outPath: path.join(tmpDir, "capture.png"),
         scope: { kind: "region", selector: "#region" },
         screenshot: { masks: [{ selector: "#secret", reason: "sensitive" }] },
+        stabilitySamples: 2,
         timeoutMs: 2_000,
       });
 
@@ -110,6 +249,7 @@ describe("captureReadyPage", () => {
         outPath: path.join(tmpDir, "capture.png"),
         scope: { kind: "region", selector: "#region" },
         screenshot: { masks: [{ selector: "#secret", reason: "sensitive" }] },
+        stabilitySamples: 2,
         timeoutMs: 2_000,
       });
 
@@ -138,6 +278,7 @@ describe("captureReadyPage", () => {
         outPath: path.join(tmpDir, "capture.png"),
         scope: { kind: "page", fullPage: false },
         screenshot: {},
+        stabilitySamples: 2,
       });
 
       expect(outcome.ok).toBe(false);
@@ -164,6 +305,7 @@ describe("captureReadyPage", () => {
         outPath: path.join(tmpDir, "capture.png"),
         scope: { kind: "page", fullPage: false },
         screenshot: {},
+        stabilitySamples: 2,
         timeoutMs: 2_000,
         scale: 2,
       });
@@ -192,6 +334,7 @@ describe("captureReadyPage", () => {
         outPath: path.join(tmpDir, "capture.png"),
         scope: { kind: "page", fullPage: false },
         screenshot: {},
+        stabilitySamples: 2,
         timeoutMs: 2_000,
         scale: 2,
       });

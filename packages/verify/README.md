@@ -3,13 +3,14 @@
 Visual verification engine used by `framelia` CLI and `@framelia/playwright`.
 
 ```ts
-import { compare, FigmaBaselineProvider, doneGateFromArtifact } from "@framelia/verify";
+import { compare, FigmaBaselineProvider } from "@framelia/verify";
+import { evaluateAuthoritativeRun, readSelectedRun } from "@framelia/verify/run-bundle";
 ```
 
-Engine owns baseline acquisition, navigation-free capture, image comparison, and done gates. It
-depends on `@framelia/contracts` and has no dependency on the CLI, HTTP server, dashboard, or
-`@playwright/test`'s `expect` — `@framelia/playwright` is the only package that turns this engine
-into test matchers.
+The engine owns baseline acquisition, navigation-free capture, image comparison, structural
+run-bundle reading, selected-attempt reconciliation, and authoritative evaluation. It depends on
+`@framelia/contracts` and has no dependency on the CLI, HTTP server, dashboard, or
+`@playwright/test`'s `expect`.
 
 `@playwright/test` is a peer dependency, shared with the consumer rather than a
 separately versioned runtime dependency. Programmatic consumers should include
@@ -69,6 +70,13 @@ resolution stays: `FigmaBaselineProvider` fetches a fresh Figma node render per 
 web-baseline provider, since web-vs-web comparison is `@framelia/playwright`'s `toMatchPage`/
 `toMatchUrl`, diffing two already-navigated pages directly rather than through a persisted
 baseline pointer.
+
+Generic ready-page capture is single-shot by default. A caller may request an explicit sample
+count to take that many back-to-back screenshots without navigation or reload. Capture retains
+only the primary image, persists every sample hash, and deletes private sample images on success
+or failure. Authored contract helpers still pass the resolved 2–5 sample policy explicitly; the
+selected-run gate accepts stability only when the sample count equals that frozen case policy and
+every hash agrees.
 
 ## Manual integration tests
 

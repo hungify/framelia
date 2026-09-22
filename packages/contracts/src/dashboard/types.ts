@@ -17,6 +17,48 @@ export type DashboardVerdict =
   | "blocked";
 export type VerificationPhase = "baseline" | "capture" | "compare" | "gates" | "complete";
 export type DashboardPhase = "queued" | VerificationPhase;
+export type DashboardExecutionState = "running" | "completed" | "blocked" | "incomplete" | "error";
+export type DashboardVisualVerdict = "passed" | "mismatched" | "not-evaluated";
+export type DashboardEvidenceAvailability = "available" | "missing" | "invalid" | "not-recorded";
+
+export interface DashboardAttempt {
+  runId: string;
+  attemptId: string;
+  casePlanDigest: string;
+  retryIndex: number;
+  selected: boolean;
+  executionState: DashboardExecutionState;
+  visualVerdict: DashboardVisualVerdict;
+  evidence: Record<
+    "expected" | "actual" | "diff" | "score",
+    {
+      availability: DashboardEvidenceAvailability;
+      path?: string;
+      digest?: string;
+      message?: string;
+    }
+  >;
+  baseline?: {
+    snapshotDigest: string;
+    kind: "figma" | "web";
+    fileKey?: string;
+    nodeId?: string;
+    sourceRunId?: string;
+  };
+  scoreProvenance?: {
+    formatVersion?: number;
+    digest: string;
+  };
+  comparison?: {
+    matchRatio: number | null;
+    ssim: number | null;
+    avgDeltaE: number | null;
+    diffPixels: number | null;
+  };
+  topIssues: Array<z.infer<typeof topIssueSchema>>;
+  diagnostics: Array<z.infer<typeof visualDiagnosticSchema>>;
+  warnings: string[];
+}
 
 export interface DashboardImageEvidence {
   path: string;
@@ -50,6 +92,28 @@ export interface DashboardContractResult {
   name: string;
   feature?: string;
   tags: string[];
+  /** Durable selected-run identity. Absent only for low-level ephemeral matcher results. */
+  sourceRunId?: string;
+  caseId?: string;
+  contractId?: string;
+  projectName?: string;
+  repeatIndex?: number;
+  targetPath?: string;
+  executionState?: DashboardExecutionState;
+  visualVerdict?: DashboardVisualVerdict;
+  selectedAttemptId?: string;
+  attempts?: DashboardAttempt[];
+  provenance?: {
+    policyDigest: string;
+    retryAcceptance: "require-first-attempt" | "allow-passed-after-retry";
+    sourceDigest?: string;
+    buildDigest?: string;
+    dirty?: boolean;
+    bindingDigest: string;
+    specFile: string;
+    specFileDigest: string;
+    titlePath: string[];
+  };
   status: DashboardVerdict;
   phase: DashboardPhase;
   baselineKind: "figma" | "page";
@@ -181,8 +245,20 @@ export type DashboardSummary = Record<Exclude<DashboardVerdict, "masked-pass">, 
 
 export interface DashboardRun {
   /** Versions this UI-projection format independently of SCHEMA_VERSION (the verification contract/artifact version). */
-  schemaVersion: 1;
+  schemaVersion: 2;
   runId: string;
+  coverage?: {
+    available: number;
+    required: number;
+    selected: number;
+    selectionMode: "all" | "subset";
+    availableCaseIds: string[];
+    requiredCaseIds: string[];
+    selectedCaseIds: string[];
+  };
+  executionState?: "running" | "completed" | "incomplete" | "error";
+  visualVerdict?: DashboardVisualVerdict;
+  diagnostics?: DashboardDiagnostic[];
   suiteName?: string;
   status: DashboardVerdict;
   summary: DashboardSummary;

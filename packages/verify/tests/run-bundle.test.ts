@@ -750,6 +750,86 @@ describe("finalizeRunRecord execution transport classification", () => {
     expect(finalized.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 0));
   });
 
+  it("accepts retry-passed transport and selects the passing retry under allow-passed-after-retry", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    casePlan.retryAcceptance = "allow-passed-after-retry";
+    const runId = "run-retry-passed-authoritative-pass";
+    setUpRun(root, runId, [casePlan]);
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+      completeEvidence(Buffer.from("mismatch")),
+    );
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("retry-pass")),
+    );
+
+    const finalized = await finalizeRunRecord(root, runId, {
+      retryAcceptance: "allow-passed-after-retry",
+      transport: {
+        exitCode: 0,
+        signal: null,
+        cancelled: false,
+        reporterCompleted: true,
+        resultStatus: "passed",
+      },
+    });
+
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.diagnostics).toEqual([]);
+    expect(finalized.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 1));
+  });
+
+  it.each([
+    ["error", "error"],
+    ["interrupted", "incomplete"],
+  ] as const)(
+    "does not let an earlier mismatch explain transport after the latest retry is %s",
+    async (label, executionState) => {
+      const root = temporaryRoot();
+      const casePlan = await realCasePlanFixture(root);
+      const runId = `run-retry-${label}`;
+      setUpRun(root, runId, [casePlan]);
+      await publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+        completeEvidence(Buffer.from("mismatch")),
+      );
+      await publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 1, {
+          executionState,
+          visualVerdict: "not-evaluated",
+        }),
+        completeEvidence(Buffer.from(label)),
+      );
+
+      const finalized = await finalizeRunRecord(root, runId, {
+        retryAcceptance: "require-first-attempt",
+        transport: {
+          exitCode: 1,
+          signal: null,
+          cancelled: false,
+          reporterCompleted: true,
+          resultStatus: "failed",
+        },
+      });
+
+      expect(finalized.status).toBe("error");
+      expect(finalized.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 0));
+      expect(finalized.diagnostics.map((entry) => entry.code)).toContain(
+        "execution-exit-unexplained",
+      );
+    },
+  );
+
   it("rejects an otherwise unexplained nonzero Playwright exit even when visual evidence passed", async () => {
     const root = temporaryRoot();
     const casePlan = await realCasePlanFixture(root);

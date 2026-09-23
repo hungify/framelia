@@ -329,9 +329,7 @@ export async function finalizeRunRecord(
           const selectedAttempt = selectedAttemptId
             ? evidenceVerifiedAttempts.find((attempt) => attempt.attemptId === selectedAttemptId)
             : undefined;
-          const runnerAttempt = evidenceVerifiedAttempts.findLast(
-            (attempt) => attempt.executionState === "completed",
-          );
+          const runnerAttempt = evidenceVerifiedAttempts.at(-1);
           if (options.transport && !selectedAttempt) {
             diagnostics.push({
               code: "selected-attempt-missing",
@@ -356,15 +354,16 @@ export async function finalizeRunRecord(
         const runnerAttempts = caseResults
           .map((result) => result.runnerAttempt)
           .filter((attempt): attempt is AttemptRecord => attempt !== undefined);
-        const allRunnerCasesComplete = runnerAttempts.length === plan.selectedCases.length;
-        const runnerVisualVerdict = runnerAttempts.some(
-          (attempt) => attempt.visualVerdict === "mismatched",
-        )
-          ? "mismatched"
-          : allRunnerCasesComplete &&
-              runnerAttempts.every((attempt) => attempt.visualVerdict === "passed")
-            ? "passed"
-            : "not-evaluated";
+        const allRunnerCasesComplete =
+          runnerAttempts.length === plan.selectedCases.length &&
+          runnerAttempts.every((attempt) => attempt.executionState === "completed");
+        const runnerVisualVerdict = allRunnerCasesComplete
+          ? runnerAttempts.some((attempt) => attempt.visualVerdict === "mismatched")
+            ? "mismatched"
+            : runnerAttempts.every((attempt) => attempt.visualVerdict === "passed")
+              ? "passed"
+              : "not-evaluated"
+          : "not-evaluated";
         const expectedExitCode =
           runnerVisualVerdict === "mismatched" ? 1 : runnerVisualVerdict === "passed" ? 0 : null;
         const expectedResultStatus =

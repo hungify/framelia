@@ -322,12 +322,12 @@ export default class FrameliaReporter implements Reporter {
   }
 
   /**
-   * Freezes only the contract tests visible in this direct Playwright invocation.
-   * Until WP6 supplies an independently frozen discovery matrix, collected tests are
-   * exact selected membership but never proof of the full required matrix. Direct
-   * reporter plans therefore use `selection.mode: "subset"`, leave `requiredCases`
-   * empty, and rely on the independently signed gate requirements for completeness.
-   * A run with zero annotated tests or no resolvable policy digest is not published.
+   * Freezes only the contract tests visible in a direct Playwright invocation. Unlike
+   * coordinated `framelia check`, that path has no independently authored full matrix;
+   * collected tests are exact selected membership but not proof of completeness.
+   * Direct plans therefore remain `selection.mode: "subset"`, leave `requiredCases`
+   * empty, and rely on independently signed gate requirements for completeness. A run
+   * with zero annotated tests or no resolvable policy digest is not published.
    */
   async #initializeRunBundle(tests: TestCase[], policy: ResolvedProjectPolicy): Promise<void> {
     if (!policy.policyDigest) return;

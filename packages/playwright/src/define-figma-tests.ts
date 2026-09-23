@@ -617,19 +617,11 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
 
         // `specUrl` binds "the file whose bytes were hashed above" to a real identity
         // only by the caller's own honesty -- nothing so far stops a caller from
-        // passing an arbitrary, stable, unrelated file (or simply the wrong file)
-        // whose digest has nothing to do with what Playwright is actually executing.
-        // `testInfo.file` looks like the right runtime-authoritative check but is NOT:
-        // it reports the location where `test(...)` was *textually called* (a stack
-        // trace at registration time), which for every `defineFigmaTests` registration
-        // is always this library's own call site inside this file, never the caller's
-        // spec file -- confirmed empirically against a real `playwright test` run.
-        // `testInfo.titlePath` is documented as "the full title path starting with the
-        // test file name" and is populated from the collected file `Suite`'s own title
-        // (tracked independently of any wrapping function's own call site), relative to
-        // `testInfo.project.testDir` -- resolve it to an absolute path, then to the
-        // same portable form `registration.specFile` is already in, and refuse to run
-        // if they disagree.
+        // passing an arbitrary, stable, unrelated file. Registration deliberately
+        // attributes the public `test(...)` call to `specFilePath`, so Playwright's
+        // documented file Suite and exact `--test-list` tuple should resolve to the
+        // same file. Recompute that documented Suite identity relative to
+        // `testInfo.project.testDir` and refuse to run if it disagrees.
         const liveSpecFile = toPortablePath(
           path.relative(
             projectRoot,

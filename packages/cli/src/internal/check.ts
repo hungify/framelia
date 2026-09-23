@@ -457,6 +457,19 @@ export async function runCheck(
       cancellation,
     );
     if (collectOutcome.cancelled) throw new Error("Playwright collection was cancelled.");
+    if (
+      !fs.existsSync(collectContext.statusPath) &&
+      (collectOutcome.signal !== null ||
+        (collectOutcome.code !== null && collectOutcome.code !== 0))
+    ) {
+      const childFailure =
+        collectOutcome.signal !== null
+          ? `was terminated by signal ${collectOutcome.signal}`
+          : `exited with code ${collectOutcome.code}`;
+      throw new Error(
+        `Playwright collection ${childFailure} before the Framelia collection status was published. Review the Playwright output forwarded to stderr above for configuration or spec errors.`,
+      );
+    }
     const collectStatus = validateTransport(
       collectContext.statusPath,
       transportStatusSchema,
@@ -578,6 +591,18 @@ export async function runCheck(
         "Framelia execute status",
       );
       assertTransportIdentity(executeStatus, executeContext, "Execute status");
+      const statusCompleted =
+        executeStatus.state === "completed" && executeStatus.execution !== undefined;
+      if (!statusCompleted) {
+        finalizationDiagnostics.push(
+          diagnostic(
+            "FRAMELIA_EXECUTION_BLOCKED",
+            "execution",
+            executeStatus.diagnostics.map((entry) => entry.message).join("; ") ||
+              "Reporter did not publish a final completed execution lifecycle summary.",
+          ),
+        );
+      }
       const executeManifest = validateTransport(
         executeContext.manifestPath,
         collectionManifestSchema,
@@ -589,18 +614,7 @@ export async function runCheck(
           "Framelia execute manifest graph/tuple digest does not match the frozen collection plan.",
         );
       }
-      reporterCompleted =
-        executeStatus.state === "completed" && executeStatus.execution !== undefined;
-      if (!reporterCompleted) {
-        finalizationDiagnostics.push(
-          diagnostic(
-            "FRAMELIA_EXECUTION_BLOCKED",
-            "execution",
-            executeStatus.diagnostics.map((entry) => entry.message).join("; ") ||
-              "Reporter did not publish a final completed execution lifecycle summary.",
-          ),
-        );
-      }
+      reporterCompleted = statusCompleted;
       const execution = executeStatus.execution;
       if (execution) {
         for (const failure of execution.setupFailures) {

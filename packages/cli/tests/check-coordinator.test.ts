@@ -174,7 +174,120 @@ function immediateChild(): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["-e", ""], { stdio: ["pipe", "pipe", "pipe"] });
 }
 
+const failedCollectionChild: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+  _executable,
+  _argv,
+  options,
+) =>
+  spawn(
+    process.execPath,
+    ["-e", 'process.stderr.write("playwright config exploded\\n"); process.exitCode = 7;'],
+    {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+
 describe("runCheck command-lifetime finalization", () => {
+  it("reports a failed collection child before diagnosing a missing reporter", async () => {
+    const fixture = coordinatorProject();
+    const spawnPlaywright = failedCollectionChild;
+
+    const outcome = await runCheck(
+      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
+      {
+        playwrightCli: "/unused/local/playwright-cli.js",
+        spawnPlaywright,
+        signalProcess: new EventEmitter() as unknown as NonNullable<
+          CheckDependencies["signalProcess"]
+        >,
+      },
+    );
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.diagnostics).toContainEqual({
+      code: "FRAMELIA_CHECK_FAILED",
+      stage: "check",
+      message:
+        "Playwright collection exited with code 7 before the Framelia collection status was published. Review the Playwright output forwarded to stderr above for configuration or spec errors.",
+    });
+  });
+
+  it("preserves the missing-reporter preflight when collection exits cleanly without publishing", async () => {
+    const fixture = coordinatorProject();
+
+    const outcome = await runCheck(
+      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
+      {
+        playwrightCli: "/unused/local/playwright-cli.js",
+        spawnPlaywright: immediateChild,
+        signalProcess: new EventEmitter() as unknown as NonNullable<
+          CheckDependencies["signalProcess"]
+        >,
+      },
+    );
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.diagnostics[0]?.code).toBe("FRAMELIA_REPORTER_MISSING");
+    expect(outcome.diagnostics[0]?.message).toContain(
+      "Framelia collection status was not published",
+    );
+  });
+
+  it("retains the reporter's blocked reason when execute manifest validation fails later", async () => {
+    const fixture = coordinatorProject();
+    const reporterReason = "Visual project setup failed before any selected test could run.";
+    const spawnPlaywright: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+      _executable,
+      _argv,
+      options,
+    ) => {
+      const context = JSON.parse(
+        fs.readFileSync(options.env.FRAMELIA_RUN_CONTEXT!, "utf8"),
+      ) as RunContext;
+      if (context.mode === "collect") {
+        collectionTransport(context, fixture.contractDigest, fixture.specDigest);
+      } else {
+        writeJson(context.statusPath, {
+          formatVersion: 1,
+          kind: "framelia.transport-status",
+          writerVersion: "test",
+          phase: "execution-reconciliation",
+          mode: "execute",
+          projectRoot: context.projectRoot,
+          runId: context.runId,
+          state: "blocked",
+          diagnostics: [{ code: "fixture-setup-failed", message: reporterReason }],
+        });
+      }
+      return immediateChild();
+    };
+
+    const outcome = await runCheck(
+      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
+      {
+        playwrightCli: "/unused/local/playwright-cli.js",
+        spawnPlaywright,
+        signalProcess: new EventEmitter() as unknown as NonNullable<
+          CheckDependencies["signalProcess"]
+        >,
+      },
+    );
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.executionState).toBe("incomplete");
+    expect(outcome.diagnostics).toContainEqual({
+      code: "FRAMELIA_EXECUTION_BLOCKED",
+      stage: "execution",
+      message: reporterReason,
+    });
+    expect(readRunRecord(fixture.root, outcome.runId!).diagnostics).toContainEqual({
+      code: "FRAMELIA_EXECUTION_BLOCKED",
+      stage: "execution",
+      message: reporterReason,
+    });
+  });
   it("forwards cancellation to the active execute child and terminalizes exactly once", async () => {
     const fixture = coordinatorProject();
     const signals = new EventEmitter();

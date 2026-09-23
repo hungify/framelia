@@ -13,4 +13,5 @@ Add an exact contract-selected `framelia check` workflow backed by the consumer 
 - Preserve direct Reporter behavior outside coordinator mode while making collection transport dashboard-free and execute transport synchronously gate every generated visual body before preparation or capture.
 - Propagate cancellation, distinguish visual mismatch from setup, teardown, global, transport, and raw-exit failures, and terminalize every started run exactly once with inspectable identity.
 - Configure the Reporter for new Playwright projects during `framelia init`; preserve existing configs byte-for-byte and return a manual reporter-integration recipe when their configuration is not unambiguous.
-- Prefix generated human-readable titles with the exact contract ID, reject parent-frozen policy drift before test work, and reconcile the runner's latest complete retry separately from the policy-selected authoritative attempt.
+- Prefix generated human-readable titles with the exact contract ID, reject parent-frozen policy drift before test work, and reconcile runner transport from the latest evidence-verified retry while allowing only a completed retry to explain the visual exit.
+- Preserve collection child failures ahead of missing-reporter guidance and retain execute-reporter blocked reasons when later manifest reconciliation also fails.

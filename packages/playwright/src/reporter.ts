@@ -1,17 +1,21 @@
-import { DEFAULT_MAX_MASKED_AREA_RATIO, MIN_STABILITY_SAMPLES } from "@framelia/contracts";
 import type { CaptureDefaults, DashboardEvent } from "@framelia/contracts";
 import {
   RUN_PLAN_FORMAT_VERSION,
   runPlanSchema,
   type CasePlan,
   type Diagnostic,
+  type RunContext,
   type SourceIdentity,
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
 import {
+  computeExecutionGraphDigest,
+  computeCaseId,
   finalizeRunRecord,
   freezeRunPlan,
   publishAttempt,
+  readCasePlans,
+  readRunPlan,
   readSelectedRun,
   startRunRecord,
 } from "@framelia/verify/run-bundle";
@@ -36,6 +40,8 @@ import {
   buildCasePlanForTest,
   readContractRegistration,
 } from "./run-bundle-projection.ts";
+import { readRunContext, writeCollectionManifest, writeTransportStatus } from "./run-context.ts";
+import { buildTransportCollection, type TransportCollection } from "./transport-collection.ts";
 
 export interface FrameliaReporterOptions {
   /** Project root `.framelia/` evidence writes under; defaults to the Playwright config's rootDir. */
@@ -116,6 +122,13 @@ export default class FrameliaReporter implements Reporter {
   #publicationDiagnostics: Diagnostic[] = [];
   #selectedListeners = new Set<(event: DashboardEvent) => void>();
   #selectedSequence = 0;
+  #runContext?: RunContext;
+  #transportCollection?: TransportCollection;
+  #transportError?: Error;
+  #transportReady = false;
+  #setupFailures: string[] = [];
+  #teardownFailures: string[] = [];
+  #globalErrors: string[] = [];
 
   constructor(options: FrameliaReporterOptions = {}) {
     this.#options = options;
@@ -129,6 +142,34 @@ export default class FrameliaReporter implements Reporter {
   }
 
   onBegin(config: FullConfig, suite: Suite): void {
+    let runContext: RunContext | undefined;
+    try {
+      runContext = readRunContext();
+    } catch (error) {
+      console.error(String(error));
+      return;
+    }
+    if (runContext) {
+      this.#runContext = runContext;
+      this.#projectRoot = runContext.projectRoot;
+      try {
+        this.#transportCollection = buildTransportCollection(suite, runContext);
+        if (runContext.mode === "execute") {
+          writeCollectionManifest(runContext, this.#transportCollection.manifest);
+          this.#reconcileExecution();
+          writeTransportStatus(runContext, "ready");
+          this.#transportReady = true;
+        }
+      } catch (error) {
+        this.#transportError = error instanceof Error ? error : new Error(String(error));
+        if (runContext.mode === "execute") {
+          writeTransportStatus(runContext, "blocked", [
+            { code: "FRAMELIA_EXECUTION_RECONCILIATION", message: this.#transportError.message },
+          ]);
+        }
+      }
+      return;
+    }
     this.#projectRoot = this.#options.projectRoot ?? config.rootDir ?? process.cwd();
     const tests = suite.allTests();
     const policyPromise = resolveProjectPolicy({
@@ -207,6 +248,79 @@ export default class FrameliaReporter implements Reporter {
       );
   }
 
+  #reconcileExecution(): void {
+    const context = this.#runContext;
+    const collection = this.#transportCollection;
+    if (!context || context.mode !== "execute" || !collection) {
+      throw new Error("framelia reporter: execute reconciliation has no captured collection.");
+    }
+    const plan = readRunPlan(context.projectRoot, context.runId);
+    if (plan.policyDigest !== context.policyDigest) {
+      throw new Error("framelia reporter: frozen plan policy does not match execute context.");
+    }
+    const graphDigest = computeExecutionGraphDigest(collection.manifest);
+    if (graphDigest !== plan.executionGraphDigest) {
+      throw new Error(
+        `framelia reporter: execution graph changed after collection (${graphDigest} != ${plan.executionGraphDigest}).`,
+      );
+    }
+    const casePlans = readCasePlans(context.projectRoot, context.runId);
+    if (collection.visualTests.length !== plan.selectedCases.length) {
+      throw new Error(
+        `framelia reporter: execution collected ${collection.visualTests.length} visual cases, but the frozen plan selected ${plan.selectedCases.length}.`,
+      );
+    }
+    const selectedById = new Map(plan.selectedCases.map((entry) => [entry.caseId, entry]));
+    const cases = new Map<string, { casePlan: CasePlan }>();
+    const seen = new Set<string>();
+    for (const { test, collected } of collection.visualTests) {
+      const caseId = computeCaseId({
+        contractId: collected.binding.contractId,
+        projectName: collected.project,
+        repeatIndex: collected.repeatIndex,
+      });
+      if (seen.has(caseId)) {
+        throw new Error(
+          `framelia reporter: duplicate execute binding for selected case ${caseId}.`,
+        );
+      }
+      seen.add(caseId);
+      const selected = selectedById.get(caseId);
+      const casePlan = casePlans.get(caseId);
+      if (!selected || !casePlan) {
+        throw new Error(
+          `framelia reporter: execute case ${caseId} is absent from the frozen plan.`,
+        );
+      }
+      if (
+        canonicalJsonDigest(casePlan) !== selected.casePlanDigest ||
+        canonicalJsonDigest(casePlan.binding) !== canonicalJsonDigest(collected.binding) ||
+        casePlan.specFile !== collected.specFile ||
+        casePlan.specFileDigest !== collected.specFileDigest ||
+        casePlan.project.name !== collected.project ||
+        casePlan.project.runtimeDigest !== collected.projectRuntimeDigest ||
+        casePlan.repeatIndex !== collected.repeatIndex ||
+        JSON.stringify(casePlan.registration.titlePath) !== JSON.stringify(collected.testTitlePath)
+      ) {
+        throw new Error(
+          `framelia reporter: execute case ${caseId} was remapped after its plan was frozen.`,
+        );
+      }
+      cases.set(test.id, { casePlan });
+    }
+    if (seen.size !== selectedById.size) {
+      throw new Error(
+        "framelia reporter: one or more frozen selected cases are missing at execute.",
+      );
+    }
+    this.#runBundle = {
+      root: context.projectRoot,
+      runId: context.runId,
+      cases,
+      retryAcceptance: plan.retryAcceptance,
+    };
+  }
+
   /**
    * Freezes only the contract tests visible in this direct Playwright invocation.
    * Until WP6 supplies an independently frozen discovery matrix, collected tests are
@@ -226,10 +340,7 @@ export default class FrameliaReporter implements Reporter {
         buildCasePlanForTest(test, {
           projectRoot: this.#projectRoot,
           runId,
-          policyDigest: policy.policyDigest!,
-          maxMaskedAreaRatio: policy.capture.maxMaskedAreaRatio ?? DEFAULT_MAX_MASKED_AREA_RATIO,
-          stabilitySamples: policy.capture.stabilitySamples ?? MIN_STABILITY_SAMPLES,
-          retryAcceptance: policy.retryAcceptance,
+          policy,
           source: this.#options.source ?? {},
         }),
       ),
@@ -240,13 +351,40 @@ export default class FrameliaReporter implements Reporter {
       casePlanDigest: canonicalJsonDigest(result.casePlan),
     }));
     const contracts = [...new Set(results.map((result) => result.casePlan.contract.id))].toSorted();
+    const availableMatrix = [
+      ...new Map(
+        results.map((result) => {
+          const casePlan = result.casePlan;
+          return [
+            `${casePlan.contract.id}\u0000${casePlan.project.name}`,
+            {
+              contractId: casePlan.contract.id,
+              contractFile: casePlan.contract.file,
+              contractDigest: casePlan.contract.digest,
+              project: casePlan.project.name,
+              required: casePlan.contract.authored.required,
+            },
+          ] as const;
+        }),
+      ).values(),
+    ];
     const plan = runPlanSchema.parse({
       formatVersion: RUN_PLAN_FORMAT_VERSION,
       kind: "framelia.run-plan",
       runId,
       policyDigest: policy.policyDigest,
+      executionGraphDigest: canonicalJsonDigest({
+        directCases: results.map((result) => ({
+          caseId: result.caseId,
+          projectRuntimeDigest: result.casePlan.project.runtimeDigest,
+          specFileDigest: result.casePlan.specFileDigest,
+          titlePath: result.casePlan.registration.titlePath,
+        })),
+      }),
       retryAcceptance: policy.retryAcceptance,
       selection: { mode: "subset", contracts },
+      availableMatrix,
+      requiredMatrix: [],
       availableCases: planned,
       requiredCases: [],
       selectedCases: planned,
@@ -268,33 +406,47 @@ export default class FrameliaReporter implements Reporter {
   }
 
   onTestEnd(test: TestCase, result: TestResult): void {
-    const record = (): void => {
-      if (readContractRegistration(test)) return;
-      if (!this.#store) return;
-      const projection = finalizeTestEnd(
-        test,
-        this.#projectRoot,
-        result,
-        this.#captureDefaults.maxMaskedAreaRatio,
-      );
-      this.#store.recordResult(
-        projection.dashboardId,
-        projection.dashboardResult,
-        projection.files,
-      );
-    };
-    if (this.#store) {
-      record();
+    const transportCollection = this.#transportCollection;
+    if (transportCollection) {
+      const projectName = test.parent.project()?.name;
+      if (projectName !== undefined && result.status !== "passed" && result.status !== "skipped") {
+        const identity = `${projectName}:${test.title}`;
+        if (transportCollection.dependencyProjects.has(projectName)) {
+          this.#setupFailures.push(identity);
+        }
+        if (transportCollection.teardownProjects.has(projectName)) {
+          this.#teardownFailures.push(identity);
+        }
+      }
     } else {
-      this.#pending.push(
-        (this.#ready ?? Promise.resolve())
-          .then(record)
-          .catch((error: unknown) =>
-            console.error(
-              `framelia reporter: failed to record result for ${sanitizeTestId(test)}: ${String(error)}`,
+      const record = (): void => {
+        if (readContractRegistration(test)) return;
+        if (!this.#store) return;
+        const projection = finalizeTestEnd(
+          test,
+          this.#projectRoot,
+          result,
+          this.#captureDefaults.maxMaskedAreaRatio,
+        );
+        this.#store.recordResult(
+          projection.dashboardId,
+          projection.dashboardResult,
+          projection.files,
+        );
+      };
+      if (this.#store) {
+        record();
+      } else {
+        this.#pending.push(
+          (this.#ready ?? Promise.resolve())
+            .then(record)
+            .catch((error: unknown) =>
+              console.error(
+                `framelia reporter: failed to record result for ${sanitizeTestId(test)}: ${String(error)}`,
+              ),
             ),
-          ),
-      );
+        );
+      }
     }
 
     // Independent of the dashboard-facing `record()` above: a failure on either side can
@@ -343,11 +495,58 @@ export default class FrameliaReporter implements Reporter {
     );
   }
 
-  async onEnd(_result: FullResult): Promise<void> {
+  onError(): void {
+    if (this.#runContext?.mode === "execute") {
+      this.#globalErrors.push("Playwright reported a global execution error.");
+    }
+  }
+
+  async onEnd(result: FullResult): Promise<void | { status: FullResult["status"] }> {
+    const runContext = this.#runContext;
+    if (runContext) {
+      await Promise.all(this.#runBundlePending);
+      if (runContext.mode === "collect") {
+        try {
+          if (this.#transportError) throw this.#transportError;
+          if (!this.#transportCollection) {
+            throw new Error("framelia reporter: collection metadata was not captured.");
+          }
+          writeCollectionManifest(runContext, this.#transportCollection.manifest);
+          writeTransportStatus(runContext, "completed");
+          return;
+        } catch (error) {
+          const failure = error instanceof Error ? error : new Error(String(error));
+          writeTransportStatus(runContext, "error", [
+            { code: "FRAMELIA_COLLECTION_FAILED", message: failure.message },
+          ]);
+          return { status: "failed" };
+        }
+      }
+
+      const blocked =
+        !this.#transportReady ||
+        this.#transportError !== undefined ||
+        this.#publicationDiagnostics.length > 0;
+      const diagnostics = [
+        ...(this.#transportError
+          ? [{ code: "FRAMELIA_EXECUTION_RECONCILIATION", message: this.#transportError.message }]
+          : []),
+        ...this.#publicationDiagnostics.map((diagnostic) => ({
+          code: diagnostic.code,
+          message: diagnostic.message,
+        })),
+      ];
+      writeTransportStatus(runContext, blocked ? "blocked" : "completed", diagnostics, {
+        resultStatus: result.status,
+        setupFailures: this.#setupFailures,
+        teardownFailures: this.#teardownFailures,
+        globalErrors: this.#globalErrors,
+      });
+      return blocked ? { status: "failed" } : undefined;
+    }
+
     await this.#ready?.catch(() => undefined);
     await Promise.all(this.#pending);
-
-    // Finalization seals the selected run's membership after every attempt publish settles.
     await this.#runBundleReady?.catch(() => undefined);
     await Promise.all(this.#runBundlePending);
     if (this.#runBundle) {

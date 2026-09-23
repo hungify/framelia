@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 
 import {
   captureEvidenceSchema,
@@ -12,99 +11,24 @@ import {
   ATTEMPT_FORMAT_VERSION,
   ATTEMPT_SCORE_FORMAT_VERSION,
   attemptScoreSchema,
-  authoredContractSchema,
-  CASE_PLAN_FORMAT_VERSION,
-  casePlanSchema,
-  testRegistrationSchema,
   type AttemptRecord,
   type AttemptScore,
   type CasePlan,
   type Diagnostic,
   type SourceIdentity,
-  type TestRegistration,
 } from "@framelia/contracts/workflow";
+import { canonicalJsonDigest, sanitizePortableValue } from "@framelia/verify";
+import type { ResolvedProjectPolicy } from "@framelia/verify/project-policy";
 import {
-  canonicalJsonDigest,
-  readPinnedBaseline,
-  sanitizePortableValue,
-  type CanonicalJsonValue,
-} from "@framelia/verify";
-import {
+  buildCasePlanForCollectedCase,
   computeAttemptId,
-  computeCaseId,
   type AttemptEvidenceFiles,
 } from "@framelia/verify/run-bundle";
-import type { BrowserContextOptions } from "@playwright/test";
-import type { FullProject, Suite, TestCase, TestResult } from "@playwright/test/reporter";
+import type { TestCase, TestResult } from "@playwright/test/reporter";
 
-import { CONTRACT_ANNOTATION_TYPE } from "./define-figma-tests.ts";
+import { projectCollectedCase } from "./collection.ts";
 import { attachmentPath, readScoreAttachments } from "./report-projection.ts";
 import type { FrameliaScoreAttachment } from "./score-attachment.ts";
-
-/** Reads the `framelia.contract` annotation `defineFigmaTests` puts on every test it
- *  registers (see that module's own doc comment) -- the contract binding plus this
- *  test's own registration-time spec-file digest. `undefined` for any ordinary test
- *  that isn't one of its registrations -- run-bundle publication only ever covers
- *  those. */
-export function readContractRegistration(test: TestCase): TestRegistration | undefined {
-  const annotation = (test.annotations ?? []).find(
-    (candidate) => candidate.type === CONTRACT_ANNOTATION_TYPE,
-  );
-  if (!annotation?.description) return undefined;
-  try {
-    return testRegistrationSchema.parse(JSON.parse(annotation.description));
-  } catch {
-    // A foreign/malformed annotation sharing the same `type` string must never crash the
-    // reporter -- treat it as "not one of ours" rather than propagate a parse error.
-    return undefined;
-  }
-}
-
-/** Walks a `TestCase`'s parent suite chain up to the enclosing `type: "file"` Suite --
- *  Playwright's own collected-file-suite record, tracked independently of wherever a
- *  registering library's own `test(...)` call happens to live textually. */
-function findFileSuite(suite: Suite | undefined): Suite | undefined {
-  let current = suite;
-  while (current) {
-    if (current.type === "file") return current;
-    current = current.parent;
-  }
-  return undefined;
-}
-
-/**
- * Secrets-safe runtime identity for public Playwright context values that can change
- * pixels or application behavior. Deliberately excludes storage state, headers,
- * credentials, callbacks, regular expressions, URLs, and filesystem paths.
- */
-export function computeProjectRuntimeDigest(project: FullProject | undefined): `sha256:${string}` {
-  // Playwright's reporter `FullProject.use` omits inherited BrowserContextOptions from its
-  // declaration even though those public values are present in the reporter payload.
-  const use = project?.use as (FullProject["use"] & BrowserContextOptions) | undefined;
-  const relevant: CanonicalJsonValue = {
-    name: project?.name ?? null,
-    browserName: use?.browserName ?? null,
-    viewport: (use?.viewport ?? null) as CanonicalJsonValue,
-    screen: (use?.screen ?? null) as CanonicalJsonValue,
-    deviceScaleFactor: use?.deviceScaleFactor ?? null,
-    locale: use?.locale ?? null,
-    timezoneId: use?.timezoneId ?? null,
-    colorScheme: use?.colorScheme ?? null,
-    reducedMotion: use?.reducedMotion ?? null,
-    forcedColors: use?.forcedColors ?? null,
-    contrast: use?.contrast ?? null,
-    userAgent: use?.userAgent ?? null,
-    isMobile: use?.isMobile ?? null,
-    hasTouch: use?.hasTouch ?? null,
-    javaScriptEnabled: use?.javaScriptEnabled ?? null,
-    serviceWorkers: use?.serviceWorkers ?? null,
-    offline: use?.offline ?? null,
-    ignoreHTTPSErrors: use?.ignoreHTTPSErrors ?? null,
-    bypassCSP: use?.bypassCSP ?? null,
-    permissions: [...(use?.permissions ?? [])].toSorted(),
-  };
-  return canonicalJsonDigest(relevant);
-}
 
 export interface CasePlanBuildResult {
   testId: string;
@@ -115,149 +39,31 @@ export interface CasePlanBuildResult {
 export interface CasePlanBuildContext {
   projectRoot: string;
   runId: string;
-  policyDigest: `sha256:${string}`;
-  retryAcceptance: "require-first-attempt" | "allow-passed-after-retry";
-  maxMaskedAreaRatio: number;
-  stabilitySamples: number;
+  policy: ResolvedProjectPolicy;
   source: SourceIdentity;
 }
 
 /**
- * Builds one test's frozen `CasePlan`, reconciling its `framelia.contract` binding against
- * the contract file's *current* on-disk bytes (not just trusting the annotation recorded
- * at collection time) and its pinned baseline snapshot -- see #77's own "Reconcile changed
- * contract/policy/binding/snapshot inputs before capture and finalization" requirement.
- * Throws if the contract has drifted since collection (changed planning inputs must
- * invalidate the run, even though the test's own id/title never changed).
- *
- * `specFileDigest` is read straight from the `framelia.contract` annotation's own
- * `specDigest` (`registration.specDigest`), NOT independently re-hashed from disk here
- * at `onBegin` time. Playwright imports every spec file (running `defineFigmaTests`
- * synchronously, once, per file) strictly before any Reporter's `onBegin` runs;
- * re-hashing the file fresh from disk at this later point would freeze whatever
- * content happens to be on disk *right now*, which can already differ from what Node
- * actually imported and will actually execute for every attempt of this test, if the
- * file was edited in between. `defineFigmaTests`'s own `specUrl` option hashes the file
- * synchronously at true import time -- the only point that can ever observe the
- * actually-executing bytes -- and freezes that digest into the annotation; this
- * function only ever propagates it. `registration.specFile` -- the portable path
- * `specUrl` resolved to at registration time -- is cross-checked against the real spec
- * file before that digest is trusted: without this, a caller could pass an arbitrary,
- * stable, unrelated `specUrl` whose digest has nothing to do with what's actually
- * executing, and nothing would ever catch it. The real spec file is resolved via the
- * enclosing `type: "file"` Suite's own `.title` (Playwright's own collected-file-suite
- * record, relative to the resolved project's own `testDir`) -- NOT `test.location.file`
- * (a stack-trace-derived "where was `test(...)` textually called," which for every
- * `defineFigmaTests` registration is this library's own call site, never the real
- * caller spec file; confirmed empirically against a real `playwright test` run).
- *
- * Resolves `binding.contractFile` against `context.projectRoot` -- the Reporter's own
- * project root, not each contract file's independently-discovered nearest-config
- * ancestor (`defineFigmaTests`'s own default when no `options.projectRoot` override is
- * given). These agree for the overwhelmingly common case of one project root shared by
- * the Playwright config and every contract file; a multi-root workspace where a
- * contract's own discovered root diverges from the Reporter's is a known, deliberately
- * flagged limitation -- reconciliation fails loudly (a read/parse/digest error) rather
- * than silently building a case plan against the wrong file.
+ * Projects documented Playwright TestCase/FullProject metadata into a versioned CollectedCase,
+ * then delegates all runner-independent contract/baseline/policy planning to @framelia/verify.
  */
 export async function buildCasePlanForTest(
   test: TestCase,
   context: CasePlanBuildContext,
 ): Promise<CasePlanBuildResult> {
-  const registration = readContractRegistration(test);
-  if (!registration) {
+  const collected = projectCollectedCase(test, context.projectRoot, { strictAnnotation: true });
+  if (!collected) {
     throw new Error(`buildCasePlanForTest: test ${test.id} has no framelia.contract annotation.`);
   }
-  const { binding } = registration;
-
-  const contractPath = path.resolve(context.projectRoot, binding.contractFile);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(contractPath, "utf8"));
-  } catch (error) {
-    throw new Error(
-      `run-bundle: cannot read contract "${binding.contractId}" at ${contractPath} while freezing its case plan.`,
-      { cause: error },
-    );
-  }
-  const contract = authoredContractSchema.parse(parsed);
-  const contractDigest = canonicalJsonDigest(contract);
-  if (contractDigest !== binding.contractDigest) {
-    throw new Error(
-      `run-bundle: contract "${binding.contractId}" at ${contractPath} has changed since collection (recomputed digest ${contractDigest} != binding digest ${binding.contractDigest}). Changed planning inputs invalidate the run -- reconcile the contract before freezing it.`,
-    );
-  }
-
-  // readPinnedBaseline re-validates the pinned snapshot record and its backing image
-  // bytes against contract.baseline.snapshotDigest; a stale/tampered baseline fails here,
-  // before the run is ever frozen, not silently at capture time.
-  const pinnedBaseline = await readPinnedBaseline(context.projectRoot, contract);
-
-  const project = test.parent.project();
-  const fileSuite = findFileSuite(test.parent);
-  if (!project || !fileSuite) {
-    throw new Error(
-      `run-bundle: test ${test.id} has no resolvable project/file suite to determine its spec file from.`,
-    );
-  }
-  const specFile = path.resolve(project.testDir, fileSuite.title);
-  const specFileRelative = path.relative(context.projectRoot, specFile).split(path.sep).join("/");
-  if (registration.specFile !== specFileRelative) {
-    throw new Error(
-      `run-bundle: test ${test.id}'s registered specUrl (${registration.specFile}) does not match the file Playwright says registered this test (${specFileRelative}) -- refusing to freeze a case plan whose declared spec identity doesn't match its actual location.`,
-    );
-  }
-
-  const projectName = project.name;
-  const caseId = computeCaseId({
-    contractId: contract.id,
-    projectName,
-    repeatIndex: test.repeatEachIndex,
-  });
-
-  const casePlan = casePlanSchema.parse({
-    formatVersion: CASE_PLAN_FORMAT_VERSION,
-    kind: "framelia.case-plan",
-    runId: context.runId,
-    caseId,
-    contract: {
-      id: contract.id,
-      file: binding.contractFile,
-      digest: binding.contractDigest,
-      authored: contract,
-    },
-    snapshotDigest: contract.baseline.snapshotDigest,
-    expectedDigest: pinnedBaseline.snapshot.expected.image.digest,
-    expectedSize: {
-      width: pinnedBaseline.snapshot.expected.image.width,
-      height: pinnedBaseline.snapshot.expected.image.height,
-    },
-    baselineSource: pinnedBaseline.snapshot.source,
-    maxMaskedAreaRatio: context.maxMaskedAreaRatio,
-    stabilitySamples: context.stabilitySamples,
-    policyDigest: context.policyDigest,
-    bindingDigest: canonicalJsonDigest(binding),
-    binding,
-    registration: {
-      specFile: registration.specFile,
-      specDigest: registration.specDigest,
-      titlePath: test.titlePath(),
-    },
-    specFile: specFileRelative,
-    specFileDigest: registration.specDigest,
-    project: { name: projectName, runtimeDigest: computeProjectRuntimeDigest(project) },
-    repeatIndex: test.repeatEachIndex,
-    retryAcceptance: context.retryAcceptance,
-    source: context.source,
-  } satisfies CasePlan);
-
-  return { testId: test.id, caseId, casePlan };
+  const casePlan = await buildCasePlanForCollectedCase(collected, context);
+  return { testId: test.id, caseId: casePlan.caseId, casePlan };
 }
 
-/** Every `framelia.contract`-annotated test in the collected suite -- see `Suite.allTests()`. */
-export function contractAnnotatedTests(suite: Suite): TestCase[] {
-  return suite.allTests().filter((test) => readContractRegistration(test) !== undefined);
-}
+export {
+  computeProjectRuntimeDigest,
+  contractAnnotatedTests,
+  readContractRegistration,
+} from "./collection.ts";
 
 function mapAttemptOutcome(
   status: TestResult["status"],

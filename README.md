@@ -33,6 +33,7 @@ attempt publication/finalization. No database, hosted service, account, or cloud
 | ---------------------------------------------- | ----------------------------- | ------ | ------------------------- | ---------------------------------- |
 | `npx playwright test` (matchers, no reporter)  | Yes (your Playwright process) | No     | No                        | Test pass/fail + attachments       |
 | `npx playwright test` (with Framelia Reporter) | Yes (your Playwright process) | Yes    | Live selected-run view    | Immutable run bundle + live events |
+| `framelia check --all` / `--contract <id>`     | Yes (local Playwright)        | No     | No                        | Exact JSON outcome + run bundle    |
 | `framelia open --run <id>`                     | No                            | Yes    | Selected-run dashboard    | Existing run bundle                |
 | `framelia report --run <id>`                   | No                            | No     | Portable static dashboard | Relocatable selected-run report    |
 | `framelia done-gate --run <id>`                | No                            | No     | No                        | Trusted authoritative run verdict  |
@@ -47,7 +48,7 @@ packages/
 ├── verify/                  # baseline resolution, capture, comparison, and run-bundle readers
 ├── dashboard-server/        # Hono/SSE server + result-projection, shared by cli and playwright
 ├── playwright/              # toMatchFigma / toMatchPage / toMatchUrl matchers + Reporter
-└── cli/                     # framelia binary: init, contract create, status, schema,
+└── cli/                     # framelia binary: init, check, contract create, status, schema,
     │                        # open, report, dashboard, fetch-gold, compare, done-gate
     └── dist/dashboard/      # generated dashboard bundled in npm package
 ```
@@ -168,10 +169,13 @@ Dashboard-specific development and HMR instructions live in [`apps/dashboard/REA
 
 CI builds and packs all five release packages from a clean checkout, then installs
 the tarballs outside the workspace. The release gate covers npm/pnpm, Node 22.13,
-24 and 26, Playwright 1.61.1 and 1.62.1, and consumer ESM/CommonJS configurations.
-It checks native public imports, declarations, CLI initialization, schema-compatible
-contract fixtures, ordinary test collection, reporter dashboard startup, and
-real browser comparisons with passing and mismatching evidence. A separate
+24 and 26, Playwright 1.61.1 and the supported current runner, and consumer
+ESM/CommonJS configurations. It checks native public imports, declarations, CLI
+initialization without rewriting existing reporter lists, schema-compatible contract
+fixtures, ordinary collection, reporter dashboard startup, real matcher comparisons,
+and exact `framelia check` pass/mismatch runs from a nested directory. The coordinated
+fixture also exercises the unnamed project, repeat slots, retry, setup dependencies,
+teardown, noisy user-reporter output, and optional exact contract selection. A separate
 matcher-only install checks that the optional dashboard peer is not required.
 
 The fixtures use `scale: 1`, supported by the current `main` schema. Higher-DPR

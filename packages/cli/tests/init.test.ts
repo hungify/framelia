@@ -85,6 +85,81 @@ describe("initializeProject (scaffold step)", () => {
     expect(initializeProject(projectRoot, true).configPath).toBe(configPath);
     expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(false);
   });
+
+  it("creates a minimal Playwright config with the Framelia reporter and remains idempotent", () => {
+    const projectRoot = tempProjectRoot();
+
+    const first = initializeProject(projectRoot);
+    const source = fs.readFileSync(first.playwrightConfigPath, "utf8");
+    expect(first.reporterRegistration).toBe("configured");
+    expect(source).toContain('["@framelia/playwright/reporter"]');
+    expect(source).toContain('["list"]');
+
+    const second = initializeProject(projectRoot, true);
+    expect(second.reporterRegistration).toBe("configured");
+    expect(fs.readFileSync(second.playwrightConfigPath, "utf8")).toBe(source);
+  });
+
+  it.each(["playwright.config.mjs", "playwright.config.cjs", "playwright.config.ts"])(
+    "leaves an existing %s byte-for-byte untouched and returns a manual recipe",
+    (fileName) => {
+      const projectRoot = tempProjectRoot();
+      const playwrightConfigPath = path.join(projectRoot, fileName);
+      const source = "module.exports = { reporter: [['line']] }; // preserve me\n";
+      fs.writeFileSync(playwrightConfigPath, source);
+
+      const result = initializeProject(projectRoot);
+
+      expect(result.reporterRegistration).toBe("manual");
+      expect(result.reporterInstructions).toContain("@framelia/playwright/reporter");
+      expect(fs.readFileSync(playwrightConfigPath, "utf8")).toBe(source);
+    },
+  );
+
+  it("leaves an already-configured Playwright reporter list byte-for-byte untouched", () => {
+    const projectRoot = tempProjectRoot();
+    const playwrightConfigPath = path.join(projectRoot, "playwright.config.js");
+    const source = "export default { reporter: [['line'], ['@framelia/playwright/reporter']] };\n";
+    fs.writeFileSync(playwrightConfigPath, source);
+
+    const result = initializeProject(projectRoot);
+
+    expect(result.reporterRegistration).toBe("configured");
+    expect(fs.readFileSync(playwrightConfigPath, "utf8")).toBe(source);
+  });
+
+  it("does not mistake comments, dead strings, or unrelated imports for reporter registration", () => {
+    const projectRoot = tempProjectRoot();
+    const playwrightConfigPath = path.join(projectRoot, "playwright.config.ts");
+    const source = [
+      'import reporterPackage from "@framelia/playwright/reporter";',
+      '// reporter: [["@framelia/playwright/reporter"]],',
+      'const note = "@framelia/playwright/reporter";',
+      'export default { reporter: [["line"]] };',
+      "",
+    ].join("\n");
+    fs.writeFileSync(playwrightConfigPath, source);
+
+    const first = initializeProject(projectRoot);
+    const second = initializeProject(projectRoot, true);
+
+    expect(first.reporterRegistration).toBe("manual");
+    expect(second.reporterRegistration).toBe("manual");
+    expect(second.reporterInstructions).toBe(first.reporterInstructions);
+    expect(fs.readFileSync(playwrightConfigPath, "utf8")).toBe(source);
+  });
+
+  it("rejects multiple Playwright config files without rewriting either one", () => {
+    const projectRoot = tempProjectRoot();
+    const first = path.join(projectRoot, "playwright.config.ts");
+    const second = path.join(projectRoot, "playwright.config.mjs");
+    fs.writeFileSync(first, "export default {};\n");
+    fs.writeFileSync(second, "export default {};\n");
+
+    expect(() => initializeProject(projectRoot)).toThrow(/Multiple Playwright configs found/);
+    expect(fs.readFileSync(first, "utf8")).toBe("export default {};\n");
+    expect(fs.readFileSync(second, "utf8")).toBe("export default {};\n");
+  });
 });
 
 describe("projectInitCommand (CLI adapter)", () => {

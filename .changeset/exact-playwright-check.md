@@ -1,0 +1,15 @@
+---
+"@framelia/contracts": minor
+"@framelia/verify": minor
+"@framelia/playwright": minor
+"@framelia/dashboard-server": minor
+"framelia": minor
+---
+
+Add an exact contract-selected `framelia check` workflow backed by the consumer project's local Playwright.
+
+- Publish versioned collection, run-context, execution-lifecycle, case-plan, matrix, and command-outcome records with canonical project/dependency/teardown graph identity.
+- Collect through documented Playwright reporter metadata, freeze exact authored contract/project/repeat membership, execute one exact `--test-list`, and reject missing, duplicate, remapped, stale, or ambiguous bindings before capture.
+- Preserve direct Reporter behavior outside coordinator mode while making collection transport dashboard-free and execute transport synchronously gate every generated visual body before preparation or capture.
+- Propagate cancellation, distinguish visual mismatch from setup, teardown, global, transport, and raw-exit failures, and terminalize every started run exactly once with inspectable identity.
+- Configure the Reporter for new Playwright projects during `framelia init`; preserve existing configs byte-for-byte and return a manual reporter-integration recipe when their configuration is not unambiguous.

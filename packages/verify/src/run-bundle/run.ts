@@ -212,143 +212,246 @@ export async function finalizeRunRecord(
     retryAcceptance: RetryAcceptancePolicy;
     now?: () => Date;
     diagnostics?: readonly Diagnostic[];
+    transport?: {
+      exitCode: number | null;
+      signal: string | null;
+      cancelled: boolean;
+      reporterCompleted: boolean;
+      resultStatus?: "passed" | "failed" | "timedout" | "interrupted";
+    };
   },
 ): Promise<RunRecord> {
-  return withRunLock(root, runId, async () => {
-    const plan = readRunPlan(root, runId);
-    if (options.retryAcceptance !== plan.retryAcceptance) {
-      throw new AppError(
-        "RUN_BUNDLE_INVALID",
-        `Finalization retry policy "${options.retryAcceptance}" does not match frozen run policy "${plan.retryAcceptance}".`,
-      );
-    }
-    const casePlans = readCasePlans(root, runId);
-    const previous = fs.existsSync(runRecordPath(root, runId))
-      ? readRunRecord(root, runId)
-      : undefined;
-    const now = options.now?.() ?? new Date();
+  try {
+    return await withRunLock(root, runId, async () => {
+      const plan = readRunPlan(root, runId);
+      if (options.retryAcceptance !== plan.retryAcceptance) {
+        throw new AppError(
+          "RUN_BUNDLE_INVALID",
+          `Finalization retry policy "${options.retryAcceptance}" does not match frozen run policy "${plan.retryAcceptance}".`,
+        );
+      }
+      const casePlans = readCasePlans(root, runId);
+      const previous = fs.existsSync(runRecordPath(root, runId))
+        ? readRunRecord(root, runId)
+        : undefined;
+      const now = options.now?.() ?? new Date();
 
-    const caseResults = await Promise.all(
-      plan.selectedCases.map(async (selected) => {
-        const diagnostics: Diagnostic[] = [];
-        const dir = attemptsDir(root, runId, selected.caseId);
-        const attempts: AttemptRecord[] = [];
-        const evidenceVerifiedAttempts: AttemptRecord[] = [];
-        if (fs.existsSync(dir)) {
-          for (const entry of fs
-            .readdirSync(dir, { withFileTypes: true })
-            .toSorted((left, right) => left.name.localeCompare(right.name))) {
-            if (!entry.isDirectory()) continue;
-            const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
-            if (!fs.existsSync(attemptPath)) {
-              diagnostics.push({
-                code: "attempt-publication-partial",
-                stage: "publication",
-                message: `Case "${selected.caseId}" contains partial attempt directory "${entry.name}".`,
-              });
-              continue;
-            }
-            let attempt: AttemptRecord;
-            try {
-              attempt = parseJsonFile(
-                attemptPath,
-                attemptRecordSchema,
-                "RUN_BUNDLE_INVALID",
-                `attempt bundle at ${attemptPath}`,
-              );
-            } catch (error) {
-              diagnostics.push({
-                code: "attempt-record-invalid",
-                stage: "publication",
-                message: portableErrorMessage(error, root),
-              });
-              continue;
-            }
-            if (
-              attempt.runId !== runId ||
-              attempt.caseId !== selected.caseId ||
-              attempt.casePlanDigest !== selected.casePlanDigest
-            ) {
-              diagnostics.push({
-                code: "attempt-identity-invalid",
-                stage: "publication",
-                message: `Attempt "${attempt.attemptId}" does not match run/case/frozen-plan identity.`,
-              });
-              continue;
-            }
-            attempts.push(attempt);
-            try {
-              validateAttemptEvidence(root, attempt);
-              evidenceVerifiedAttempts.push(attempt);
-            } catch (error) {
-              diagnostics.push({
-                code: "attempt-evidence-invalid",
-                stage: "evidence",
-                message: portableErrorMessage(error, root),
-              });
+      const caseResults = await Promise.all(
+        plan.selectedCases.map(async (selected) => {
+          const diagnostics: Diagnostic[] = [];
+          const dir = attemptsDir(root, runId, selected.caseId);
+          const attempts: AttemptRecord[] = [];
+          const evidenceVerifiedAttempts: AttemptRecord[] = [];
+          if (fs.existsSync(dir)) {
+            for (const entry of fs
+              .readdirSync(dir, { withFileTypes: true })
+              .toSorted((left, right) => left.name.localeCompare(right.name))) {
+              if (!entry.isDirectory()) continue;
+              const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
+              if (!fs.existsSync(attemptPath)) {
+                diagnostics.push({
+                  code: "attempt-publication-partial",
+                  stage: "publication",
+                  message: `Case "${selected.caseId}" contains partial attempt directory "${entry.name}".`,
+                });
+                continue;
+              }
+              let attempt: AttemptRecord;
+              try {
+                attempt = parseJsonFile(
+                  attemptPath,
+                  attemptRecordSchema,
+                  "RUN_BUNDLE_INVALID",
+                  `attempt bundle at ${attemptPath}`,
+                );
+              } catch (error) {
+                diagnostics.push({
+                  code: "attempt-record-invalid",
+                  stage: "publication",
+                  message: portableErrorMessage(error, root),
+                });
+                continue;
+              }
+              if (
+                attempt.runId !== runId ||
+                attempt.caseId !== selected.caseId ||
+                attempt.casePlanDigest !== selected.casePlanDigest
+              ) {
+                diagnostics.push({
+                  code: "attempt-identity-invalid",
+                  stage: "publication",
+                  message: `Attempt "${attempt.attemptId}" does not match run/case/frozen-plan identity.`,
+                });
+                continue;
+              }
+              attempts.push(attempt);
+              try {
+                validateAttemptEvidence(root, attempt);
+                evidenceVerifiedAttempts.push(attempt);
+              } catch (error) {
+                diagnostics.push({
+                  code: "attempt-evidence-invalid",
+                  stage: "evidence",
+                  message: portableErrorMessage(error, root),
+                });
+              }
             }
           }
+          attempts.sort(
+            (left, right) =>
+              left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
+          );
+          evidenceVerifiedAttempts.sort(
+            (left, right) =>
+              left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
+          );
+
+          const casePlan = casePlans.get(selected.caseId);
+          const reconciliation = casePlan
+            ? await reconcileCasePlan(root, casePlan)
+            : {
+                consistent: false,
+                reasons: [`case "${selected.caseId}" has no full CasePlan record in the bundle`],
+              };
+          if (!reconciliation.consistent) {
+            diagnostics.push(
+              ...reconciliation.reasons.map((message) => ({
+                code: "case-plan-reconciliation-failed",
+                stage: "reconciliation",
+                message,
+              })),
+            );
+          }
+
+          const selectedAttemptId = reconciliation.consistent
+            ? selectFinalAttempt(evidenceVerifiedAttempts, options.retryAcceptance)
+            : undefined;
+          const selectedAttempt = selectedAttemptId
+            ? evidenceVerifiedAttempts.find((attempt) => attempt.attemptId === selectedAttemptId)
+            : undefined;
+          if (options.transport && !selectedAttempt) {
+            diagnostics.push({
+              code: "selected-attempt-missing",
+              stage: "execution",
+              message: `Case "${selected.caseId}" has no complete, evidence-verified attempt accepted by the frozen retry policy.`,
+            });
+          }
+          return {
+            entry: {
+              caseId: selected.caseId,
+              attemptIds: attempts.map((attempt) => attempt.attemptId),
+              ...(selectedAttemptId ? { selectedAttemptId } : {}),
+            },
+            diagnostics,
+            selectedAttempt,
+          };
+        }),
+      );
+      const transportDiagnostics: Diagnostic[] = [];
+      if (options.transport) {
+        const selectedAttempts = caseResults
+          .map((result) => result.selectedAttempt)
+          .filter((attempt): attempt is AttemptRecord => attempt !== undefined);
+        const allSelectedComplete =
+          selectedAttempts.length === plan.selectedCases.length &&
+          selectedAttempts.every((attempt) => attempt.executionState === "completed");
+        const visualVerdict = selectedAttempts.some(
+          (attempt) => attempt.visualVerdict === "mismatched",
+        )
+          ? "mismatched"
+          : allSelectedComplete &&
+              selectedAttempts.every((attempt) => attempt.visualVerdict === "passed")
+            ? "passed"
+            : "not-evaluated";
+        const expectedExitCode =
+          visualVerdict === "mismatched" ? 1 : visualVerdict === "passed" ? 0 : null;
+        const expectedResultStatus =
+          visualVerdict === "mismatched"
+            ? "failed"
+            : visualVerdict === "passed"
+              ? "passed"
+              : undefined;
+        if (options.transport.cancelled) {
+          transportDiagnostics.push({
+            code: "execution-cancelled",
+            stage: "execution",
+            message: "The Playwright child was cancelled after graceful SIGINT forwarding.",
+          });
         }
-        attempts.sort(
-          (left, right) =>
-            left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
-        );
-        evidenceVerifiedAttempts.sort(
-          (left, right) =>
-            left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
-        );
-
-        const casePlan = casePlans.get(selected.caseId);
-        const reconciliation = casePlan
-          ? await reconcileCasePlan(root, casePlan)
-          : {
-              consistent: false,
-              reasons: [`case "${selected.caseId}" has no full CasePlan record in the bundle`],
-            };
-
-        const selectedAttemptId = reconciliation.consistent
-          ? selectFinalAttempt(evidenceVerifiedAttempts, options.retryAcceptance)
-          : undefined;
-        return {
-          entry: {
-            caseId: selected.caseId,
-            attemptIds: attempts.map((attempt) => attempt.attemptId),
-            ...(selectedAttemptId ? { selectedAttemptId } : {}),
-          },
-          diagnostics,
-        };
-      }),
-    );
-    const publicationDiagnostics = [...(options.diagnostics ?? [])].toSorted(
-      (left, right) =>
-        left.code.localeCompare(right.code) ||
-        left.stage.localeCompare(right.stage) ||
-        left.message.localeCompare(right.message),
-    );
-    const diagnostics = [
-      ...publicationDiagnostics,
-      ...caseResults.flatMap((result) => result.diagnostics),
-    ];
-    const status =
-      publicationDiagnostics.length > 0
-        ? "error"
-        : diagnostics.length > 0
-          ? "incomplete"
-          : "finalized";
+        if (!options.transport.reporterCompleted) {
+          transportDiagnostics.push({
+            code: "reporter-lifecycle-incomplete",
+            stage: "execution",
+            message:
+              "The Framelia reporter did not publish a completed execution lifecycle summary.",
+          });
+        }
+        if (
+          options.transport.signal !== null ||
+          expectedExitCode === null ||
+          options.transport.exitCode !== expectedExitCode ||
+          (expectedResultStatus !== undefined &&
+            options.transport.resultStatus !== expectedResultStatus)
+        ) {
+          transportDiagnostics.push({
+            code: "playwright-exit-unexplained",
+            stage: "execution",
+            message: `Playwright exit ${options.transport.exitCode ?? options.transport.signal ?? "unknown"} / result ${options.transport.resultStatus ?? "missing"} is not explained by the published selected visual attempts.`,
+          });
+        }
+      }
+      const publicationDiagnostics = [
+        ...(options.diagnostics ?? []),
+        ...transportDiagnostics,
+      ].toSorted(
+        (left, right) =>
+          left.code.localeCompare(right.code) ||
+          left.stage.localeCompare(right.stage) ||
+          left.message.localeCompare(right.message),
+      );
+      const diagnostics = [
+        ...publicationDiagnostics,
+        ...caseResults.flatMap((result) => result.diagnostics),
+      ];
+      const status =
+        publicationDiagnostics.length > 0
+          ? "error"
+          : diagnostics.length > 0
+            ? "incomplete"
+            : "finalized";
+      const record = runRecordSchema.parse({
+        formatVersion: RUN_FORMAT_VERSION,
+        kind: "framelia.run",
+        runId,
+        planDigest: canonicalJsonDigest(plan),
+        status,
+        createdAt: previous?.createdAt ?? now.toISOString(),
+        finalizedAt: now.toISOString(),
+        diagnostics,
+        cases: caseResults.map((result) => result.entry),
+      });
+      publishRunRecord(root, record);
+      return record;
+    });
+  } catch (error) {
+    const previous = readRunRecord(root, runId);
+    const now = options.now?.() ?? new Date();
     const record = runRecordSchema.parse({
-      formatVersion: RUN_FORMAT_VERSION,
-      kind: "framelia.run",
-      runId,
-      planDigest: canonicalJsonDigest(plan),
-      status,
-      createdAt: previous?.createdAt ?? now.toISOString(),
+      ...previous,
+      status: "error",
       finalizedAt: now.toISOString(),
-      diagnostics,
-      cases: caseResults.map((result) => result.entry),
+      diagnostics: [
+        ...(options.diagnostics ?? []),
+        {
+          code: "run-finalization-failed",
+          stage: "finalization",
+          message: portableErrorMessage(error, root),
+        },
+      ],
     });
     publishRunRecord(root, record);
-    return record;
-  });
+    throw error;
+  }
 }
 
 /** Reads the run's current coordination record (`run.json`), whatever its `status`. */

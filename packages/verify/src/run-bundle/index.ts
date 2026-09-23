@@ -5,6 +5,7 @@
 export { publishAttempt } from "./attempt.ts";
 export type { AttemptEvidenceFiles } from "./attempt.ts";
 export { readCasePlans } from "./case-plans.ts";
+export { computeExecutionGraphDigest } from "./execution-graph.ts";
 export {
   ATTEMPT_EVIDENCE_FILE,
   attemptDir,
@@ -22,6 +23,8 @@ export {
   toProjectRelative,
 } from "./layout.ts";
 export type { CaseIdentity } from "./layout.ts";
+export { buildCasePlanForCollectedCase } from "./planner.ts";
+export type { CollectedCasePlanContext } from "./planner.ts";
 export { reconcileCasePlan } from "./reconcile.ts";
 export type { CasePlanReconciliation } from "./reconcile.ts";
 export { readRunBundle } from "./read.ts";

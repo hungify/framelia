@@ -27,9 +27,12 @@ export const SNAPSHOT_FORMAT_VERSION = 1;
 export const BINDING_FORMAT_VERSION = 1;
 export const TEST_REGISTRATION_FORMAT_VERSION = 1;
 export const SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 1 as const;
-export const COLLECTION_FORMAT_VERSION = 1;
+export const COLLECTION_FORMAT_VERSION = 2;
+export const COLLECTED_CASE_FORMAT_VERSION = 1;
+export const RUN_CONTEXT_FORMAT_VERSION = 1;
+export const TRANSPORT_STATUS_FORMAT_VERSION = 1;
 export const CASE_PLAN_FORMAT_VERSION = 2;
-export const RUN_PLAN_FORMAT_VERSION = 1;
+export const RUN_PLAN_FORMAT_VERSION = 2;
 export const RUN_FORMAT_VERSION = 2;
 export const ATTEMPT_FORMAT_VERSION = 2;
 export const COMMAND_OUTCOME_FORMAT_VERSION = 1;
@@ -71,10 +74,19 @@ export const projectRelativePathSchema = nonEmptyTrimmed.refine(
   { message: "must be project-relative without parent traversal" },
 );
 
+export const absolutePathSchema = nonEmptyTrimmed.refine(
+  (value) => value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value),
+  { message: "must be an absolute filesystem path" },
+);
+
 export const targetPathSchema = nonEmptyTrimmed.refine(
   (value) => value.startsWith("/") && !value.startsWith("//"),
   { message: "must be an application path beginning with one slash" },
 );
+
+const nonBlankPreserved = z.string().refine((value) => value.trim().length > 0, {
+  message: "must contain a non-whitespace character",
+});
 
 const uniqueStrings = <T extends z.ZodType<string>>(item: T) =>
   z
@@ -247,15 +259,51 @@ export const testRegistrationSchema = z
 
 export const collectedCaseSchema = z
   .object({
+    formatVersion: z.literal(COLLECTED_CASE_FORMAT_VERSION),
+    kind: z.literal("framelia.collected-case"),
     binding: contractBindingSchema,
+    project: projectNameSchema,
+    projectRuntimeDigest: sha256DigestSchema,
+    specFile: projectRelativePathSchema,
+    testListFile: projectRelativePathSchema,
+    specFileDigest: sha256DigestSchema,
+    location: z
+      .object({
+        line: z.number().int().positive(),
+        column: z.number().int().nonnegative(),
+      })
+      .strict(),
+    testTitlePath: z.array(nonBlankPreserved).min(1),
+    repeatIndex: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const collectedProjectSchema = z
+  .object({
+    name: projectNameSchema,
+    runtimeDigest: sha256DigestSchema,
+    dependencies: z.array(projectNameSchema),
+    teardown: projectNameSchema.optional(),
+    repeatEach: z.number().int().positive(),
+    retries: z.number().int().nonnegative(),
+    testDir: projectRelativePathSchema,
+  })
+  .strict();
+
+export const collectedSetupCaseSchema = z
+  .object({
     project: projectNameSchema,
     specFile: projectRelativePathSchema,
     specFileDigest: sha256DigestSchema,
-    line: z.number().int().positive(),
-    column: z.number().int().nonnegative(),
-    titlePath: z.array(nonEmptyTrimmed).min(1),
+    location: z
+      .object({
+        line: z.number().int().positive(),
+        column: z.number().int().nonnegative(),
+      })
+      .strict(),
+    testTitlePath: z.array(nonBlankPreserved).min(1),
     repeatIndex: z.number().int().nonnegative(),
-    dependencies: z.array(projectNameSchema).default([]),
+    graphRole: z.enum(["dependency", "teardown"]),
   })
   .strict();
 
@@ -263,24 +311,139 @@ export const collectionManifestSchema = z
   .object({
     formatVersion: z.literal(COLLECTION_FORMAT_VERSION),
     kind: z.literal("framelia.collection"),
-    createdAt: z.iso.datetime(),
+    runId: nonEmptyTrimmed,
+    projectRoot: absolutePathSchema,
     policyDigest: sha256DigestSchema,
-    cases: z.array(collectedCaseSchema),
+    projects: z.array(collectedProjectSchema).min(1),
+    visualCases: z.array(collectedCaseSchema),
+    setupCases: z.array(collectedSetupCaseSchema),
   })
   .strict()
   .superRefine((manifest, context) => {
-    const seen = new Set<string>();
-    manifest.cases.forEach((entry, index) => {
-      const key = `${entry.binding.contractId}\u0000${entry.project}\u0000${entry.repeatIndex}`;
-      if (seen.has(key)) {
+    const projectNames = new Set<string>();
+    manifest.projects.forEach((project, index) => {
+      if (projectNames.has(project.name)) {
         context.addIssue({
           code: "custom",
-          path: ["cases", index],
-          message: `duplicate collected contract/project/repeat case: ${entry.binding.contractId}/${entry.project}/${entry.repeatIndex}`,
+          path: ["projects", index, "name"],
+          message: `duplicate collected project: ${JSON.stringify(project.name)}`,
         });
       }
-      seen.add(key);
+      projectNames.add(project.name);
     });
+    manifest.visualCases.forEach((entry, index) => {
+      if (!projectNames.has(entry.project)) {
+        context.addIssue({
+          code: "custom",
+          path: ["visualCases", index, "project"],
+          message: `visual case refers to unknown collected project: ${JSON.stringify(entry.project)}`,
+        });
+      }
+    });
+    manifest.setupCases.forEach((entry, index) => {
+      if (!projectNames.has(entry.project)) {
+        context.addIssue({
+          code: "custom",
+          path: ["setupCases", index, "project"],
+          message: `setup case refers to unknown collected project: ${JSON.stringify(entry.project)}`,
+        });
+      }
+    });
+  });
+
+export const runContextSchema = z
+  .object({
+    formatVersion: z.literal(RUN_CONTEXT_FORMAT_VERSION),
+    kind: z.literal("framelia.run-context"),
+    mode: z.enum(["collect", "execute"]),
+    projectRoot: absolutePathSchema,
+    runId: nonEmptyTrimmed,
+    policyDigest: sha256DigestSchema,
+    selectedProjects: projectNamesSchema,
+    manifestPath: absolutePathSchema,
+    statusPath: absolutePathSchema,
+    planPath: absolutePathSchema.optional(),
+    casePlansPath: absolutePathSchema.optional(),
+  })
+  .strict()
+  .superRefine((context, refinement) => {
+    if (context.mode === "execute" && (!context.planPath || !context.casePlansPath)) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["planPath"],
+        message: "execute context requires frozen plan and case-plan paths",
+      });
+    }
+    if (context.mode === "collect" && (context.planPath || context.casePlansPath)) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["planPath"],
+        message: "collect context must not reference an unfrozen run plan",
+      });
+    }
+  });
+
+export const transportDiagnosticSchema = z
+  .object({
+    code: nonEmptyTrimmed,
+    message: nonEmptyTrimmed,
+  })
+  .strict();
+
+export const transportStatusSchema = z
+  .object({
+    formatVersion: z.literal(TRANSPORT_STATUS_FORMAT_VERSION),
+    kind: z.literal("framelia.transport-status"),
+    writerVersion: nonEmptyTrimmed,
+    phase: z.enum(["collection", "execution-reconciliation"]),
+    mode: z.enum(["collect", "execute"]),
+    projectRoot: absolutePathSchema,
+    runId: nonEmptyTrimmed,
+    state: z.enum(["completed", "error", "ready", "blocked"]),
+    diagnostics: z.array(transportDiagnosticSchema),
+    execution: z
+      .object({
+        resultStatus: z.enum(["passed", "failed", "timedout", "interrupted"]),
+        setupFailures: z.array(nonEmptyTrimmed),
+        teardownFailures: z.array(nonEmptyTrimmed),
+        globalErrors: z.array(nonEmptyTrimmed),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((status, context) => {
+    if (
+      (status.mode === "collect" && status.state !== "completed" && status.state !== "error") ||
+      (status.mode === "execute" &&
+        status.state !== "ready" &&
+        status.state !== "blocked" &&
+        status.state !== "completed")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state"],
+        message: `state ${status.state} is invalid for ${status.mode} mode`,
+      });
+    }
+    if (status.mode === "collect" && status.execution) {
+      context.addIssue({
+        code: "custom",
+        path: ["execution"],
+        message: "collection status cannot contain execution outcomes",
+      });
+    }
+    if (
+      status.mode === "execute" &&
+      status.state === "completed" &&
+      status.execution === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["execution"],
+        message: "completed execution status requires the final lifecycle summary",
+      });
+    }
   });
 
 export const sourceIdentitySchema = z
@@ -320,7 +483,7 @@ export const casePlanSchema = z
       .object({
         specFile: projectRelativePathSchema,
         specDigest: sha256DigestSchema,
-        titlePath: z.array(nonEmptyTrimmed).min(1),
+        titlePath: z.array(nonBlankPreserved).min(1),
       })
       .strict(),
     /** Project-relative path to the spec file that registered this case -- kept so a
@@ -368,6 +531,16 @@ const plannedCaseSchema = z
   })
   .strict();
 
+export const contractProjectMatrixEntrySchema = z
+  .object({
+    contractId: z.string().regex(CONTRACT_ID_PATTERN),
+    contractFile: projectRelativePathSchema,
+    contractDigest: sha256DigestSchema,
+    project: projectNameSchema,
+    required: z.boolean(),
+  })
+  .strict();
+
 export const runSelectionSchema = z
   .object({
     mode: z.enum(["all", "subset"]),
@@ -382,7 +555,10 @@ export const runPlanSchema = z
     kind: z.literal("framelia.run-plan"),
     runId: nonEmptyTrimmed,
     policyDigest: sha256DigestSchema,
+    executionGraphDigest: sha256DigestSchema,
     selection: runSelectionSchema,
+    availableMatrix: z.array(contractProjectMatrixEntrySchema).min(1),
+    requiredMatrix: z.array(contractProjectMatrixEntrySchema),
     availableCases: z.array(plannedCaseSchema).min(1),
     requiredCases: z.array(plannedCaseSchema),
     retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
@@ -390,6 +566,38 @@ export const runPlanSchema = z
   })
   .strict()
   .superRefine((plan, context) => {
+    const matrixKeys = new Set<string>();
+    plan.availableMatrix.forEach((entry, index) => {
+      const key = `${entry.contractId}\u0000${entry.project}`;
+      if (matrixKeys.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["availableMatrix", index],
+          message: `duplicate available contract/project: ${entry.contractId}/${entry.project}`,
+        });
+      }
+      matrixKeys.add(key);
+    });
+    const requiredMatrixKeys = new Set<string>();
+    plan.requiredMatrix.forEach((entry, index) => {
+      const key = `${entry.contractId}\u0000${entry.project}`;
+      if (requiredMatrixKeys.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredMatrix", index],
+          message: `duplicate required contract/project: ${entry.contractId}/${entry.project}`,
+        });
+      }
+      requiredMatrixKeys.add(key);
+      if (!entry.required || !matrixKeys.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredMatrix", index],
+          message: `required contract/project is absent or not required in available matrix: ${entry.contractId}/${entry.project}`,
+        });
+      }
+    });
+
     const available = new Map<string, string>();
     plan.availableCases.forEach((entry, index) => {
       if (available.has(entry.caseId)) {
@@ -780,6 +988,25 @@ export const commandOutcomeSchema = z
     runId: nonEmptyTrimmed.optional(),
     bundlePath: projectRelativePathSchema.optional(),
     diagnostics: z.array(diagnosticSchema),
+    selection: z
+      .object({
+        requested: z.discriminatedUnion("mode", [
+          z.object({ mode: z.literal("all") }).strict(),
+          z
+            .object({
+              mode: z.literal("contracts"),
+              contracts: uniqueStrings(z.string().regex(CONTRACT_ID_PATTERN)),
+            })
+            .strict(),
+        ]),
+        selectedProjects: projectNamesSchema,
+        selectedCaseIds: z.array(nonEmptyTrimmed).min(1),
+        fullRequiredCount: z.number().int().nonnegative(),
+        selectedCount: z.number().int().positive(),
+        scope: z.enum(["all", "subset"]),
+      })
+      .strict()
+      .optional(),
     next: z
       .object({
         command: nonEmptyTrimmed,
@@ -807,6 +1034,10 @@ export type ContractBinding = z.infer<typeof contractBindingSchema>;
 export type TestRegistration = z.infer<typeof testRegistrationSchema>;
 export type CollectedCase = z.infer<typeof collectedCaseSchema>;
 export type CollectionManifest = z.infer<typeof collectionManifestSchema>;
+export type CollectedProject = z.infer<typeof collectedProjectSchema>;
+export type CollectedSetupCase = z.infer<typeof collectedSetupCaseSchema>;
+export type RunContext = z.infer<typeof runContextSchema>;
+export type TransportStatus = z.infer<typeof transportStatusSchema>;
 export type SourceIdentity = z.infer<typeof sourceIdentitySchema>;
 export type CasePlan = z.infer<typeof casePlanSchema>;
 export type RunSelection = z.infer<typeof runSelectionSchema>;

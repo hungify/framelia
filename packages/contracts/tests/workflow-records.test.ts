@@ -10,6 +10,8 @@ import {
   contractBindingSchema,
   runPlanSchema,
   runRecordSchema,
+  runContextSchema,
+  transportStatusSchema,
   testRegistrationSchema,
 } from "../src/workflow-records.ts";
 
@@ -196,8 +198,10 @@ describe("snapshot and execution units", () => {
     expect(baselineSnapshotSchema.safeParse(regionSnapshot).success).toBe(true);
   });
 
-  it("requires unique collected contract/project/repeat cases", () => {
+  it("keeps collection transport versioned while leaving selected-binding policy to the parent", () => {
     const collected = {
+      formatVersion: 1,
+      kind: "framelia.collected-case",
       binding: {
         formatVersion: 1,
         kind: "framelia.contract-binding",
@@ -206,23 +210,133 @@ describe("snapshot and execution units", () => {
         contractDigest: A_DIGEST,
       },
       project: "chromium",
-      specFile: "e2e/login.spec.ts",
+      projectRuntimeDigest: A_DIGEST,
+      specFile: "tests/e2e/login.spec.ts",
+      testListFile: "e2e/login.spec.ts",
       specFileDigest: B_DIGEST,
-      line: 20,
-      column: 4,
-      titlePath: ["login", "desktop"],
+      location: { line: 20, column: 4 },
+      testTitlePath: ["login", "desktop"],
       repeatIndex: 0,
-      dependencies: ["setup"],
     };
     const manifest = {
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "framelia.collection",
-      createdAt: "2026-09-14T12:00:00.000Z",
+      runId: "run-1",
+      projectRoot: "/project",
       policyDigest: A_DIGEST,
-      cases: [collected, { ...collected, line: 21 }],
+      projects: [
+        {
+          name: "chromium",
+          runtimeDigest: A_DIGEST,
+          dependencies: ["setup"],
+          teardown: "teardown",
+          repeatEach: 1,
+          retries: 2,
+          testDir: "tests",
+        },
+      ],
+      visualCases: [collected, { ...collected, testTitlePath: ["login", "duplicate"] }],
+      setupCases: [],
     };
 
-    expect(collectionManifestSchema.safeParse(manifest).success).toBe(false);
+    expect(collectionManifestSchema.safeParse(manifest).success).toBe(true);
+    expect(collectionManifestSchema.safeParse({ ...manifest, formatVersion: 1 }).success).toBe(
+      false,
+    );
+  });
+
+  it("preserves nonblank title bytes in collected identity instead of normalizing them", () => {
+    const parsed = collectionManifestSchema.parse({
+      formatVersion: 2,
+      kind: "framelia.collection",
+      runId: "run-title-bytes",
+      projectRoot: "/project",
+      policyDigest: A_DIGEST,
+      projects: [
+        {
+          name: "",
+          runtimeDigest: A_DIGEST,
+          dependencies: [],
+          repeatEach: 1,
+          retries: 0,
+          testDir: "tests",
+        },
+      ],
+      visualCases: [
+        {
+          formatVersion: 1,
+          kind: "framelia.collected-case",
+          binding: {
+            formatVersion: 1,
+            kind: "framelia.contract-binding",
+            contractId: "login.desktop",
+            contractFile: "contracts/login.json",
+            contractDigest: A_DIGEST,
+          },
+          project: "",
+          projectRuntimeDigest: A_DIGEST,
+          specFile: "tests/login.spec.ts",
+          testListFile: "login.spec.ts",
+          specFileDigest: B_DIGEST,
+          location: { line: 1, column: 0 },
+          testTitlePath: [" Group ", "  Case  "],
+          repeatIndex: 0,
+        },
+      ],
+      setupCases: [],
+    });
+
+    expect(parsed.visualCases[0]?.testTitlePath).toEqual([" Group ", "  Case  "]);
+  });
+
+  it("distinguishes synchronous execute readiness from the completed lifecycle summary", () => {
+    const base = {
+      formatVersion: 1,
+      kind: "framelia.transport-status",
+      writerVersion: "@framelia/playwright@test",
+      phase: "execution-reconciliation",
+      mode: "execute",
+      projectRoot: "/project",
+      runId: "run-transport",
+      diagnostics: [],
+    };
+    expect(transportStatusSchema.safeParse({ ...base, state: "ready" }).success).toBe(true);
+    expect(transportStatusSchema.safeParse({ ...base, state: "completed" }).success).toBe(false);
+    expect(
+      transportStatusSchema.safeParse({
+        ...base,
+        state: "completed",
+        execution: {
+          resultStatus: "failed",
+          setupFailures: ["unnamed setup"],
+          teardownFailures: [],
+          globalErrors: [],
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("requires frozen plan paths only for execute contexts", () => {
+    const base = {
+      formatVersion: 1,
+      kind: "framelia.run-context",
+      projectRoot: "/project",
+      runId: "run-context",
+      policyDigest: A_DIGEST,
+      selectedProjects: [""],
+      manifestPath: "/private/manifest.json",
+      statusPath: "/private/status.json",
+    };
+    expect(runContextSchema.safeParse({ ...base, mode: "collect" }).success).toBe(true);
+    expect(runContextSchema.safeParse({ ...base, mode: "execute" }).success).toBe(false);
+    expect(
+      runContextSchema.safeParse({
+        ...base,
+        mode: "execute",
+        planPath: "/project/.framelia/runs/run-context/plan/plan.json",
+        casePlansPath: "/project/.framelia/runs/run-context/plan/case-plans",
+      }).success,
+    ).toBe(true);
   });
 
   it("does not let an all run omit a required case or change its digest", () => {
@@ -230,13 +344,32 @@ describe("snapshot and execution units", () => {
       { caseId: "login.desktop/chromium/0", casePlanDigest: A_DIGEST },
       { caseId: "login.mobile/chromium/0", casePlanDigest: B_DIGEST },
     ];
+    const matrix = [
+      {
+        contractId: "login.desktop",
+        contractFile: "contracts/login.desktop.json",
+        contractDigest: A_DIGEST,
+        project: "chromium",
+        required: true,
+      },
+      {
+        contractId: "login.mobile",
+        contractFile: "contracts/login.mobile.json",
+        contractDigest: B_DIGEST,
+        project: "chromium",
+        required: true,
+      },
+    ];
     const plan = {
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "framelia.run-plan",
       runId: "run-1",
       policyDigest: A_DIGEST,
+      executionGraphDigest: A_DIGEST,
       retryAcceptance: "require-first-attempt",
       selection: { mode: "all", contracts: ["login.desktop", "login.mobile"] },
+      availableMatrix: matrix,
+      requiredMatrix: matrix,
       availableCases: requiredCases,
       requiredCases,
       selectedCases: requiredCases.slice(0, 1),

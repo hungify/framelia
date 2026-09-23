@@ -169,14 +169,15 @@ Dashboard-specific development and HMR instructions live in [`apps/dashboard/REA
 
 CI builds and packs all five release packages from a clean checkout, then installs
 the tarballs outside the workspace. The release gate covers npm/pnpm, Node 22.13,
-24 and 26, Playwright 1.61.1 and the supported current runner, and consumer
-ESM/CommonJS configurations. It checks native public imports, declarations, CLI
-initialization without rewriting existing reporter lists, schema-compatible contract
-fixtures, ordinary collection, reporter dashboard startup, real matcher comparisons,
-and exact `framelia check` pass/mismatch runs from a nested directory. The coordinated
-fixture also exercises the unnamed project, repeat slots, retry, setup dependencies,
-teardown, noisy user-reporter output, and optional exact contract selection. A separate
-matcher-only install checks that the optional dashboard peer is not required.
+24 and 26, and Playwright 1.61.1 and 1.63.0 in consumer ESM/CommonJS configurations.
+It checks native public imports, declarations, CLI initialization without rewriting
+existing reporter lists, schema-compatible contract fixtures, ordinary collection,
+reporter dashboard startup, real matcher comparisons, and exact `framelia check`
+pass/mismatch runs from a nested directory. The coordinated fixture also exercises
+duplicate human names with exact ID selection, the unnamed project, repeat slots, a
+fail-then-pass retry whose first mismatch remains authoritative, setup dependencies,
+teardown, and noisy user-reporter output. A separate matcher-only install checks that
+the optional dashboard peer is not required.
 
 The fixtures use `scale: 1`, supported by the current `main` schema. Higher-DPR
 contract/capture support is separate work, not part of this distribution fix.

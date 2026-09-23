@@ -285,6 +285,7 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       writeFileSync(
         path.join(project, "check.spec.mjs"),
         [
+          'import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";',
           'import { defineFigmaTests } from "@framelia/playwright";',
           'import { test } from "@playwright/test";',
           "defineFigmaTests(test, {",
@@ -292,7 +293,15 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
           "  specUrl: new URL(import.meta.url),",
           '  projectRoot: new URL(".", import.meta.url).pathname,',
           "  async prepare({ page }, { target }) {",
-          '    const background = target.path === "/pass" ? "linear-gradient(90deg,#123 50%,#abc 50%)" : "#f00";',
+          '    appendFileSync("check-executions.log", `${target.path}\\n`);',
+          '    const matchingBackground = "linear-gradient(90deg,#123 50%,#abc 50%)";',
+          "    let background = matchingBackground;",
+          '    if (target.path === "/mismatch") {',
+          '      const counterFile = "check-mismatch-attempts.txt";',
+          '      const priorAttempts = existsSync(counterFile) ? Number(readFileSync(counterFile, "utf8")) : 0;',
+          "      writeFileSync(counterFile, String(priorAttempts + 1));",
+          '      if (priorAttempts === 0) background = "#f00";',
+          "    }",
           '    await page.route(`http://framelia.test${target.path}`, route => route.fulfill({ contentType: "text/html", body: `<style>html,body{margin:0;width:160px;height:120px;background:${background}}</style>` }));',
           "    await page.goto(`http://framelia.test${target.path}`);",
           "  },",
@@ -325,7 +334,7 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
           'fs.writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(snapshot));',
           'fs.mkdirSync(path.join(process.cwd(), "contracts"), { recursive: true });',
           'for (const [id, targetPath, required] of [["check.pass", "/pass", true], ["check.mismatch", "/mismatch", false]]) {',
-          '  const contract = authoredContractSchema.parse({ formatVersion: 1, kind: "framelia.contract", id, name: id, revision: 1, target: { path: targetPath }, viewport: { preset: "custom", width: 160, height: 120 }, scope: { kind: "page", pageReason: "packed consumer check" }, baseline: { snapshotDigest }, required });',
+          '  const contract = authoredContractSchema.parse({ formatVersion: 1, kind: "framelia.contract", id, name: "Shared visual name", revision: 1, target: { path: targetPath }, viewport: { preset: "custom", width: 160, height: 120 }, scope: { kind: "page", pageReason: "packed consumer check" }, baseline: { snapshotDigest }, required });',
           '  fs.writeFileSync(path.join(process.cwd(), "contracts", `${id === "check.pass" ? "check-pass" : "check-mismatch"}.json`), JSON.stringify(contract));',
           "}",
           "",
@@ -344,6 +353,8 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       mkdirSync(nestedCwd, { recursive: true });
       const cli = path.join(project, "node_modules", "framelia", "bin", "framelia.js");
       rmSync(path.join(project, "check-lifecycle.log"), { force: true });
+      rmSync(path.join(project, "check-executions.log"), { force: true });
+      rmSync(path.join(project, "check-mismatch-attempts.txt"), { force: true });
       const passingCheck = runOutcome(process.execPath, [cli, "check", "--all"], nestedCwd, [0]);
       const passingOutcome = JSON.parse(passingCheck.stdout);
       assert.equal(passingOutcome.executionState, "completed");
@@ -353,8 +364,14 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       assert.doesNotMatch(passingCheck.stdout, /consumer reporter noise/);
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /setup/);
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /cleanup/);
+      assert.deepEqual(
+        readFileSync(path.join(project, "check-executions.log"), "utf8").trim().split("\n"),
+        ["/pass", "/pass"],
+      );
 
       rmSync(path.join(project, "check-lifecycle.log"), { force: true });
+      rmSync(path.join(project, "check-executions.log"), { force: true });
+      rmSync(path.join(project, "check-mismatch-attempts.txt"), { force: true });
       const mismatchCheck = runOutcome(
         process.execPath,
         [cli, "check", "--contract", "check.mismatch"],
@@ -366,6 +383,11 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       assert.equal(mismatchOutcome.visualVerdict, "mismatched");
       assert.equal(mismatchOutcome.selection.selectedCount, 2);
       assert.notEqual(mismatchOutcome.runId, passingOutcome.runId);
+      assert.deepEqual(mismatchOutcome.diagnostics, []);
+      assert.deepEqual(
+        readFileSync(path.join(project, "check-executions.log"), "utf8").trim().split("\n"),
+        ["/mismatch", "/mismatch", "/mismatch"],
+      );
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /setup/);
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /cleanup/);
     }

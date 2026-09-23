@@ -716,6 +716,40 @@ describe("finalizeRunRecord execution transport classification", () => {
     expect(finalized.diagnostics).toEqual([]);
   });
 
+  it("accepts a retry-passed Playwright result while retaining the first mismatch as authoritative", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-retry-passed-authoritative-mismatch";
+    setUpRun(root, runId, [casePlan]);
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+      completeEvidence(Buffer.from("mismatch")),
+    );
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("retry-pass")),
+    );
+
+    const finalized = await finalizeRunRecord(root, runId, {
+      retryAcceptance: "require-first-attempt",
+      transport: {
+        exitCode: 0,
+        signal: null,
+        cancelled: false,
+        reporterCompleted: true,
+        resultStatus: "passed",
+      },
+    });
+
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.diagnostics).toEqual([]);
+    expect(finalized.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 0));
+  });
+
   it("rejects an otherwise unexplained nonzero Playwright exit even when visual evidence passed", async () => {
     const root = temporaryRoot();
     const casePlan = await realCasePlanFixture(root);
@@ -741,7 +775,7 @@ describe("finalizeRunRecord execution transport classification", () => {
 
     expect(finalized.status).toBe("error");
     expect(finalized.diagnostics.map((entry) => entry.code)).toContain(
-      "playwright-exit-unexplained",
+      "execution-exit-unexplained",
     );
   });
 
@@ -766,7 +800,7 @@ describe("finalizeRunRecord execution transport classification", () => {
     expect(finalized.diagnostics.map((entry) => entry.code)).toEqual(
       expect.arrayContaining([
         "execution-cancelled",
-        "playwright-exit-unexplained",
+        "execution-exit-unexplained",
         "reporter-lifecycle-incomplete",
         "selected-attempt-missing",
       ]),

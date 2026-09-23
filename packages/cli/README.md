@@ -202,6 +202,10 @@ The Framelia transport is private and versioned. A missing/incompatible Reporter
 missing binding, unknown project, changed contract/spec/policy/setup graph, zero selected cases,
 or unexplained Playwright exit is an execution error. No path automatically fetches Figma,
 repairs a baseline, refreshes a snapshot, or reuses a previous result.
+Runner success/failure is reconciled against each case's latest complete retry, while
+`retryAcceptance` independently selects the authoritative visual attempt. With
+`require-first-attempt`, a first mismatch followed by a passing retry therefore remains a completed
+visual mismatch (exit `1`), not an infrastructure error.
 
 Standard output is one versioned JSON command outcome. Child and user-reporter output is forwarded
 byte-for-byte to standard error, so noisy reporters cannot corrupt JSON automation. A completed

@@ -214,21 +214,26 @@ function fakeContractTest(options: {
   } as unknown as TestCase;
 }
 
-/** Fake `TestType`-shaped double: captures every registered `test(title, details, fn)`
- *  call the real `defineFigmaTests` makes, without any real Playwright runtime -- same
- *  pattern as `define-figma-tests.test.ts`'s own `fakeTest`. Used here to prove
- *  `buildCasePlanForTest` reads the annotation `defineFigmaTests` actually produced at
- *  registration time, not a hand-assembled stand-in. */
+/** Fake `TestType`-shaped double: captures every registered public test call. */
 function fakeTest(): {
   test: Parameters<typeof defineFigmaTests>[0];
-  registered: Array<{ annotation: { type: string; description: string } }>;
+  registered: Array<{
+    title: string;
+    annotation: { type: string; description: string };
+    body: (...args: unknown[]) => unknown;
+  }>;
 } {
-  const registered: Array<{ annotation: { type: string; description: string } }> = [];
+  const registered: Array<{
+    title: string;
+    annotation: { type: string; description: string };
+    body: (...args: unknown[]) => unknown;
+  }> = [];
   const test = ((
-    _title: string,
+    title: string,
     details: { annotation: { type: string; description: string } },
+    body: (...args: unknown[]) => unknown,
   ) => {
-    registered.push(details);
+    registered.push({ title, annotation: details.annotation, body });
   }) as unknown as Parameters<typeof defineFigmaTests>[0];
   return { test, registered };
 }
@@ -486,6 +491,120 @@ describe("FrameliaReporter coordinator transport lifecycle", () => {
         globalErrors: [],
       },
     });
+  });
+
+  it("blocks a policy changed after parent planning before skip, prepare, or capture", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const frozenPolicy = await resolveProjectPolicy({ cwd: root, projectRoot: root });
+    fs.writeFileSync(
+      path.join(root, "framelia.config.mjs"),
+      "export default { stabilitySamples: 3 };\n",
+    );
+
+    let prepareCalls = 0;
+    const generated = fakeTest();
+    defineFigmaTests(generated.test, {
+      contracts: pathToFileURL(path.join(root, binding.contractFile)),
+      specUrl: pathToFileURL(path.join(root, "login.spec.ts")),
+      projectRoot: root,
+      prepare: async () => {
+        prepareCalls += 1;
+      },
+    });
+    expect(generated.registered).toHaveLength(1);
+    const registered = generated.registered[0]!;
+    const test = fakeContractTest({
+      id: registered.title,
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    test.annotations = [registered.annotation];
+
+    const runId = "stale-parent-policy";
+    const built = await buildCasePlanForTest(test, {
+      projectRoot: root,
+      runId,
+      policy: frozenPolicy,
+      source: {},
+    });
+    const transportDirectory = path.join(root, "transport-policy");
+    const context: RunContext = {
+      formatVersion: RUN_CONTEXT_FORMAT_VERSION,
+      kind: "framelia.run-context",
+      mode: "execute",
+      projectRoot: root,
+      runId,
+      policyDigest: frozenPolicy.policyDigest!,
+      selectedProjects: ["chromium"],
+      manifestPath: path.join(transportDirectory, "manifest.json"),
+      statusPath: path.join(transportDirectory, "status.json"),
+      planPath: runPlanPath(root, runId),
+      casePlansPath: casePlansDir(root, runId),
+    };
+    const suite = fakeSuite([test]);
+    const collection = buildTransportCollection(suite, context);
+    const planned = {
+      caseId: built.caseId,
+      casePlanDigest: canonicalJsonDigest(built.casePlan),
+    };
+    const matrixEntry = {
+      contractId: binding.contractId,
+      contractFile: binding.contractFile,
+      contractDigest: binding.contractDigest,
+      project: "chromium",
+      required: true,
+    };
+    freezeRunPlan(
+      root,
+      {
+        formatVersion: RUN_PLAN_FORMAT_VERSION,
+        kind: "framelia.run-plan",
+        runId,
+        policyDigest: frozenPolicy.policyDigest!,
+        executionGraphDigest: computeExecutionGraphDigest(collection.manifest),
+        selection: { mode: "all", contracts: [binding.contractId] },
+        availableMatrix: [matrixEntry],
+        requiredMatrix: [matrixEntry],
+        availableCases: [planned],
+        requiredCases: [planned],
+        retryAcceptance: frozenPolicy.retryAcceptance,
+        selectedCases: [planned],
+      },
+      [built.casePlan],
+    );
+    installRunContext(context);
+    const reporter = new FrameliaReporter();
+    reporter.onBegin(fakeConfig(root), suite);
+    expect(readTransportStatus(context).state).toBe("ready");
+
+    let pageAccesses = 0;
+    let skipCalls = 0;
+    const page = new Proxy(
+      {},
+      {
+        get() {
+          pageAccesses += 1;
+          throw new Error("capture path must not inspect the page");
+        },
+      },
+    );
+    const testInfo = {
+      project: test.parent.project()!,
+      repeatEachIndex: 0,
+      titlePath: ["login.spec.ts", registered.title],
+      skip: () => {
+        skipCalls += 1;
+      },
+    };
+
+    await expect(registered.body({ page }, testInfo)).rejects.toThrow(
+      /frozen .*policy|policy .*frozen/i,
+    );
+    expect(skipCalls).toBe(0);
+    expect(prepareCalls).toBe(0);
+    expect(pageAccesses).toBe(0);
   });
 });
 

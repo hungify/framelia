@@ -329,6 +329,9 @@ export async function finalizeRunRecord(
           const selectedAttempt = selectedAttemptId
             ? evidenceVerifiedAttempts.find((attempt) => attempt.attemptId === selectedAttemptId)
             : undefined;
+          const runnerAttempt = evidenceVerifiedAttempts.findLast(
+            (attempt) => attempt.executionState === "completed",
+          );
           if (options.transport && !selectedAttempt) {
             diagnostics.push({
               code: "selected-attempt-missing",
@@ -344,38 +347,37 @@ export async function finalizeRunRecord(
             },
             diagnostics,
             selectedAttempt,
+            runnerAttempt,
           };
         }),
       );
       const transportDiagnostics: Diagnostic[] = [];
       if (options.transport) {
-        const selectedAttempts = caseResults
-          .map((result) => result.selectedAttempt)
+        const runnerAttempts = caseResults
+          .map((result) => result.runnerAttempt)
           .filter((attempt): attempt is AttemptRecord => attempt !== undefined);
-        const allSelectedComplete =
-          selectedAttempts.length === plan.selectedCases.length &&
-          selectedAttempts.every((attempt) => attempt.executionState === "completed");
-        const visualVerdict = selectedAttempts.some(
+        const allRunnerCasesComplete = runnerAttempts.length === plan.selectedCases.length;
+        const runnerVisualVerdict = runnerAttempts.some(
           (attempt) => attempt.visualVerdict === "mismatched",
         )
           ? "mismatched"
-          : allSelectedComplete &&
-              selectedAttempts.every((attempt) => attempt.visualVerdict === "passed")
+          : allRunnerCasesComplete &&
+              runnerAttempts.every((attempt) => attempt.visualVerdict === "passed")
             ? "passed"
             : "not-evaluated";
         const expectedExitCode =
-          visualVerdict === "mismatched" ? 1 : visualVerdict === "passed" ? 0 : null;
+          runnerVisualVerdict === "mismatched" ? 1 : runnerVisualVerdict === "passed" ? 0 : null;
         const expectedResultStatus =
-          visualVerdict === "mismatched"
+          runnerVisualVerdict === "mismatched"
             ? "failed"
-            : visualVerdict === "passed"
+            : runnerVisualVerdict === "passed"
               ? "passed"
               : undefined;
         if (options.transport.cancelled) {
           transportDiagnostics.push({
             code: "execution-cancelled",
             stage: "execution",
-            message: "The Playwright child was cancelled after graceful SIGINT forwarding.",
+            message: "The test-runner child was cancelled after graceful SIGINT forwarding.",
           });
         }
         if (!options.transport.reporterCompleted) {
@@ -394,9 +396,9 @@ export async function finalizeRunRecord(
             options.transport.resultStatus !== expectedResultStatus)
         ) {
           transportDiagnostics.push({
-            code: "playwright-exit-unexplained",
+            code: "execution-exit-unexplained",
             stage: "execution",
-            message: `Playwright exit ${options.transport.exitCode ?? options.transport.signal ?? "unknown"} / result ${options.transport.resultStatus ?? "missing"} is not explained by the published selected visual attempts.`,
+            message: `Test runner exit ${options.transport.exitCode ?? options.transport.signal ?? "unknown"} / result ${options.transport.resultStatus ?? "missing"} is not explained by the latest complete published visual attempts.`,
           });
         }
       }

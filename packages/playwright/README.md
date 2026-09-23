@@ -90,9 +90,11 @@ private `FRAMELIA_RUN_CONTEXT` file identifies the mode and frozen run paths:
    summary after every attempt publication settles.
 
 The exact list uses Playwright's documented tuple—`[project] › file-suite › full title path`, or
-the same line without a project prefix for the unnamed project. `defineFigmaTests` registers its
-public `test(...)` call under the caller's real `specUrl`, so no wrapper-source alias or private
-runner API is needed. Title bytes remain part of collected identity; project names containing
+the same line without a project prefix for the unnamed project. Generated titles are
+`[exact.contract.id] Human name`, so contracts registered from one source remain independently
+selectable even when their human names are identical. `defineFigmaTests` registers its public
+`test(...)` call under the caller's real `specUrl`, so no wrapper-source alias or private runner
+API is needed. Title bytes remain part of collected identity; project names containing
 Playwright's bracket delimiters and tuple segments containing CR, LF, or Unicode `›` are rejected
 instead of being interpreted ambiguously.
 

@@ -36,7 +36,7 @@ import {
 } from "./attach.ts";
 import { resolveFigmaCompareOptions } from "./figma-profile.ts";
 import { CONTRACT_ANNOTATION_TYPE } from "./registration.ts";
-import { assertExecuteCaseReady } from "./run-context.ts";
+import { assertExecuteCaseReady, assertExecutePolicyReady } from "./run-context.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "./score-attachment.ts";
 import {
   buildAttributionIssues,
@@ -573,7 +573,7 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
     registerAtSpecLocation(
       test,
       specFilePath,
-      contract.name,
+      `[${contract.id}] ${contract.name}`,
       { annotation: { type: CONTRACT_ANNOTATION_TYPE, description: JSON.stringify(registration) } },
       // `{ page }` is the only fixture name this generic library can statically declare
       // here -- see DefineFigmaTestsOptions's own doc comment for why Playwright's
@@ -667,6 +667,11 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
           projectRoot,
           allowUninitialized: true,
         });
+        assertExecutePolicyReady(
+          projectRoot,
+          registeredPolicy.policyDigest,
+          livePolicy.policyDigest,
+        );
         if (registeredPolicy.policyDigest !== livePolicy.policyDigest) {
           throw new Error(
             `defineFigmaTests: project policy for contract "${liveContract.id}" changed on disk after test collection (registered digest ${registeredPolicy.policyDigest ?? "none (uninitialized)"}, now ${livePolicy.policyDigest ?? "none (uninitialized)"}) -- refusing to run a stale project policy's test.`,

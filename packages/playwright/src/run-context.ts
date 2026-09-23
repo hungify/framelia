@@ -154,6 +154,31 @@ export function readCollectionManifest(context: RunContext): CollectionManifest 
   return parsed.data;
 }
 
+/** Rejects execute-process policy that no longer matches the parent-frozen run identity. */
+export function assertExecutePolicyReady(
+  projectRoot: string,
+  registeredPolicyDigest: string | undefined,
+  livePolicyDigest: string | undefined,
+): void {
+  const context = readRunContext();
+  if (!context) return;
+  if (context.mode !== "execute" || context.projectRoot !== projectRoot) {
+    throw new Error(
+      "defineFigmaTests: execute policy check does not match the active run context.",
+    );
+  }
+  const runPlan = readRunPlan(projectRoot, context.runId);
+  if (
+    runPlan.policyDigest !== context.policyDigest ||
+    registeredPolicyDigest !== context.policyDigest ||
+    livePolicyDigest !== context.policyDigest
+  ) {
+    throw new Error(
+      `defineFigmaTests: execute policy no longer matches the parent-frozen run policy (frozen ${context.policyDigest}, plan ${runPlan.policyDigest}, registered ${registeredPolicyDigest ?? "missing"}, live ${livePolicyDigest ?? "missing"}) -- refusing to prepare or capture.`,
+    );
+  }
+}
+
 /**
  * Execute-mode guard called at the first line of every registered visual body. It refuses to let
  * preparation or capture start until reporter reconciliation publishes a matching ready status.
@@ -179,6 +204,11 @@ export function assertExecuteCaseReady(
   }
 
   const runPlan = readRunPlan(projectRoot, context.runId);
+  if (runPlan.policyDigest !== context.policyDigest) {
+    throw new Error(
+      `defineFigmaTests: frozen run plan policy ${runPlan.policyDigest} does not match execute context policy ${context.policyDigest}.`,
+    );
+  }
   const caseId = computeCaseId({
     contractId: registration.binding.contractId,
     projectName: testInfo.project.name,

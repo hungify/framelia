@@ -107,16 +107,29 @@ function hasConfiguredReporter(source: string): boolean {
       continue;
     }
     let depth = 0;
+    let objectDepth = 0;
+    let parenthesisDepth = 0;
     for (let cursor = index + 2; cursor < tokens.length; cursor += 1) {
       const token = tokens[cursor]!;
       if (token.value === "[") depth += 1;
+      if (token.value === "{") objectDepth += 1;
+      if (token.value === "(") parenthesisDepth += 1;
+      const previous = tokens[cursor - 1]?.value;
+      const next = tokens[cursor + 1]?.value;
+      const directArrayEntry =
+        depth === 1 && (previous === "[" || previous === ",") && (next === "," || next === "]");
+      const reporterTupleHead = depth === 2 && previous === "[" && (next === "," || next === "]");
       if (
         token.kind === "string" &&
         token.value === "@framelia/playwright/reporter" &&
-        (depth === 1 || depth === 2)
+        objectDepth === 0 &&
+        parenthesisDepth === 0 &&
+        (directArrayEntry || reporterTupleHead)
       ) {
         return true;
       }
+      if (token.value === "}") objectDepth -= 1;
+      if (token.value === ")") parenthesisDepth -= 1;
       if (token.value === "]") {
         depth -= 1;
         if (depth === 0) break;

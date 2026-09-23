@@ -108,11 +108,12 @@ export interface FigmaContractTarget {
  * decide which fixtures to resolve for that test (see the registered callback below); it
  * rejects both a plain (non-destructured) parameter and a rest element (`...rest`)
  * outright, at load time, before any code runs. Because `defineFigmaTests` is a generic
- * library function, it cannot know a downstream caller's own custom fixture *names* at
- * its own authoring time, so it cannot statically list them for Playwright's parser --
- * there is no runtime-dynamic way around this without unsafe code generation
- * (`new Function`/`eval`), which this package's own "no internal APIs, no magic"
- * conventions rule out. `page` is the one fixture name `defineFigmaTests` can always,
+ * library function, it cannot know a downstream caller's custom fixture names at
+ * authoring time, so it cannot emit the literal callback destructuring Playwright's
+ * parser requires. Generating a callback signature from caller-controlled names would
+ * be unsafe; the fixed `compileFunction` forwarding call above only attributes the
+ * public registration to its spec file and does not change the callback's fixture
+ * syntax. `page` is the one fixture name `defineFigmaTests` can always,
  * safely declare (it's required by this module's own `TestArgs extends { page: Page }`
  * bound), and it is enough: Playwright's own documented pattern for a scenario that
  * needs extra per-test setup (authentication, seeding, a modal already dismissed) before

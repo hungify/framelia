@@ -135,7 +135,7 @@ describe("initializeProject (scaffold step)", () => {
       'import reporterPackage from "@framelia/playwright/reporter";',
       '// reporter: [["@framelia/playwright/reporter"]],',
       'const note = "@framelia/playwright/reporter";',
-      'export default { reporter: [["line"]] };',
+      'export default { reporter: [["line", { outputFile: "@framelia/playwright/reporter" }]] };',
       "",
     ].join("\n");
     fs.writeFileSync(playwrightConfigPath, source);

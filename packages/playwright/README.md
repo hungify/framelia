@@ -75,6 +75,41 @@ Programmatic Playwright integrations can import `resolveProjectPolicy`,
 `@framelia/playwright/project-policy`. Contract/project pairs are resolved from authored policy,
 not inferred from whatever tests collection happens to return.
 
+### Coordinated `framelia check`
+
+`framelia check` uses the public Reporter and ordinary Playwright CLI in two explicit phases. A
+private `FRAMELIA_RUN_CONTEXT` file identifies the mode and frozen run paths:
+
+1. Collection runs Playwright's documented `--list`. In `onEnd`, the Reporter atomically publishes
+   a versioned manifest from documented project, file-Suite, title-path, repeat, dependency, and
+   teardown metadata. It does not start the dashboard or publish evidence.
+2. The parent freezes one authoritative selection and invokes Playwright with an exact
+   `--test-list`. The Reporter synchronously reconciles the recollected graph in `onBegin` and
+   publishes `ready`; each generated visual body re-reads that gate as its first operation, before
+   `prepare`, viewport changes, or capture. `onEnd` publishes a separate completed lifecycle
+   summary after every attempt publication settles.
+
+The exact list uses Playwright's documented tuple—`[project] › file-suite › full title path`, or
+the same line without a project prefix for the unnamed project. Generated titles are
+`[exact.contract.id] Human name`, so contracts registered from one source remain independently
+selectable even when their human names are identical. `defineFigmaTests` registers its public
+`test(...)` call under the caller's real `specUrl`, so no wrapper-source alias or private runner
+API is needed. Title bytes remain part of collected identity; project names containing
+Playwright's bracket delimiters and tuple segments containing CR, LF, or Unicode `›` are rejected
+instead of being interpreted ambiguously.
+
+Playwright continues to schedule project dependencies, teardown, repeat slots, retries, fixtures,
+and web servers. Collection imports and evaluates the application's trusted config/spec code just
+like an ordinary Playwright invocation; it is not sandboxed or side-effect-free. User reporters
+remain installed. Their child output is forwarded to the coordinator's standard error while the
+CLI reserves standard output for its versioned JSON outcome.
+
+Without `FRAMELIA_RUN_CONTEXT`, Reporter behavior is unchanged: direct `playwright test` starts the
+live dashboard and records the directly selected subset. The coordinated path never fetches
+Figma, refreshes or repairs a baseline, reuses a prior result, or kills a consumer-owned server.
+Any binding/spec/policy/setup graph mutation between collection and execution blocks before
+capture and leaves an inspectable terminal run once planning had started.
+
 ### Web-to-web matchers
 
 `toMatchPage` compares two pages already prepared by your test. `toMatchUrl` opens a page in the

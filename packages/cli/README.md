@@ -1,13 +1,9 @@
 # framelia
 
-CLI companion to [`@framelia/playwright`](../playwright/README.md). It does not run visual
-verification itself — that happens inside your own `@playwright/test` suite via
-`toMatchFigma`/`toMatchPage`/`toMatchUrl`. This CLI covers project setup, contract authoring, and
-browsing/gating the evidence a matcher-driven Playwright run produces.
-
-If you're looking for "how do I run a visual check," start at
-[`@framelia/playwright`](../playwright/README.md) — this README documents the CLI surface around
-that, not the matchers themselves.
+CLI companion to [`@framelia/playwright`](../playwright/README.md). Matchers still run inside
+your own `@playwright/test` suite. `framelia check` coordinates exact contract selection through
+that project's locally installed Playwright; the remaining commands cover setup, authoring, and
+browsing/gating the durable evidence Playwright publishes.
 
 ## Requirements
 
@@ -25,27 +21,29 @@ npx framelia status --project-root "$PWD"
 
 ## Commands
 
-| Command                           | Purpose                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------ |
-| `framelia init`                   | Initialize project config and an ignored auth-state directory.                       |
-| `framelia auth`                   | Record Playwright storage state through a headed login browser.                      |
-| `framelia contract create`        | Interactively author a schema-v5, Figma-baselined visual contract.                   |
-| `framelia contract suggest-masks` | Scan a live page and propose mask selectors without modifying a contract.            |
-| `framelia baseline promote`       | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.              |
-| `framelia status`                 | Show CLI version, project root, and Figma token availability.                        |
-| `framelia schema`                 | Print the live JSON Schema for an authored contract or signed requirements envelope. |
-| `framelia` (no arguments)         | Open the dashboard for one explicit durable run.                                     |
-| `framelia dashboard`              | Serve one selected durable run; requires `--run`.                                    |
-| `framelia open`                   | Alias for opening one selected durable run without rerunning.                        |
-| `framelia report`                 | Export one selected run as a relocatable static dashboard.                           |
-| `framelia done-gate`              | Evaluate one selected run against protected signed requirements.                     |
-| `framelia capture`                | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                              |
-| `framelia compare`                | Compare two existing PNG files without source provenance gates.                      |
+| Command                           | Purpose                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------------------- |
+| `framelia init`                   | Initialize project config and an ignored auth-state directory.                         |
+| `framelia check`                  | Collect and run an exact authored contract/project selection through local Playwright. |
+| `framelia auth`                   | Record Playwright storage state through a headed login browser.                        |
+| `framelia contract create`        | Interactively author a schema-v5, Figma-baselined visual contract.                     |
+| `framelia contract suggest-masks` | Scan a live page and propose mask selectors without modifying a contract.              |
+| `framelia baseline promote`       | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                |
+| `framelia status`                 | Show CLI version, project root, and Figma token availability.                          |
+| `framelia schema`                 | Print the live JSON Schema for an authored contract or signed requirements envelope.   |
+| `framelia` (no arguments)         | Open the dashboard for one explicit durable run.                                       |
+| `framelia dashboard`              | Serve one selected durable run; requires `--run`.                                      |
+| `framelia open`                   | Alias for opening one selected durable run without rerunning.                          |
+| `framelia report`                 | Export one selected run as a relocatable static dashboard.                             |
+| `framelia done-gate`              | Evaluate one selected run against protected signed requirements.                       |
+| `framelia capture`                | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                                |
+| `framelia compare`                | Compare two existing PNG files without source provenance gates.                        |
 
 `verify`, `doctor`, and `discover` — plus the navigation action DSL underneath them — are retired.
-Visual verification runs in `@framelia/playwright`'s matchers, called from your own test.
-The CLI still launches standalone browsers for `auth`, `contract suggest-masks`, and
-`baseline promote`; these helpers do not run visual verification.
+Visual capture remains in `@framelia/playwright`; `check` only coordinates collection, immutable
+planning, and exact execution while Playwright retains scheduling, fixtures, web servers,
+dependencies, teardowns, and retries. The CLI still launches standalone browsers for `auth`,
+`contract suggest-masks`, and `baseline promote`.
 
 ## Setup
 
@@ -53,9 +51,13 @@ The CLI still launches standalone browsers for `auth`, `contract suggest-masks`,
 npx framelia init
 ```
 
-Writes `framelia.config.ts` with the project-wide config surface as commented examples. Project
-initialization does not ask about Figma, routes, selectors, or individual screens — those live in
-authored contracts and the application's own Playwright fixtures.
+Writes `framelia.config.ts` with the project-wide config surface as commented examples. When no
+Playwright config exists, it also creates a minimal `playwright.config.ts` with the Framelia
+Reporter alongside the list reporter. An existing Playwright config is never parsed or rewritten:
+`init` always prints an idempotent manual verify/add recipe that preserves every user reporter.
+Project initialization does not ask about Figma,
+routes, selectors, or individual screens — those live in authored contracts and the
+application's own Playwright fixtures.
 
 ```ts
 import { defineConfig } from "framelia";
@@ -160,6 +162,56 @@ Print the live JSON Schema for either input shape:
 npx framelia schema --target contract
 npx framelia schema --target requirements
 ```
+
+## Running exact authored checks
+
+Configure the Playwright config and visual project names that own authored contracts:
+
+```ts
+export default defineConfig({
+  playwright: {
+    config: "playwright.config.ts",
+    projects: ["chromium"], // use [""] for Playwright's unnamed project
+  },
+  contracts: ["contracts/**/*.json"],
+});
+```
+
+Register `@framelia/playwright/reporter` in that Playwright config, preserving your other
+reporters. Then choose exactly one selection form:
+
+```bash
+npx framelia check --all
+npx framelia check --contract login.desktop --contract settings.mobile
+npx framelia check --all --project chromium
+```
+
+`--all` starts from the complete required authored contract/project matrix. Exact `--contract`
+IDs may also select optional contracts; repeatable `--project` only narrows configured visual
+projects and never changes the authored matrix. The command discovers the nearest Framelia
+project from the current directory—there is intentionally no check-specific `--project-root`
+override.
+
+`check` resolves the consumer project's local `@playwright/test/cli`, performs documented
+`--list` collection, freezes the selected case plans and setup/dependency/teardown graph, then
+executes one exact Playwright `--test-list`. Playwright still owns fixtures, web servers, project
+dependencies, teardown, repeat slots, and retries. Collection imports trusted project code and
+can have the same side effects as ordinary Playwright collection; it is not a sandbox.
+
+The Framelia transport is private and versioned. A missing/incompatible Reporter, duplicate or
+missing binding, unknown project, changed contract/spec/policy/setup graph, zero selected cases,
+or unexplained Playwright exit is an execution error. No path automatically fetches Figma,
+repairs a baseline, refreshes a snapshot, or reuses a previous result.
+Runner success/failure is reconciled against each case's latest complete retry, while
+`retryAcceptance` independently selects the authoritative visual attempt. With
+`require-first-attempt`, a first mismatch followed by a passing retry therefore remains a completed
+visual mismatch (exit `1`), not an infrastructure error.
+
+Standard output is one versioned JSON command outcome. Child and user-reporter output is forwarded
+byte-for-byte to standard error, so noisy reporters cannot corrupt JSON automation. A completed
+match exits `0`, a completed visual mismatch exits `1`, and preflight/transport/cancellation or
+other incomplete execution exits `2`. Once a durable run starts, even cancellation or transport
+failure retains its `runId` and bundle path for inspection.
 
 ## Browsing and gating evidence
 

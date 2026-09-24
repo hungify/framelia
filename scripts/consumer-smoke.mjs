@@ -254,6 +254,7 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
           "  projects: [",
           '    { name: "setup", testMatch: "check.setup.ts", teardown: "cleanup" },',
           '    { name: "", testMatch: "check.spec.mjs", dependencies: ["setup"] },',
+          '    { name: "named-visual", testMatch: "check.named.spec.mjs", dependencies: ["setup"] },',
           '    { name: "cleanup", testMatch: "check.cleanup.ts" },',
           "  ],",
           "});",
@@ -302,6 +303,26 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
           "      writeFileSync(counterFile, String(priorAttempts + 1));",
           '      if (priorAttempts === 0) background = "#f00";',
           "    }",
+          '    await page.route(`http://framelia.test${target.path}`, route => route.fulfill({ contentType: "text/html", body: `<style>html,body{margin:0;width:160px;height:120px;background:${background}}</style>` }));',
+          "    await page.goto(`http://framelia.test${target.path}`);",
+          "  },",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        path.join(project, "check.named.spec.mjs"),
+        [
+          'import { appendFileSync } from "node:fs";',
+          'import { defineFigmaTests } from "@framelia/playwright";',
+          'import { test } from "@playwright/test";',
+          "defineFigmaTests(test, {",
+          '  contracts: [new URL("./contracts/check-pass.json", import.meta.url)],',
+          "  specUrl: new URL(import.meta.url),",
+          '  projectRoot: new URL(".", import.meta.url).pathname,',
+          "  async prepare({ page }, { target }) {",
+          '    appendFileSync("check-executions.log", `named-visual:${target.path}\\n`);',
+          '    const background = "linear-gradient(90deg,#123 50%,#abc 50%)";',
           '    await page.route(`http://framelia.test${target.path}`, route => route.fulfill({ contentType: "text/html", body: `<style>html,body{margin:0;width:160px;height:120px;background:${background}}</style>` }));',
           "    await page.goto(`http://framelia.test${target.path}`);",
           "  },",
@@ -390,6 +411,56 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       );
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /setup/);
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /cleanup/);
+
+      writeFileSync(
+        path.join(project, "framelia.config.ts"),
+        [
+          'import { defineConfig } from "framelia";',
+          'export default defineConfig({ playwright: { config: "playwright.check.config.ts", projects: ["", "named-visual"] }, contracts: ["contracts/check-*.json"] });',
+          "",
+        ].join("\n"),
+      );
+      rmSync(path.join(project, "check-lifecycle.log"), { force: true });
+      rmSync(path.join(project, "check-executions.log"), { force: true });
+      const namedCheck = runOutcome(
+        process.execPath,
+        [cli, "check", "--contract", "check.pass", "--project", "named-visual"],
+        nestedCwd,
+        [0],
+      );
+      const namedOutcome = JSON.parse(namedCheck.stdout);
+      assert.equal(namedOutcome.executionState, "completed");
+      assert.equal(namedOutcome.visualVerdict, "passed");
+      assert.equal(namedOutcome.selection.selectedCount, 2);
+      assert.deepEqual(namedOutcome.selection.selectedProjects, ["named-visual"]);
+      assert.deepEqual(namedOutcome.diagnostics, []);
+      assert.notEqual(namedOutcome.runId, passingOutcome.runId);
+      assert.notEqual(namedOutcome.runId, mismatchOutcome.runId);
+      assert.match(namedCheck.stderr, /consumer reporter noise/);
+      assert.doesNotMatch(namedCheck.stdout, /consumer reporter noise/);
+      assert.deepEqual(
+        readFileSync(path.join(project, "check-executions.log"), "utf8").trim().split("\n"),
+        ["named-visual:/pass", "named-visual:/pass"],
+      );
+      assert.deepEqual(
+        readFileSync(path.join(project, "check-lifecycle.log"), "utf8").trim().split("\n"),
+        ["setup", "setup", "cleanup", "cleanup"],
+      );
+      const namedPlansDirectory = path.join(project, namedOutcome.bundlePath, "plan", "case-plans");
+      const namedPlans = readdirSync(namedPlansDirectory).map((fileName) =>
+        JSON.parse(readFileSync(path.join(namedPlansDirectory, fileName), "utf8")),
+      );
+      assert.deepEqual(
+        namedPlans.map(
+          (plan) =>
+            `[${plan.project.name}] › ${plan.registration.specFile} › ${plan.registration.titlePath.join(" › ")}`,
+        ),
+        [
+          "[named-visual] › check.named.spec.mjs › [check.pass] Shared visual name",
+          "[named-visual] › check.named.spec.mjs › [check.pass] Shared visual name",
+        ],
+      );
+      assert.deepEqual(namedPlans.map((plan) => plan.repeatIndex).toSorted(), [0, 1]);
     }
     console.log(`[consumer smoke] PASS ${packageManager}/${mode}`);
   } finally {

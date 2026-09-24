@@ -174,10 +174,10 @@ It checks native public imports, declarations, CLI initialization without rewrit
 existing reporter lists, schema-compatible contract fixtures, ordinary collection,
 reporter dashboard startup, real matcher comparisons, and exact `framelia check`
 pass/mismatch runs from a nested directory. The coordinated fixture also exercises
-duplicate human names with exact ID selection, the unnamed project, repeat slots, a
-fail-then-pass retry whose first mismatch remains authoritative, setup dependencies,
-teardown, and noisy user-reporter output. A separate matcher-only install checks that
-the optional dashboard peer is not required.
+duplicate human names with exact ID selection, unnamed and named visual projects,
+project narrowing, repeat slots (including repeated setup and teardown), a fail-then-pass
+retry whose first mismatch remains authoritative, and noisy user-reporter output. A separate
+matcher-only install checks that the optional dashboard peer is not required.
 
 The fixtures use `scale: 1`, supported by the current `main` schema. Higher-DPR
 contract/capture support is separate work, not part of this distribution fix.

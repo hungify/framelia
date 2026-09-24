@@ -53,9 +53,9 @@ npx framelia init
 
 Writes `framelia.config.ts` with the project-wide config surface as commented examples. When no
 Playwright config exists, it also creates a minimal `playwright.config.ts` with the Framelia
-Reporter alongside the list reporter. An existing Playwright config is never rewritten: if its
-reporter list is not unambiguously configured, `init` prints an idempotent manual integration
-recipe that preserves every user reporter. Project initialization does not ask about Figma,
+Reporter alongside the list reporter. An existing Playwright config is never parsed or rewritten:
+`init` always prints an idempotent manual verify/add recipe that preserves every user reporter.
+Project initialization does not ask about Figma,
 routes, selectors, or individual screens — those live in authored contracts and the
 application's own Playwright fixtures.
 

@@ -31,113 +31,9 @@ export default defineConfig({
 });
 `;
 
-const REPORTER_RECIPE = `Preserve every existing reporter and add:
-reporter: [
-  ...existingReporters,
-  ["@framelia/playwright/reporter"],
-]`;
+const REPORTER_RECIPE =
+  'Verify the existing reporter list includes ["@framelia/playwright/reporter"]. If it is absent, add it while preserving every existing reporter; if it is already present, leave it unchanged.';
 
-interface ConfigToken {
-  kind: "word" | "string" | "punctuation";
-  value: string;
-}
-
-function tokenizeConfig(source: string): ConfigToken[] {
-  const tokens: ConfigToken[] = [];
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index]!;
-    if (/\s/u.test(character)) {
-      index += 1;
-      continue;
-    }
-    if (character === "/" && source[index + 1] === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index === -1) break;
-      continue;
-    }
-    if (character === "/" && source[index + 1] === "*") {
-      const end = source.indexOf("*/", index + 2);
-      if (end === -1) break;
-      index = end + 2;
-      continue;
-    }
-    if (character === "'" || character === '"' || character === "`") {
-      const quote = character;
-      let value = "";
-      index += 1;
-      while (index < source.length) {
-        const next = source[index]!;
-        if (next === "\\") {
-          value += source[index + 1] ?? "";
-          index += 2;
-          continue;
-        }
-        if (next === quote) {
-          index += 1;
-          break;
-        }
-        value += next;
-        index += 1;
-      }
-      tokens.push({ kind: "string", value });
-      continue;
-    }
-    if (/[$A-Z_a-z]/u.test(character)) {
-      const start = index;
-      index += 1;
-      while (index < source.length && /[$\w]/u.test(source[index]!)) index += 1;
-      tokens.push({ kind: "word", value: source.slice(start, index) });
-      continue;
-    }
-    tokens.push({ kind: "punctuation", value: character });
-    index += 1;
-  }
-  return tokens;
-}
-
-function hasConfiguredReporter(source: string): boolean {
-  const tokens = tokenizeConfig(source);
-  for (let index = 0; index < tokens.length - 2; index += 1) {
-    if (
-      tokens[index]?.value !== "reporter" ||
-      tokens[index + 1]?.value !== ":" ||
-      tokens[index + 2]?.value !== "["
-    ) {
-      continue;
-    }
-    let depth = 0;
-    let objectDepth = 0;
-    let parenthesisDepth = 0;
-    for (let cursor = index + 2; cursor < tokens.length; cursor += 1) {
-      const token = tokens[cursor]!;
-      if (token.value === "[") depth += 1;
-      if (token.value === "{") objectDepth += 1;
-      if (token.value === "(") parenthesisDepth += 1;
-      const previous = tokens[cursor - 1]?.value;
-      const next = tokens[cursor + 1]?.value;
-      const directArrayEntry =
-        depth === 1 && (previous === "[" || previous === ",") && (next === "," || next === "]");
-      const reporterTupleHead = depth === 2 && previous === "[" && (next === "," || next === "]");
-      if (
-        token.kind === "string" &&
-        token.value === "@framelia/playwright/reporter" &&
-        objectDepth === 0 &&
-        parenthesisDepth === 0 &&
-        (directArrayEntry || reporterTupleHead)
-      ) {
-        return true;
-      }
-      if (token.value === "}") objectDepth -= 1;
-      if (token.value === ")") parenthesisDepth -= 1;
-      if (token.value === "]") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-  }
-  return false;
-}
 const CONTRACT_DEFAULT_EXAMPLES: Record<keyof CaptureDefaults, string> = {
   stabilitySamples: "3",
   timeoutMs: "60_000",
@@ -218,11 +114,9 @@ export function initializeProject(projectRoot: string, force = false): ProjectIn
   if (playwrightConfigs.length === 0) {
     fs.writeFileSync(playwrightConfigPath, PLAYWRIGHT_CONFIG_SOURCE, "utf8");
     reporterRegistration = "configured";
-  } else if (hasConfiguredReporter(fs.readFileSync(playwrightConfigPath, "utf8"))) {
-    reporterRegistration = "configured";
   } else {
     reporterRegistration = "manual";
-    reporterInstructions = `${path.basename(playwrightConfigPath)} requires manual integration. ${REPORTER_RECIPE}`;
+    reporterInstructions = `${path.basename(playwrightConfigPath)} requires manual verification. ${REPORTER_RECIPE}`;
   }
 
   return {

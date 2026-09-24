@@ -86,7 +86,7 @@ describe("initializeProject (scaffold step)", () => {
     expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(false);
   });
 
-  it("creates a minimal Playwright config with the Framelia reporter and remains idempotent", () => {
+  it("creates a minimal reporter config, then treats it as an existing config on a later run", () => {
     const projectRoot = tempProjectRoot();
 
     const first = initializeProject(projectRoot);
@@ -96,7 +96,8 @@ describe("initializeProject (scaffold step)", () => {
     expect(source).toContain('["list"]');
 
     const second = initializeProject(projectRoot, true);
-    expect(second.reporterRegistration).toBe("configured");
+    expect(second.reporterRegistration).toBe("manual");
+    expect(second.reporterInstructions).toMatch(/verify.*add.*preserv/iu);
     expect(fs.readFileSync(second.playwrightConfigPath, "utf8")).toBe(source);
   });
 
@@ -116,7 +117,7 @@ describe("initializeProject (scaffold step)", () => {
     },
   );
 
-  it("leaves an already-configured Playwright reporter list byte-for-byte untouched", () => {
+  it("leaves an already-configured Playwright reporter list byte-for-byte untouched and requests manual verification", () => {
     const projectRoot = tempProjectRoot();
     const playwrightConfigPath = path.join(projectRoot, "playwright.config.js");
     const source = "export default { reporter: [['line'], ['@framelia/playwright/reporter']] };\n";
@@ -124,7 +125,25 @@ describe("initializeProject (scaffold step)", () => {
 
     const result = initializeProject(projectRoot);
 
-    expect(result.reporterRegistration).toBe("configured");
+    expect(result.reporterRegistration).toBe("manual");
+    expect(result.reporterInstructions).toMatch(/verify.*add.*preserv/iu);
+    expect(fs.readFileSync(playwrightConfigPath, "utf8")).toBe(source);
+  });
+
+  it("does not mistake a Framelia reporter in an unrelated object for configured Playwright", () => {
+    const projectRoot = tempProjectRoot();
+    const playwrightConfigPath = path.join(projectRoot, "playwright.config.ts");
+    const source = [
+      'const unrelated = { reporter: [["@framelia/playwright/reporter"]] };',
+      'export default { reporter: [["line"]] };',
+      "",
+    ].join("\n");
+    fs.writeFileSync(playwrightConfigPath, source);
+
+    const result = initializeProject(projectRoot);
+
+    expect(result.reporterRegistration).toBe("manual");
+    expect(result.reporterInstructions).toMatch(/verify.*add.*preserv/iu);
     expect(fs.readFileSync(playwrightConfigPath, "utf8")).toBe(source);
   });
 

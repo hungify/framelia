@@ -3,7 +3,11 @@ import * as path from "node:path";
 
 import { nanoid } from "nanoid";
 
-function fsyncDirectory(directory: string): void {
+export function fsyncDirectory(
+  directory: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform === "win32") return;
   const descriptor = fs.openSync(directory, "r");
   try {
     fs.fsyncSync(descriptor);

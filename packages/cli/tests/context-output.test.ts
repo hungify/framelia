@@ -58,6 +58,40 @@ describe("run: project env", () => {
     expect(parsed.projectRoot).toBe(projectRoot);
     expect(parsed.figmaTokenAvailable).toBe(true);
   });
+
+  it.each([
+    {
+      command: ["contract", "list"],
+      kind: "framelia.contract-list-outcome",
+      diagnostic: "MULTIPLE_PROJECT_CONFIGS",
+    },
+    {
+      command: ["init"],
+      kind: "framelia.init-outcome",
+      diagnostic: "INIT_FAILED",
+    },
+  ])(
+    "lets the $kind route emit one structured multiple-config outcome",
+    async ({ command, kind, diagnostic }) => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-ambiguous-"));
+      temporaryDirectories.push(projectRoot);
+      fs.writeFileSync(path.join(projectRoot, "framelia.config.ts"), "export default {};\n");
+      fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {};\n");
+      const fakeProc = { ...createFakeProcess({}), cwd: () => projectRoot };
+
+      await expect(
+        run([...command, "--project-root", projectRoot], { process: fakeProc }),
+      ).resolves.toBeUndefined();
+
+      expect(fakeProc.stderrText()).toBe("");
+      expect(fakeProc.exitCode).toBe(EXIT_USAGE_ERROR);
+      expect(JSON.parse(fakeProc.stdoutText())).toMatchObject({
+        kind,
+        executionState: "error",
+        diagnostics: [{ code: diagnostic }],
+      });
+    },
+  );
 });
 
 describe("emitResult", () => {

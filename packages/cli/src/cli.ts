@@ -108,8 +108,14 @@ export async function run(
     !argv.includes("--version") &&
     !argv.includes("-V")
   ) {
-    const root = discoverProjectConfig(context.process.cwd(), explicitProjectRoot(argv)).root;
-    loadProjectEnv(root, { env: context.process.env });
+    let root: string | undefined;
+    try {
+      root = discoverProjectConfig(context.process.cwd(), explicitProjectRoot(argv)).root;
+    } catch {
+      // Discovery is repeated by the routed command, which owns its structured error
+      // shape. Preloading must not reject before that route can emit the outcome.
+    }
+    if (root) loadProjectEnv(root, { env: context.process.env });
   }
   await runApplication(app, argv, context);
   context.process.exitCode = normalizeStricliExitCode(context.process.exitCode);

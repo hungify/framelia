@@ -9,6 +9,7 @@ import {
   type AuthoredContract,
   type BaselineSnapshot,
 } from "@framelia/contracts/workflow";
+import { nanoid } from "nanoid";
 
 import {
   fetchBaseline,
@@ -17,7 +18,7 @@ import {
 } from "./baseline/figma-fetch.ts";
 import { canonicalJson, canonicalJsonDigest, type CanonicalJsonValue } from "./canonical-json.ts";
 import { parsePng } from "./compare/png.ts";
-import { writeFileAtomic } from "./fs-atomic.ts";
+import { fsyncDirectory, writeFileAtomic } from "./fs-atomic.ts";
 import { sha256Hex } from "./hash.ts";
 import { readPinnedBaseline } from "./pinned-baseline.ts";
 import { publishBundleUnit, type StagedFile } from "./run-bundle/staged-write.ts";
@@ -158,44 +159,209 @@ export function assertRawFileState(filePath: string, expected: RawFileState): vo
   }
 }
 
-/** One project-wide lock serializes the global-ID check and the contract pointer CAS. */
-export async function withAuthoringLock<T>(
-  root: string,
-  operation: () => Promise<T> | T,
-): Promise<T> {
-  const frameliaDirectory = path.join(root, ".framelia");
-  const createdFrameliaDirectory = !fs.existsSync(frameliaDirectory);
-  fs.mkdirSync(frameliaDirectory, { recursive: true });
-  if (createdFrameliaDirectory) {
-    const rootDescriptor = fs.openSync(root, "r");
-    try {
-      fs.fsyncSync(rootDescriptor);
-    } finally {
-      fs.closeSync(rootDescriptor);
-    }
+interface AuthoringLockOwner {
+  formatVersion: 1;
+  pid: number;
+  token: string;
+  createdAt: string;
+}
+
+export interface AuthoringLockDependencies {
+  /** Test seam for synchronizing reclaimers after they observe the same stale owner. */
+  beforeReclaim?: (lockPath: string) => Promise<void> | void;
+  isProcessAlive?: (pid: number) => boolean;
+}
+
+interface AcquiredAuthoringLock {
+  descriptor: number;
+  lockPath: string;
+  owner: AuthoringLockOwner;
+}
+
+const AUTHORING_LOCK_ATTEMPTS = 32;
+const AUTHORING_LOCK_RETRY_MS = 10;
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    throw error;
   }
-  const lockPath = path.join(frameliaDirectory, "authoring.lock");
+}
+
+function readLockOwner(lockPath: string): AuthoringLockOwner | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(fs.readFileSync(lockPath, "utf8")) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new AppError(
+      "AUTHORING_LOCKED",
+      `Cannot safely reclaim malformed authoring lock ${lockPath}. Remove it manually only after verifying no authoring process is active.`,
+    );
+  }
+  if (
+    !value ||
+    typeof value !== "object" ||
+    (value as Partial<AuthoringLockOwner>).formatVersion !== 1 ||
+    !Number.isSafeInteger((value as Partial<AuthoringLockOwner>).pid) ||
+    (value as Partial<AuthoringLockOwner>).pid! <= 0 ||
+    typeof (value as Partial<AuthoringLockOwner>).token !== "string" ||
+    !(value as Partial<AuthoringLockOwner>).token ||
+    typeof (value as Partial<AuthoringLockOwner>).createdAt !== "string" ||
+    !Number.isFinite(Date.parse((value as Partial<AuthoringLockOwner>).createdAt!))
+  ) {
+    throw new AppError(
+      "AUTHORING_LOCKED",
+      `Cannot safely reclaim malformed authoring lock ${lockPath}. Remove it manually only after verifying no authoring process is active.`,
+    );
+  }
+  return value as AuthoringLockOwner;
+}
+
+function removeOwnedLock(lock: AcquiredAuthoringLock): void {
+  fs.closeSync(lock.descriptor);
+  const current = readLockOwner(lock.lockPath);
+  if (current?.token !== lock.owner.token) return;
+  try {
+    fs.unlinkSync(lock.lockPath);
+    fsyncDirectory(path.dirname(lock.lockPath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function createLock(lockPath: string): AcquiredAuthoringLock | undefined {
   let descriptor: number;
   try {
     descriptor = fs.openSync(lockPath, "wx", 0o600);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    throw new AppError(
-      "AUTHORING_LOCKED",
-      `Authoring is already in progress for ${root}. Retry after the active create or refresh finishes.`,
-    );
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+    throw error;
   }
+  const owner: AuthoringLockOwner = {
+    formatVersion: 1,
+    pid: process.pid,
+    token: nanoid(),
+    createdAt: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(owner)}\n`);
+    fs.fsyncSync(descriptor);
+    fsyncDirectory(path.dirname(lockPath));
+    return { descriptor, lockPath, owner };
+  } catch (error) {
+    fs.closeSync(descriptor);
+    fs.rmSync(lockPath, { force: true });
+    throw error;
+  }
+}
+
+function authoringLockRetryDelay(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, AUTHORING_LOCK_RETRY_MS);
+  return promise;
+}
+
+async function acquireAuthoringLock(
+  lockPath: string,
+  dependencies: AuthoringLockDependencies,
+): Promise<AcquiredAuthoringLock> {
+  const reclaimPath = `${lockPath}.reclaim`;
+  const isProcessAlive = dependencies.isProcessAlive ?? processIsAlive;
+  for (let attempt = 0; attempt < AUTHORING_LOCK_ATTEMPTS; attempt += 1) {
+    if (fs.existsSync(reclaimPath)) {
+      await authoringLockRetryDelay();
+      continue;
+    }
+
+    const acquired = createLock(lockPath);
+    if (acquired) {
+      // A stale-lock reclaimer may have linked its claim between our initial check
+      // and the exclusive create. Relinquish before running user work; the claimant
+      // compares tokens and therefore cannot mistake this live replacement for stale.
+      if (!fs.existsSync(reclaimPath)) return acquired;
+      removeOwnedLock(acquired);
+      await authoringLockRetryDelay();
+      continue;
+    }
+
+    const observed = readLockOwner(lockPath);
+    if (!observed) continue;
+    if (isProcessAlive(observed.pid)) {
+      throw new AppError(
+        "AUTHORING_LOCKED",
+        `Authoring lock ${lockPath} is owned by live PID ${observed.pid}. Retry after that create or refresh finishes.`,
+      );
+    }
+    await dependencies.beforeReclaim?.(lockPath);
+
+    // The fixed hard-link claim elects one reclaimer and gates new owners. A
+    // contender that observed the same stale file either loses this link race or
+    // links a later owner whose token will not match; neither may rename that owner.
+    try {
+      fs.linkSync(lockPath, reclaimPath);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "EEXIST") {
+        await authoringLockRetryDelay();
+        continue;
+      }
+      throw error;
+    }
+
+    try {
+      const claimed = readLockOwner(reclaimPath);
+      if (!claimed || claimed.token !== observed.token) continue;
+      const quarantinePath = `${lockPath}.stale.${process.pid}.${nanoid()}`;
+      try {
+        fs.renameSync(lockPath, quarantinePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const quarantined = readLockOwner(quarantinePath);
+      if (!quarantined || quarantined.token !== observed.token) {
+        throw new AppError(
+          "AUTHORING_LOCKED",
+          `Refusing to delete unexpected authoring lock quarantined at ${quarantinePath}. Inspect it manually.`,
+        );
+      }
+      fs.unlinkSync(quarantinePath);
+    } finally {
+      fs.rmSync(reclaimPath, { force: true });
+      fsyncDirectory(path.dirname(lockPath));
+    }
+  }
+  throw new AppError(
+    "AUTHORING_LOCKED",
+    `Could not acquire authoring lock ${lockPath} after ${AUTHORING_LOCK_ATTEMPTS} bounded attempts. Inspect the lock and reclaim marker manually.`,
+  );
+}
+
+/** One project-wide lock serializes the global-ID check and the contract pointer CAS. */
+export async function withAuthoringLock<T>(
+  root: string,
+  operation: () => Promise<T> | T,
+  dependencies: AuthoringLockDependencies = {},
+): Promise<T> {
+  const absoluteRoot = path.resolve(root);
+  const frameliaDirectory = path.join(absoluteRoot, ".framelia");
+  const createdFrameliaDirectory = !fs.existsSync(frameliaDirectory);
+  fs.mkdirSync(frameliaDirectory, { recursive: true });
+  if (createdFrameliaDirectory) fsyncDirectory(absoluteRoot);
+  const lock = await acquireAuthoringLock(
+    path.join(frameliaDirectory, "authoring.lock"),
+    dependencies,
+  );
   try {
     return await operation();
   } finally {
-    fs.closeSync(descriptor);
-    fs.rmSync(lockPath, { force: true });
-    const directoryDescriptor = fs.openSync(frameliaDirectory, "r");
-    try {
-      fs.fsyncSync(directoryDescriptor);
-    } finally {
-      fs.closeSync(directoryDescriptor);
-    }
+    removeOwnedLock(lock);
   }
 }
 

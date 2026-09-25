@@ -41,6 +41,7 @@ export {
   writeAuthoredContract,
 } from "./authoring.ts";
 export type {
+  AuthoringLockDependencies,
   FetchBaselineFn,
   RawFileState,
   StageFigmaBaselineOptions,

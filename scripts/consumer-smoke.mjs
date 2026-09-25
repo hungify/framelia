@@ -101,13 +101,15 @@ function runOutcome(command, args, cwd, expectedStatuses) {
 
 async function reservePort() {
   const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
+  const listening = Promise.withResolvers();
+  server.once("error", listening.reject);
+  server.listen(0, "127.0.0.1", listening.resolve);
+  await listening.promise;
   const address = server.address();
   assert.ok(address && typeof address !== "string");
-  await new Promise((resolve) => server.close(resolve));
+  const closed = Promise.withResolvers();
+  server.close(closed.resolve);
+  await closed.promise;
   return address.port;
 }
 
@@ -116,54 +118,62 @@ async function runReadiness(command, args, cwd) {
   const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
-  const exited = new Promise((resolve) => {
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
-  const readiness = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`readiness timeout\\nstdout:\\n${stdout}\\nstderr:\\n${stderr}`));
-    }, 30_000);
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-      const line = stdout.split("\\n").find((entry) => entry.trim());
-      if (!line) return;
-      try {
-        const record = JSON.parse(line);
-        clearTimeout(timer);
-        resolve(record);
-      } catch {
-        // Wait for the rest of the one-line JSON record.
-      }
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.once("error", (error) => {
+  const exited = Promise.withResolvers();
+  child.once("exit", (code, signal) => exited.resolve({ code, signal }));
+  const ready = Promise.withResolvers();
+  const timer = setTimeout(() => {
+    child.kill("SIGKILL");
+    ready.reject(new Error(`readiness timeout\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+  }, 30_000);
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+    const firstLineEnd = stdout.indexOf("\n");
+    if (firstLineEnd < 0) return;
+    const line = stdout.slice(0, firstLineEnd).trim();
+    try {
+      const record = JSON.parse(line);
       clearTimeout(timer);
-      reject(error);
-    });
-    child.once("exit", (code, signal) => {
-      if (stdout.trim()) return;
+      ready.resolve(record);
+    } catch (error) {
       clearTimeout(timer);
-      reject(new Error(`readiness process exited ${code ?? signal}\\nstderr:\\n${stderr}`));
-    });
+      ready.reject(
+        new Error(`invalid readiness JSON on first stdout line: ${line}`, { cause: error }),
+      );
+    }
   });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  child.once("error", (error) => {
+    clearTimeout(timer);
+    ready.reject(error);
+  });
+  child.once("exit", (code, signal) => {
+    if (stdout.includes("\n")) return;
+    clearTimeout(timer);
+    ready.reject(new Error(`readiness process exited ${code ?? signal}\nstderr:\n${stderr}`));
+  });
+  const readiness = await ready.promise;
   child.kill("SIGTERM");
-  const stopped = await Promise.race([
-    exited,
-    new Promise((_, reject) => {
-      setTimeout(() => {
-        child.kill("SIGKILL");
-        reject(new Error("readiness process did not stop after SIGTERM"));
-      }, 10_000);
-    }),
-  ]);
+  const stopTimeout = Promise.withResolvers();
+  const stopTimer = setTimeout(() => {
+    child.kill("SIGKILL");
+    stopTimeout.reject(new Error("readiness process did not stop after SIGTERM"));
+  }, 10_000);
+  const stopped = await Promise.race([exited.promise, stopTimeout.promise]);
+  clearTimeout(stopTimer);
   if (stopped.code !== 0) {
     throw new Error(
-      `readiness process exited ${stopped.code ?? stopped.signal}\\nstderr:\\n${stderr}`,
+      `readiness process exited ${stopped.code ?? stopped.signal}\nstderr:\n${stderr}`,
     );
   }
+  const stdoutRecords = stdout.split("\n").filter((line) => line.trim());
+  assert.equal(
+    stdoutRecords.length,
+    1,
+    `readiness process must emit exactly one JSON stdout record, received ${stdoutRecords.length}`,
+  );
+  assert.deepEqual(JSON.parse(stdoutRecords[0]), readiness);
   return { readiness, stdout, stderr };
 }
 
@@ -616,7 +626,7 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       assert.equal(opened.readiness.kind, "framelia.open-ready");
       assert.equal(opened.readiness.command, "open");
       assert.equal(opened.readiness.selectedRun.runId, mismatchOutcome.runId);
-      assert.equal(opened.stdout.trim().split("\\n").length, 1);
+      assert.equal(opened.stdout.trim().split("\n").length, 1);
       assert.match(opened.stderr, /Local:/);
 
       const gate = runOutcome(

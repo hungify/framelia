@@ -106,15 +106,19 @@ export function nextForRun(projection: RunProjection, projectRoot?: string): Nex
       ],
     };
   }
+  if (projection.selection.mode === "all") {
+    return {
+      command: "framelia",
+      argv: ["check", "--all", ...(projectRoot ? ["--project-root", projectRoot] : [])],
+    };
+  }
   const contracts = [...new Set(projection.cases.map((entry) => entry.contractId))];
   const projects = [...new Set(projection.cases.map((entry) => entry.project))];
   return {
     command: "framelia",
     argv: [
       "check",
-      ...(projection.selection.mode === "all"
-        ? ["--all"]
-        : contracts.flatMap((contract) => ["--contract", contract])),
+      ...contracts.flatMap((contract) => ["--contract", contract]),
       ...projects.flatMap((project) => ["--project", project]),
       ...(projectRoot ? ["--project-root", projectRoot] : []),
     ],

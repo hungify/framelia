@@ -1,6 +1,6 @@
 import { buildCommand } from "@stricli/core";
 
-import { identityParser } from "../cli-constants.ts";
+import { identityParser, projectRootFlag } from "../cli-constants.ts";
 import type { CliContext } from "../context.ts";
 import { runCheck } from "../internal/check.ts";
 import { emitResult } from "../output.ts";
@@ -8,6 +8,7 @@ import { emitResult } from "../output.ts";
 interface CheckFlags {
   contract?: string[];
   all?: boolean;
+  projectRoot?: string;
   project?: string[];
 }
 
@@ -25,6 +26,7 @@ export const checkCommand = buildCommand({
   },
   parameters: {
     flags: {
+      projectRoot: projectRootFlag,
       contract: {
         kind: "parsed",
         parse: identityParser,
@@ -47,7 +49,7 @@ export const checkCommand = buildCommand({
         placeholder: "name",
       },
     },
-    aliases: { c: "contract", p: "project" },
+    aliases: { c: "contract", p: "project", r: "projectRoot" },
   },
   docs: {
     brief: "Run contract-selected visual checks through the project's local Playwright.",

@@ -45,12 +45,17 @@ describe("scanner compatibility: unknown route", () => {
   });
 });
 
-describe("scanner compatibility: missing required flag value", () => {
-  it("rejects a required flag with no value, exit 2, stderr only", async () => {
+describe("scanner compatibility: structured command input", () => {
+  it("lets done-gate report missing semantic input as one JSON document", async () => {
     const fakeProcess = createFakeProcess();
     await run(["done-gate"], { process: fakeProcess, loadProjectEnv: false });
-    assertUsageError(fakeProcess);
-    expect(fakeProcess.stderrText()).toContain("--run");
+    expect(fakeProcess.exitCode).toBe(2);
+    expect(fakeProcess.stderrText()).toBe("");
+    expect(JSON.parse(fakeProcess.stdoutText())).toMatchObject({
+      kind: "framelia.done-gate-outcome",
+      executionState: "incomplete",
+      issues: [{ code: "DONE_GATE_OPTIONS_INVALID" }],
+    });
   });
 });
 

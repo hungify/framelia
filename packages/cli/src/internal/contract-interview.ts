@@ -4,6 +4,7 @@ import {
   type ExpectStyle,
   type StyleCheckPoint,
 } from "@framelia/contracts";
+import { targetPathSchema } from "@framelia/contracts/workflow";
 import { deriveExpectStyle, resolveNodeSpec } from "@framelia/verify";
 import { z } from "zod";
 
@@ -11,7 +12,6 @@ import type { ScopeKind, ViewportPreset } from "../cli-constants.ts";
 import { UsageError, usageErrorFromZodError } from "../exit.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { targetUrlValidationMessage, viewportPairMessage } from "./browser-input.ts";
-import type { ContractAnswers } from "./contract-scaffold.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
 import {
   PROMPT_CANCELLED,
@@ -24,9 +24,11 @@ export interface ContractCreateOptions {
   readonly projectRoot: string | undefined;
   readonly output: string | undefined;
   readonly force: boolean | undefined;
-  readonly targetUrl: string | undefined;
+  readonly targetPath?: string;
+  readonly targetUrl?: string;
   readonly contractId: string | undefined;
   readonly name: string | undefined;
+  readonly figmaUrl?: string;
   readonly fileKey: string | undefined;
   readonly nodeId: string | undefined;
   readonly viewport: ViewportPreset | undefined;
@@ -42,6 +44,22 @@ export interface ContractCreateOptions {
   readonly regionHeight: number | undefined;
 }
 
+export interface ContractAnswers {
+  targetPath: string;
+  contractId: string;
+  name: string;
+  baseline: { kind: "figma"; fileKey: string; nodeId: string };
+  viewport: { preset: string; width: number; height: number };
+  scope:
+    | { kind: "page"; pageReason: string; styleChecks?: StyleCheckPoint[] }
+    | {
+        kind: "region";
+        selector: string;
+        expectSize: { width: number; height: number };
+        expectStyle?: ExpectStyle;
+      };
+}
+
 export interface ContractInterviewDependencies {
   readonly resolveNodeSpec: typeof resolveNodeSpec;
   readonly deriveExpectStyle: typeof deriveExpectStyle;
@@ -53,10 +71,49 @@ export type ContractInterviewResult =
 
 const defaultDependencies: ContractInterviewDependencies = { resolveNodeSpec, deriveExpectStyle };
 
+export interface ParsedFigmaDesignUrl {
+  fileKey: string;
+  nodeId: string;
+}
+
+export function parseFigmaDesignUrl(value: string): ParsedFigmaDesignUrl {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new UsageError(
+      "--figma-url must be an https://www.figma.com/design/<fileKey>/<slug>?node-id=6006-1028 URL.",
+    );
+  }
+  const segments = url.pathname.split("/").filter(Boolean);
+  const fileKey = segments[0] === "design" ? segments[1] : undefined;
+  const nodeParameter = url.searchParams.get("node-id");
+  const normalizedNodeId =
+    nodeParameter && /^\d+-\d+$/.test(nodeParameter)
+      ? nodeParameter.replace("-", ":")
+      : nodeParameter;
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "www.figma.com" ||
+    segments.length < 3 ||
+    !fileKey ||
+    !normalizedNodeId ||
+    !FIGMA_NODE_ID.test(normalizedNodeId)
+  ) {
+    throw new UsageError(
+      "--figma-url must be an https://www.figma.com/design/<fileKey>/<slug>?node-id=6006-1028 URL with node-id.",
+    );
+  }
+  return { fileKey, nodeId: normalizedNodeId };
+}
+
 const contractCreateFlagsSchema = z
   .object({
+    targetPath: z.string().optional(),
     targetUrl: z.string().optional(),
+    figmaUrl: z.string().optional(),
     contractId: z.string().optional(),
+    fileKey: z.string().optional(),
     nodeId: z.string().optional(),
     viewportWidth: z.number().int().positive().optional(),
     viewportHeight: z.number().int().positive().optional(),
@@ -70,9 +127,40 @@ const contractCreateFlagsSchema = z
     styleCheckNodeId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.targetPath !== undefined) {
+      const result = targetPathSchema.safeParse(data.targetPath);
+      if (!result.success) {
+        ctx.addIssue({
+          code: "custom",
+          message: "--target-path must begin with one slash and stay application-relative.",
+        });
+      }
+    }
     if (data.targetUrl !== undefined) {
       const message = targetUrlValidationMessage(data.targetUrl);
       if (message) ctx.addIssue({ code: "custom", message: `--target-url: ${message}` });
+    }
+    if (data.figmaUrl !== undefined) {
+      try {
+        const parsed = parseFigmaDesignUrl(data.figmaUrl);
+        if (data.fileKey !== undefined && data.fileKey !== parsed.fileKey) {
+          ctx.addIssue({
+            code: "custom",
+            message: "--figma-url fileKey conflicts with --file-key.",
+          });
+        }
+        if (data.nodeId !== undefined && data.nodeId !== parsed.nodeId) {
+          ctx.addIssue({
+            code: "custom",
+            message: "--figma-url node-id conflicts with --node-id.",
+          });
+        }
+      } catch (error) {
+        ctx.addIssue({
+          code: "custom",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     const pairMessage = viewportPairMessage(data.viewportWidth, data.viewportHeight);
     if (pairMessage) ctx.addIssue({ code: "custom", message: pairMessage });
@@ -432,6 +520,80 @@ async function resolveScope(
   };
 }
 
+function applicationPathFromUrl(value: string): string {
+  const url = new URL(value);
+  return `${url.pathname}${url.search}`;
+}
+
+function assertNonInteractiveInputs(
+  options: ContractCreateOptions,
+  figma: Partial<ParsedFigmaDesignUrl>,
+): void {
+  const missing: string[] = [];
+  if (options.targetPath === undefined && options.targetUrl === undefined) {
+    missing.push("--target-path");
+  }
+  if (options.contractId === undefined) missing.push("--contract-id");
+  if (options.name === undefined) missing.push("--name");
+  if (figma.fileKey === undefined) missing.push("--file-key or --figma-url");
+  if (figma.nodeId === undefined) missing.push("--node-id or --figma-url");
+  if (options.viewport === undefined) missing.push("--viewport");
+  if (options.viewport === "custom") {
+    if (options.viewportName === undefined) missing.push("--viewport-name");
+    if (options.viewportWidth === undefined) missing.push("--viewport-width");
+    if (options.viewportHeight === undefined) missing.push("--viewport-height");
+  }
+  if (options.scope === undefined) missing.push("--scope");
+  if (options.scope === "page" && options.pageReason === undefined) missing.push("--page-reason");
+  if (options.scope === "region") {
+    if (options.selector === undefined) missing.push("--selector");
+    if (options.regionWidth === undefined) missing.push("--region-width");
+    if (options.regionHeight === undefined) missing.push("--region-height");
+  }
+  if (missing.length > 0) {
+    throw new UsageError(
+      `MISSING_INPUT: Noninteractive contract create requires ${missing.join(", ")}.`,
+    );
+  }
+}
+
+async function resolveTargetPath(
+  options: ContractCreateOptions,
+  prompts: PromptAdapter,
+  state: InterviewState,
+): Promise<string> {
+  const fromUrl =
+    options.targetUrl === undefined ? undefined : applicationPathFromUrl(options.targetUrl);
+  if (options.targetPath !== undefined && fromUrl !== undefined && options.targetPath !== fromUrl) {
+    throw new UsageError(
+      `--target-path ${JSON.stringify(options.targetPath)} conflicts with the path from --target-url (${JSON.stringify(fromUrl)}).`,
+    );
+  }
+  return resolveField(
+    prompts,
+    state,
+    "--target-path",
+    options.targetPath ?? fromUrl,
+    (value) => {
+      const result = targetPathSchema.safeParse(value);
+      return result.success
+        ? undefined
+        : "Enter an application-relative path beginning with one slash.";
+    },
+    {
+      message: "Target application path",
+      placeholder: "/login",
+      initialValue: "/",
+      validate: (value) => {
+        const result = targetPathSchema.safeParse(value);
+        return result.success
+          ? undefined
+          : "Enter an application-relative path beginning with one slash.";
+      },
+    },
+  );
+}
+
 async function runInterview(
   options: ContractCreateOptions,
   prompts: PromptAdapter,
@@ -441,20 +603,17 @@ async function runInterview(
   const parsedFlags = contractCreateFlagsSchema.safeParse(options);
   if (!parsedFlags.success) throw usageErrorFromZodError(parsedFlags.error);
 
+  const fromUrl: Partial<ParsedFigmaDesignUrl> = options.figmaUrl
+    ? parseFigmaDesignUrl(options.figmaUrl)
+    : {};
+  const figma = {
+    fileKey: options.fileKey ?? fromUrl.fileKey,
+    nodeId: options.nodeId ?? fromUrl.nodeId,
+  };
+  if (!prompts.interactive) assertNonInteractiveInputs(options, figma);
+
   const state: InterviewState = { prompted: false };
-  const targetUrl = await resolveField(
-    prompts,
-    state,
-    "--target-url",
-    options.targetUrl,
-    targetUrlValidationMessage,
-    {
-      message: "Target application URL",
-      placeholder: "http://127.0.0.1:3000",
-      initialValue: "http://127.0.0.1:3000",
-      validate: targetUrlValidationMessage,
-    },
-  );
+  const targetPath = await resolveTargetPath(options, prompts, state);
   const contractId = await resolveField(
     prompts,
     state,
@@ -473,11 +632,11 @@ async function runInterview(
     placeholder: "Desktop",
     validate: required,
   });
-  const fileKey = await resolveField(prompts, state, "--file-key", options.fileKey, required, {
+  const fileKey = await resolveField(prompts, state, "--file-key", figma.fileKey, required, {
     message: "Figma file key",
     validate: required,
   });
-  const nodeId = await resolveField(prompts, state, "--node-id", options.nodeId, validateNodeId, {
+  const nodeId = await resolveField(prompts, state, "--node-id", figma.nodeId, validateNodeId, {
     message: "Figma node ID",
     placeholder: "153:5181",
     validate: validateNodeId,
@@ -492,7 +651,7 @@ async function runInterview(
     deps,
     baseline,
   );
-  return { targetUrl, contractId, name, baseline, viewport, scope };
+  return { targetPath, contractId, name, baseline, viewport, scope };
 }
 
 export async function collectContractAnswers(

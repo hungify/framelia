@@ -39,6 +39,25 @@ describe("run: project env", () => {
     const parsed = JSON.parse(fakeProc.stdoutText()) as { figmaTokenAvailable: boolean };
     expect(parsed.figmaTokenAvailable).toBe(true);
   });
+
+  it("loads env from an explicit project root before command routing", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-cwd-env-"));
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-explicit-env-"));
+    temporaryDirectories.push(cwd, projectRoot);
+    fs.writeFileSync(path.join(cwd, ".env"), "FIGMA_ACCESS_TOKEN=wrong-cwd-token\n");
+    fs.writeFileSync(path.join(projectRoot, ".env"), "FIGMA_ACCESS_TOKEN=selected-root-token\n");
+    const fakeProc = { ...createFakeProcess({}), cwd: () => cwd };
+
+    await run(["status", "--project-root", projectRoot], { process: fakeProc });
+
+    expect(fakeProc.env.FIGMA_ACCESS_TOKEN).toBe("selected-root-token");
+    const parsed = JSON.parse(fakeProc.stdoutText()) as {
+      projectRoot: string;
+      figmaTokenAvailable: boolean;
+    };
+    expect(parsed.projectRoot).toBe(projectRoot);
+    expect(parsed.figmaTokenAvailable).toBe(true);
+  });
 });
 
 describe("emitResult", () => {

@@ -337,7 +337,6 @@ describe("signed done-gate authority boundary", () => {
       const signed = signedRequirements(root, payload);
       const result = await doneGateCommand(
         {
-          artifact: undefined,
           run: "run-selected",
           requirements: signed.requirements,
           projectRoot: root,
@@ -381,7 +380,6 @@ describe("signed done-gate authority boundary", () => {
     });
     const signed = signedRequirements(root, fixture.requirements);
     const options = {
-      artifact: undefined,
       run: "run-selected",
       requirements: signed.requirements,
       projectRoot: root,
@@ -466,7 +464,6 @@ describe("signed done-gate authority boundary", () => {
     fs.writeFileSync(signed.requirements, JSON.stringify(envelope));
     const result = await doneGateCommand(
       {
-        artifact: undefined,
         run: "run-selected",
         requirements: signed.requirements,
         projectRoot: root,
@@ -486,7 +483,7 @@ describe("signed done-gate authority boundary", () => {
     fs.writeFileSync(unsigned, JSON.stringify(fixture.requirements));
     const trusted = signedRequirements(root, fixture.requirements);
     const unsignedResult = await doneGateCommand(
-      { artifact: undefined, run: "run-selected", requirements: unsigned, projectRoot: root },
+      { run: "run-selected", requirements: unsigned, projectRoot: root },
       runtime(root, keyEnv(trusted.publicKey)),
     );
     expect(unsignedResult).toMatchObject({
@@ -497,7 +494,6 @@ describe("signed done-gate authority boundary", () => {
     const wrong = signedRequirements(root, fixture.requirements);
     const wrongKeyResult = await doneGateCommand(
       {
-        artifact: undefined,
         run: "run-selected",
         requirements: trusted.requirements,
         projectRoot: root,
@@ -512,7 +508,6 @@ describe("signed done-gate authority boundary", () => {
     const inside = signedRequirements(root, fixture.requirements, { keyDirectory: root });
     const insideResult = await doneGateCommand(
       {
-        artifact: undefined,
         run: "run-selected",
         requirements: inside.requirements,
         projectRoot: root,
@@ -531,7 +526,6 @@ describe("signed done-gate authority boundary", () => {
     const signed = signedRequirements(root, fixture.requirements);
     const missingKey = await doneGateCommand(
       {
-        artifact: undefined,
         run: "run-selected",
         requirements: signed.requirements,
         projectRoot: root,
@@ -547,7 +541,6 @@ describe("signed done-gate authority boundary", () => {
     fs.mkdirSync(path.join(attemptsDirectory, "partial-attempt"));
     const partial = await doneGateCommand(
       {
-        artifact: undefined,
         run: "run-selected",
         requirements: signed.requirements,
         projectRoot: root,
@@ -586,7 +579,6 @@ describe("signed done-gate authority boundary", () => {
     const signed = signedRequirements(root, fixture.requirements);
     const result = await doneGateCommand(
       {
-        artifact: undefined,
         run: "run-selected",
         requirements: signed.requirements,
         projectRoot: root,
@@ -602,23 +594,6 @@ describe("signed done-gate authority boundary", () => {
           expect.objectContaining({ code: "visual-mismatch" }),
           expect.objectContaining({ code: "attempt-record-invalid" }),
         ]),
-      },
-    });
-  });
-
-  it("returns structured legacy rejection and rerun guidance", async () => {
-    const root = temporaryRoot();
-    const artifact = path.join(root, "visual-verification.json");
-    fs.writeFileSync(artifact, JSON.stringify({ kind: "framelia.visual-verification" }));
-    const result = await doneGateCommand(
-      { artifact, run: undefined, requirements: undefined, projectRoot: root },
-      runtime(root),
-    );
-    expect(result).toMatchObject({
-      exitCode: 2,
-      body: {
-        issues: [{ code: "LEGACY_ARTIFACT_UNSUPPORTED" }],
-        next: { command: "pnpm", argv: ["exec", "playwright", "test"] },
       },
     });
   });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import * as net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +54,8 @@ const env = { ...process.env, CI: "1", FORCE_COLOR: "0" };
 delete env.NODE_OPTIONS;
 delete env.NODE_PATH;
 delete env.NO_COLOR;
+env.FIGMA_ACCESS_TOKEN = "";
+env.FIGMA_TOKEN = "";
 
 function run(command, args, cwd) {
   console.log(`[consumer smoke] ${command} ${args.join(" ")}`);
@@ -94,6 +97,74 @@ function runOutcome(command, args, cwd, expectedStatuses) {
     );
   }
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+async function reservePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  await new Promise((resolve) => server.close(resolve));
+  return address.port;
+}
+
+async function runReadiness(command, args, cwd) {
+  console.log(`[consumer smoke] ${command} ${args.join(" ")}`);
+  const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  const exited = new Promise((resolve) => {
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+  const readiness = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`readiness timeout\\nstdout:\\n${stdout}\\nstderr:\\n${stderr}`));
+    }, 30_000);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      const line = stdout.split("\\n").find((entry) => entry.trim());
+      if (!line) return;
+      try {
+        const record = JSON.parse(line);
+        clearTimeout(timer);
+        resolve(record);
+      } catch {
+        // Wait for the rest of the one-line JSON record.
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      if (stdout.trim()) return;
+      clearTimeout(timer);
+      reject(new Error(`readiness process exited ${code ?? signal}\\nstderr:\\n${stderr}`));
+    });
+  });
+  child.kill("SIGTERM");
+  const stopped = await Promise.race([
+    exited,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("readiness process did not stop after SIGTERM"));
+      }, 10_000);
+    }),
+  ]);
+  if (stopped.code !== 0) {
+    throw new Error(
+      `readiness process exited ${stopped.code ?? stopped.signal}\\nstderr:\\n${stderr}`,
+    );
+  }
+  return { readiness, stdout, stderr };
 }
 
 function writeJson(file, value) {
@@ -156,12 +227,45 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
         path.join(project, "playwright.config.ts"),
         "utf8",
       );
-      run(process.execPath, [cli, "init", "--project-root", project], project);
+      const dryInit = runOutcome(
+        process.execPath,
+        [cli, "init", "--project-root", project, "--dry-run"],
+        project,
+        [0],
+      );
+      assert.equal(JSON.parse(dryInit.stdout).dryRun, true);
+      assert.equal(existsSync(path.join(project, "framelia.config.ts")), false);
+      const initialized = runOutcome(
+        process.execPath,
+        [cli, "init", "--project-root", project],
+        project,
+        [0],
+      );
+      assert.equal(JSON.parse(initialized.stdout).kind, "framelia.init-outcome");
       assert.equal(
         readFileSync(path.join(project, "playwright.config.ts"), "utf8"),
         playwrightConfigBeforeInit,
         "init must preserve the consumer's existing reporter list byte-for-byte",
       );
+      const frameliaConfigAfterInit = readFileSync(path.join(project, "framelia.config.ts"));
+      run(process.execPath, [cli, "init", "--project-root", project, "--force"], project);
+      assert.deepEqual(
+        readFileSync(path.join(project, "framelia.config.ts")),
+        frameliaConfigAfterInit,
+        "repeat init must preserve existing Framelia configuration byte-for-byte",
+      );
+      const missingCreate = runOutcome(
+        process.execPath,
+        [cli, "contract", "create", "--project-root", project],
+        project,
+        [2],
+      );
+      assert.equal(missingCreate.stderr, "");
+      assert.equal(
+        JSON.parse(missingCreate.stdout).diagnostics[0].message.includes("MISSING_INPUT"),
+        true,
+      );
+      assert.equal(existsSync(path.join(project, ".framelia", "contracts")), false);
       run(process.execPath, [cli, "status", "--project-root", project], project);
       writeFileSync(
         path.join(project, "config-probe.mjs"),
@@ -373,6 +477,42 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       const nestedCwd = path.join(project, "nested", "cwd");
       mkdirSync(nestedCwd, { recursive: true });
       const cli = path.join(project, "node_modules", "framelia", "bin", "framelia.js");
+      const listed = runOutcome(
+        process.execPath,
+        [cli, "contract", "list", "--project-root", project],
+        nestedCwd,
+        [0],
+      );
+      const listOutcome = JSON.parse(listed.stdout);
+      assert.deepEqual(
+        listOutcome.contracts.map(({ contractId, status }) => ({ contractId, status })),
+        [
+          { contractId: "check.mismatch", status: "executable" },
+          { contractId: "check.pass", status: "executable" },
+        ],
+      );
+      const refreshContract = path.join(project, "contracts", "check-pass.json");
+      const refreshPointerBefore = readFileSync(refreshContract);
+      const refresh = runOutcome(
+        process.execPath,
+        [
+          cli,
+          "contract",
+          "refresh-baseline",
+          "--project-root",
+          project,
+          "--contract",
+          "check.pass",
+        ],
+        nestedCwd,
+        [2],
+      );
+      assert.equal(JSON.parse(refresh.stdout).diagnostics[0].code, "BASELINE_ACQUISITION_FAILED");
+      assert.deepEqual(
+        readFileSync(refreshContract),
+        refreshPointerBefore,
+        "failed refresh must preserve the prior contract pointer bytes",
+      );
       rmSync(path.join(project, "check-lifecycle.log"), { force: true });
       rmSync(path.join(project, "check-executions.log"), { force: true });
       rmSync(path.join(project, "check-mismatch-attempts.txt"), { force: true });
@@ -381,6 +521,21 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       assert.equal(passingOutcome.executionState, "completed");
       assert.equal(passingOutcome.visualVerdict, "passed");
       assert.equal(passingOutcome.selection.selectedCount, 2);
+      assert.equal(passingOutcome.coverage.selectedCount, 2);
+      assert.equal(passingOutcome.cases.length, 2);
+      assert.ok(
+        passingOutcome.cases.every(
+          (selectedCase) =>
+            selectedCase.chosenAttemptId &&
+            selectedCase.attempts.some(
+              (attempt) =>
+                attempt.chosen &&
+                attempt.evidence.expected.availability === "available" &&
+                attempt.evidence.actual.availability === "available" &&
+                attempt.evidence.score.availability === "available",
+            ),
+        ),
+      );
       assert.match(passingCheck.stderr, /consumer reporter noise/);
       assert.doesNotMatch(passingCheck.stdout, /consumer reporter noise/);
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /setup/);
@@ -405,12 +560,81 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
       assert.equal(mismatchOutcome.selection.selectedCount, 2);
       assert.notEqual(mismatchOutcome.runId, passingOutcome.runId);
       assert.deepEqual(mismatchOutcome.diagnostics, []);
+      assert.equal(mismatchOutcome.coverage.selectedCount, 2);
+      assert.equal(mismatchOutcome.cases.length, 2);
+      assert.equal(mismatchOutcome.next.command, "framelia");
+      assert.deepEqual(mismatchOutcome.next.argv.slice(0, 3), [
+        "open",
+        "--run",
+        mismatchOutcome.runId,
+      ]);
       assert.deepEqual(
         readFileSync(path.join(project, "check-executions.log"), "utf8").trim().split("\n"),
         ["/mismatch", "/mismatch", "/mismatch"],
       );
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /setup/);
       assert.match(readFileSync(path.join(project, "check-lifecycle.log"), "utf8"), /cleanup/);
+      const reportDirectory = path.join(project, `framelia-report-${mode}`);
+      const exportedReport = runOutcome(
+        process.execPath,
+        [
+          cli,
+          "report",
+          "--project-root",
+          project,
+          "--run",
+          mismatchOutcome.runId,
+          "--output",
+          reportDirectory,
+        ],
+        nestedCwd,
+        [1],
+      );
+      const reportOutcome = JSON.parse(exportedReport.stdout);
+      assert.equal(reportOutcome.runId, mismatchOutcome.runId);
+      assert.deepEqual(reportOutcome.cases, mismatchOutcome.cases);
+      assert.equal(existsSync(path.join(reportDirectory, "index.html")), true);
+
+      // eslint-disable-next-line no-await-in-loop -- package modes are intentionally isolated serial consumers
+      const openPort = await reservePort();
+      // eslint-disable-next-line no-await-in-loop -- keep each installed consumer alive only for its own readiness probe
+      const opened = await runReadiness(
+        process.execPath,
+        [
+          cli,
+          "open",
+          "--project-root",
+          project,
+          "--run",
+          mismatchOutcome.runId,
+          "--port",
+          String(openPort),
+          "--no-open",
+        ],
+        nestedCwd,
+      );
+      assert.equal(opened.readiness.kind, "framelia.open-ready");
+      assert.equal(opened.readiness.command, "open");
+      assert.equal(opened.readiness.selectedRun.runId, mismatchOutcome.runId);
+      assert.equal(opened.stdout.trim().split("\\n").length, 1);
+      assert.match(opened.stderr, /Local:/);
+
+      const gate = runOutcome(
+        process.execPath,
+        [
+          cli,
+          "done-gate",
+          "--project-root",
+          project,
+          "--run",
+          mismatchOutcome.runId,
+          "--requirements",
+          "missing-protected-requirements.json",
+        ],
+        nestedCwd,
+        [2],
+      );
+      assert.equal(JSON.parse(gate.stdout).issues[0].code, "SIGNED_REQUIREMENTS_UNREADABLE");
 
       writeFileSync(
         path.join(project, "framelia.config.ts"),

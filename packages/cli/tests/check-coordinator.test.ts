@@ -210,7 +210,7 @@ describe("runCheck command-lifetime finalization", () => {
       code: "FRAMELIA_CHECK_FAILED",
       stage: "check",
       message:
-        "Playwright collection exited with code 7 before the Framelia collection status was published. Review the Playwright output forwarded to stderr above for configuration or spec errors.",
+        "Playwright collection exited with code 7 before the Framelia collection status was published. Review the Playwright output forwarded to stderr.",
     });
   });
 

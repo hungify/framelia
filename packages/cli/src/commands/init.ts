@@ -3,6 +3,7 @@ import { buildCommand } from "@stricli/core";
 import { projectRootFlag } from "../cli-constants.ts";
 import type { CliContext } from "../context.ts";
 import type { ProjectInitOptions } from "../internal/project-init.ts";
+import { emitResult } from "../output.ts";
 
 export const initCommand = buildCommand({
   loader: async () => {
@@ -11,17 +12,25 @@ export const initCommand = buildCommand({
       import("../internal/project-init.ts"),
       import("../internal/clack-prompts.ts"),
     ]);
-    return function (this: CliContext, flags: ProjectInitOptions) {
-      return projectInitCommand(flags, createClackPrompts(this.process), this.process);
+    return async function (this: CliContext, flags: ProjectInitOptions) {
+      emitResult(
+        this,
+        await projectInitCommand(flags, createClackPrompts(this.process), this.process),
+      );
     };
   },
   parameters: {
     flags: {
       projectRoot: projectRootFlag,
+      dryRun: {
+        kind: "boolean",
+        optional: true,
+        brief: "print the complete change plan without writing",
+      },
       force: {
         kind: "boolean",
         optional: true,
-        brief: "replace existing Framelia config",
+        brief: "compatibility flag; existing files remain protected",
       },
     },
     aliases: { r: "projectRoot", f: "force" },

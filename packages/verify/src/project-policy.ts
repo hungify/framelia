@@ -450,9 +450,25 @@ export interface ContractProjectMatrix {
   requiredCases: ContractProjectCase[];
 }
 
-export async function discoverAuthoredContracts(
+export interface InvalidAuthoredContract {
+  file: string;
+  code: "CONTRACT_FILE_INVALID" | "DUPLICATE_CONTRACT_ID";
+  message: string;
+  contractId?: string;
+}
+
+export interface AuthoredContractInspection {
+  contracts: DiscoveredAuthoredContract[];
+  invalid: InvalidAuthoredContract[];
+}
+
+/**
+ * Uses the same roots, parser and global-ID rules as execution discovery, but retains
+ * every malformed/duplicate file so `contract list` can report the whole repair set.
+ */
+export async function inspectAuthoredContracts(
   policy: ResolvedProjectPolicy,
-): Promise<DiscoveredAuthoredContract[]> {
+): Promise<AuthoredContractInspection> {
   if (!policy.contracts) {
     throw new AppError(
       "PROJECT_POLICY_INCOMPLETE",
@@ -469,48 +485,96 @@ export async function discoverAuthoredContracts(
   }
 
   const realRoot = fs.realpathSync(policy.root);
-  const discovered: DiscoveredAuthoredContract[] = [];
-  const idOwners = new Map<string, string>();
+  const contracts: DiscoveredAuthoredContract[] = [];
+  const invalid: InvalidAuthoredContract[] = [];
+  const idOwners = new Map<
+    string,
+    { file: string; entry: DiscoveredAuthoredContract; alreadyInvalid: boolean }
+  >();
   for (const file of [...matched].toSorted()) {
+    const portableFile = file.split(path.sep).join("/");
     const absolutePath = path.resolve(policy.root, file);
-    const realPath = fs.realpathSync(absolutePath);
+    let realPath: string;
+    try {
+      realPath = fs.realpathSync(absolutePath);
+    } catch (error) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Cannot read contract ${portableFile}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      continue;
+    }
     if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${path.sep}`)) {
-      throw new AppError("CONTRACT_FILE_INVALID", `Contract path escapes project root: ${file}`);
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Contract path escapes project root: ${portableFile}`,
+      });
+      continue;
     }
 
     let input: unknown;
     try {
       input = JSON.parse(fs.readFileSync(realPath, "utf8")) as unknown;
-    } catch (error: unknown) {
-      throw new AppError(
-        "CONTRACT_FILE_INVALID",
-        `Cannot read contract ${file}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch (error) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Cannot read contract ${portableFile}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      continue;
     }
     const result = authoredContractSchema.safeParse(input);
     if (!result.success) {
-      throw new AppError(
-        "CONTRACT_FILE_INVALID",
-        `Invalid contract ${file}: ${z.prettifyError(result.error)}`,
-      );
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Invalid contract ${portableFile}: ${z.prettifyError(result.error)}`,
+      });
+      continue;
     }
 
-    const portableFile = file.split(path.sep).join("/");
-    const previousOwner = idOwners.get(result.data.id);
-    if (previousOwner) {
-      throw new AppError(
-        "DUPLICATE_CONTRACT_ID",
-        `Duplicate contract id ${result.data.id}: ${previousOwner}, ${portableFile}`,
-      );
-    }
-    idOwners.set(result.data.id, portableFile);
-    discovered.push({
+    const entry = {
       file: portableFile,
       digest: canonicalJsonDigest(result.data as CanonicalJsonValue),
       contract: result.data,
-    });
+    };
+    const previousOwner = idOwners.get(result.data.id);
+    if (previousOwner) {
+      const message = `Duplicate contract id ${result.data.id}: ${previousOwner.file}, ${portableFile}`;
+      if (!previousOwner.alreadyInvalid) {
+        const previousIndex = contracts.indexOf(previousOwner.entry);
+        if (previousIndex !== -1) contracts.splice(previousIndex, 1);
+        invalid.push({
+          file: previousOwner.file,
+          code: "DUPLICATE_CONTRACT_ID",
+          contractId: result.data.id,
+          message,
+        });
+        previousOwner.alreadyInvalid = true;
+      }
+      invalid.push({
+        file: portableFile,
+        code: "DUPLICATE_CONTRACT_ID",
+        contractId: result.data.id,
+        message,
+      });
+      continue;
+    }
+    idOwners.set(result.data.id, { file: portableFile, entry, alreadyInvalid: false });
+    contracts.push(entry);
   }
-  return discovered;
+  return { contracts, invalid };
+}
+
+export async function discoverAuthoredContracts(
+  policy: ResolvedProjectPolicy,
+): Promise<DiscoveredAuthoredContract[]> {
+  const inspected = await inspectAuthoredContracts(policy);
+  const firstInvalid = inspected.invalid[0];
+  if (firstInvalid) throw new AppError(firstInvalid.code, firstInvalid.message);
+  return inspected.contracts;
 }
 
 export function resolveContractProjectMatrix(

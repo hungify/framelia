@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { captureDefaultsSchema, type CaptureDefaults } from "@framelia/contracts";
 import { authoredContractSchema, type AuthoredContract } from "@framelia/contracts/workflow";
+import { glob } from "tinyglobby";
 import { require as tsxRequire } from "tsx/cjs/api";
 import { tsImport } from "tsx/esm/api";
 import * as z from "zod";
@@ -476,13 +477,13 @@ export async function inspectAuthoredContracts(
     );
   }
 
-  const matched = new Set<string>();
-  for (const pattern of policy.contracts.patterns) {
-    // eslint-disable-next-line no-await-in-loop -- each pattern is streamed without retaining duplicate path arrays
-    for await (const relativePath of fs.promises.glob(pattern, { cwd: policy.root })) {
-      matched.add(relativePath);
-    }
-  }
+  const matched = new Set(
+    await glob(policy.contracts.patterns, {
+      cwd: policy.root,
+      dot: true,
+      onlyFiles: true,
+    }),
+  );
 
   const realRoot = fs.realpathSync(policy.root);
   const contracts: DiscoveredAuthoredContract[] = [];

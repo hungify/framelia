@@ -21,23 +21,25 @@ npx framelia status --project-root "$PWD"
 
 ## Commands
 
-| Command                           | Purpose                                                                                |
-| --------------------------------- | -------------------------------------------------------------------------------------- |
-| `framelia init`                   | Initialize project config and an ignored auth-state directory.                         |
-| `framelia check`                  | Collect and run an exact authored contract/project selection through local Playwright. |
-| `framelia auth`                   | Record Playwright storage state through a headed login browser.                        |
-| `framelia contract create`        | Interactively author a schema-v5, Figma-baselined visual contract.                     |
-| `framelia contract suggest-masks` | Scan a live page and propose mask selectors without modifying a contract.              |
-| `framelia baseline promote`       | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                |
-| `framelia status`                 | Show CLI version, project root, and Figma token availability.                          |
-| `framelia schema`                 | Print the live JSON Schema for an authored contract or signed requirements envelope.   |
-| `framelia` (no arguments)         | Open the dashboard for one explicit durable run.                                       |
-| `framelia dashboard`              | Serve one selected durable run; requires `--run`.                                      |
-| `framelia open`                   | Alias for opening one selected durable run without rerunning.                          |
-| `framelia report`                 | Export one selected run as a relocatable static dashboard.                             |
-| `framelia done-gate`              | Evaluate one selected run against protected signed requirements.                       |
-| `framelia capture`                | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                                |
-| `framelia compare`                | Compare two existing PNG files without source provenance gates.                        |
+| Command                              | Purpose                                                                                |
+| ------------------------------------ | -------------------------------------------------------------------------------------- |
+| `framelia init`                      | Preview/apply idempotent, non-destructive project integration.                         |
+| `framelia check`                     | Collect and run an exact authored contract/project selection through local Playwright. |
+| `framelia auth`                      | Record Playwright storage state through a headed login browser.                        |
+| `framelia contract create`           | Author one pinned Figma contract object and immutable snapshot.                        |
+| `framelia contract list`             | Reconcile authored contract/project cases with executable Playwright bindings.         |
+| `framelia contract refresh-baseline` | Explicitly reacquire and atomically repin one exact contract.                          |
+| `framelia contract suggest-masks`    | Scan a live page and propose mask selectors without modifying a contract.              |
+| `framelia baseline promote`          | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                |
+| `framelia status`                    | Show CLI version, project root, and Figma token availability.                          |
+| `framelia schema`                    | Print the live JSON Schema for an authored contract or signed requirements envelope.   |
+| `framelia` (no arguments)            | Open the dashboard for one explicit durable run.                                       |
+| `framelia dashboard`                 | Serve one selected durable run; requires `--run`.                                      |
+| `framelia open`                      | Alias for opening one selected durable run without rerunning.                          |
+| `framelia report`                    | Export one selected run as a relocatable static dashboard.                             |
+| `framelia done-gate`                 | Evaluate one selected run against protected signed requirements.                       |
+| `framelia capture`                   | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                                |
+| `framelia compare`                   | Compare two existing PNG files without source provenance gates.                        |
 
 `verify`, `doctor`, and `discover` — plus the navigation action DSL underneath them — are retired.
 Visual capture remains in `@framelia/playwright`; `check` only coordinates collection, immutable
@@ -47,48 +49,48 @@ dependencies, teardowns, and retries. The CLI still launches standalone browsers
 
 ## Setup
 
+Preview the complete change set without writing:
+
 ```bash
-npx framelia init
+npx framelia init --project-root "$PWD" --dry-run
 ```
 
-Writes `framelia.config.ts` with the project-wide config surface as commented examples. When no
-Playwright config exists, it also creates a minimal `playwright.config.ts` with the Framelia
-Reporter alongside the list reporter. An existing Playwright config is never parsed or rewritten:
-`init` always prints an idempotent manual verify/add recipe that preserves every user reporter.
-Project initialization does not ask about Figma,
-routes, selectors, or individual screens — those live in authored contracts and the
-application's own Playwright fixtures.
+Apply the same plan:
+
+```bash
+npx framelia init --project-root "$PWD"
+```
+
+Initialization is idempotent and never rewrites an existing Framelia or Playwright
+configuration, even with the compatibility `--force` flag. With no Playwright config it creates a
+minimal unnamed-project config containing the list and Framelia reporters. When a Playwright
+config already exists, the JSON outcome marks reporter registration `manual`, preserves the file
+byte-for-byte, and gives an exact verify/add recipe. It does not change `package.json`, package
+manager files, module format, scripts, projects, fixtures, `webServer`, browsers, or dependencies.
+
+The generated Framelia policy discovers one authored object per file:
 
 ```ts
 import { defineConfig } from "framelia";
 
 export default defineConfig({
-  // playwright: {
-  //   config: "playwright.config.ts",
-  //   projects: ["chromium"], // use [""] for Playwright's unnamed project
-  // },
-  // contracts: [".framelia/contracts/**/visual-contract.json"],
-  // retryAcceptance: "require-first-attempt",
-  // envFile: ".env.e2e",
-  // storageStatePath: ".framelia/auth/user.json",
-  // Project-wide capture defaults:
-  // stabilitySamples: 3,
-  // timeoutMs: 60_000,
-  // devtoolsSelector: true,
-  // deviceScaleFactor: 1,
-  // fontPolicy: "required",
-  // animationPolicy: "freeze",
-  // retry: { attempts: 2, delayMs: 1_000 },
-  // maxMaskedAreaRatio: 0.15,
+  playwright: {
+    config: "playwright.config.ts",
+    projects: ["chromium"], // use [""] for Playwright's unnamed project
+  },
+  contracts: [".framelia/contracts/**/visual-contract.json"],
 });
 ```
 
-Workflow policy resolution starts at `--project-root`, or discovers the nearest config ancestor
-without crossing the enclosing Git root. It loads `.env`, `.env.local`, then configured `envFile`
-entries; later files win while values already present in the process environment remain
-authoritative. Resolved paths are relative to the selected application root.
+Project resolution starts at explicit `--project-root`, otherwise at the nearest config ancestor
+without crossing the enclosing Git root. Environment files are loaded from that selected
+application root, never from an unrelated invocation directory: `.env`, `.env.local`, then
+configured `envFile` entries; later files win while preexisting process values remain
+authoritative.
 
-Set the Figma token used by `contract create` and `capture` (alias `fetch-gold`):
+Set the token only for explicit Figma acquisition (`contract create`, `contract
+refresh-baseline`, or low-level `capture`). Checks use reviewed pinned snapshots and need no Figma
+credentials:
 
 ```bash
 export FIGMA_ACCESS_TOKEN="your-token"
@@ -96,43 +98,81 @@ export FIGMA_ACCESS_TOKEN="your-token"
 
 ## Authoring a contract
 
+Interactive use asks for the same inputs accepted by flags:
+
 ```bash
-npx framelia contract create
+npx framelia contract create --project-root "$PWD"
 ```
 
-An interactive wizard asks for a target URL (identity only — recorded for evidence, not
-navigated by this command), contract ID, display name, Figma `fileKey`/`nodeId`, viewport, and
-capture scope. It writes `.framelia/visual-verifications/<feature>/visual-contract.json`, where
-`<feature>` is the first segment of the contract ID. Use `--output <path>` for another location.
-New contract IDs merge into an existing file without `--force`; replacing an existing ID requires
-`--force` and preserves the other contracts. All contracts in one file share `target.url`: a
-different target URL errors even with `--force`, so use a separate output file for another target.
+For automation, supply every required value. `--figma-url` accepts the proven Figma design URL
+form and normalizes its `node-id` from `6006-1028` to `6006:1028`:
+
+```bash
+npx framelia contract create \
+  --project-root "$PWD" \
+  --target-path "/login?state=error" \
+  --contract-id login.error.desktop \
+  --name "Login error — desktop" \
+  --figma-url "https://www.figma.com/design/abc123/Login?node-id=6006-1028" \
+  --viewport desktop \
+  --scope page \
+  --page-reason "The selected frame represents the complete page."
+```
+
+A URL without `node-id`, a conflicting `--file-key`/`--node-id`, or an unproven Figma URL shape is
+an actionable error. When stdin is not a TTY, missing fields produce one structured JSON result
+and never open a prompt.
+
+The default path is
+`.framelia/contracts/<full-contract-id>/visual-contract.json`. Each file contains exactly one
+versioned `AuthoredContract`; IDs are globally unique across every configured discovery root:
 
 ```json
 {
-  "schemaVersion": 5,
-  "target": { "kind": "web", "url": "http://127.0.0.1:3000/login" },
-  "contracts": [
-    {
-      "id": "login.desktop",
-      "name": "Desktop",
-      "baseline": { "kind": "figma", "fileKey": "abc123", "nodeId": "153:5181" },
-      "viewport": { "preset": "desktop", "width": 1440, "height": 1024 },
-      "outDir": ".framelia/visual-verifications/login/desktop",
-      "scope": {
-        "kind": "page",
-        "pageReason": "Supplied node represents complete login screen."
-      }
-    }
-  ]
+  "formatVersion": 1,
+  "kind": "framelia.contract",
+  "id": "login.error.desktop",
+  "name": "Login error — desktop",
+  "revision": 1,
+  "target": { "path": "/login?state=error" },
+  "viewport": { "preset": "desktop", "width": 1440, "height": 1024 },
+  "scope": {
+    "kind": "page",
+    "pageReason": "The selected frame represents the complete page."
+  },
+  "baseline": {
+    "snapshotDigest": "sha256:<reviewed-content-digest>"
+  },
+  "required": true
 }
 ```
 
-A contract only ever describes a Figma baseline pointer — there is no `web` baseline kind and no
-`navigation`/`auth`/`cookies`/`extraHeaders` fields; those belonged to the retired CLI-owned
-capture engine. Region scope adds a `selector` and `expectSize`; for a region scope,
-`contract create` best-effort bakes an `expectStyle` (font weight/size/line-height/letter-spacing/
-color) into the contract from the Figma node at authoring time.
+Authoring first acquires and validates the complete Figma PNG/style snapshot in private staging.
+Under one project authoring lock it rechecks the original contract bytes and global ID ownership,
+publishes `.framelia/baselines/<snapshot-digest>/` immutably, then durably replaces the contract
+pointer. A failure never exposes a torn pointer. `--force` replaces only the exact existing global
+ID and never clobbers a foreign file or moves that ID through `--output`.
+
+Creation reports authoring and runnable registration separately. An authored but unbound contract
+is success with `CONTRACT_UNBOUND` (or a collection-blocked diagnostic) plus an exact
+`defineFigmaTests` recipe; it never claims the application scenario is executable.
+
+```bash
+npx framelia contract list --project-root "$PWD"
+npx framelia contract refresh-baseline \
+  --project-root "$PWD" \
+  --contract login.error.desktop
+```
+
+`contract list` safely collects through the configured local Playwright/Framelia reporter and
+classifies every contract/project pair as `configured`, `executable`, `unbound`, or `invalid`.
+It performs no visual run. Duplicate IDs and malformed files are all reported rather than hidden.
+`refresh-baseline` is the only automatic way to reacquire an authored Figma snapshot: it selects
+one exact ID, increments its revision, uses the same publish-before-pointer transaction, and leaves
+the old pinned baseline usable on every failure.
+
+Region scope adds a CSS selector and expected size. Page scope can add style check-points, each
+pairing a selector with a separate Figma node:
 
 ```json
 {
@@ -142,21 +182,15 @@ color) into the contract from the Figma node at authoring time.
 }
 ```
 
-A page contract can also declare one or more `styleChecks` — CSS selectors inside the page, each
-paired with its own Figma node (distinct from the page's own baseline node), for comparing
-individual elements' style. `contract create` offers to add these interactively when scope is
-`page` (or accepts one via `--style-check-selector`/`--style-check-node-id` non-interactively);
-each check-point's `expectStyle` is best-effort baked in the same way region scope's is.
-
 ```json
 {
   "kind": "page",
-  "pageReason": "Supplied node represents complete login screen.",
+  "pageReason": "The selected frame represents the complete page.",
   "styleChecks": [{ "selector": "[data-testid='login-form']", "nodeId": "200:10" }]
 }
 ```
 
-Print the live JSON Schema for either input shape:
+Print the live input schemas with:
 
 ```bash
 npx framelia schema --target contract
@@ -188,9 +222,8 @@ npx framelia check --all --project chromium
 
 `--all` starts from the complete required authored contract/project matrix. Exact `--contract`
 IDs may also select optional contracts; repeatable `--project` only narrows configured visual
-projects and never changes the authored matrix. The command discovers the nearest Framelia
-project from the current directory—there is intentionally no check-specific `--project-root`
-override.
+projects and never changes the authored matrix. Pass `--project-root` to select an application
+explicitly, or run from a nested directory beneath its Framelia config.
 
 `check` resolves the consumer project's local `@playwright/test/cli`, performs documented
 `--list` collection, freezes the selected case plans and setup/dependency/teardown graph, then
@@ -208,10 +241,17 @@ Runner success/failure is reconciled against each case's latest complete retry, 
 visual mismatch (exit `1`), not an infrastructure error.
 
 Standard output is one versioned JSON command outcome. Child and user-reporter output is forwarded
-byte-for-byte to standard error, so noisy reporters cannot corrupt JSON automation. A completed
-match exits `0`, a completed visual mismatch exits `1`, and preflight/transport/cancellation or
-other incomplete execution exits `2`. Once a durable run starts, even cancellation or transport
-failure retains its `runId` and bundle path for inspection.
+byte-for-byte to standard error, so noisy reporters cannot corrupt JSON automation. The result
+contains exact coverage, every selected contract/project/repeat case, chosen attempt, retry
+history, diagnostics, portable expected/actual/diff/score references, and the next explicit
+operation. A completed match exits `0`, a completed visual mismatch exits `1`, and
+preflight/transport/cancellation or other incomplete execution exits `2`. Once a durable run
+starts, even cancellation or transport failure retains its `runId` and bundle path for inspection.
+
+This JSON contract begins after successful CLI argument parsing. Unknown flags, malformed enum or
+number values, duplicate options, and missing values for a flag are usage errors reported by
+Stricli on stderr. Required semantic fields for the new finite workflows are parser-optional
+intentionally, then validated together so noninteractive omission still returns one JSON result.
 
 ## Browsing and gating evidence
 
@@ -224,6 +264,12 @@ npx framelia open --project-root "$PWD" --run <run-id>
 npx framelia dashboard --project-root "$PWD" --run <run-id>
 npx framelia report --project-root "$PWD" --run <run-id> --output ./framelia-report
 ```
+
+`open` and `dashboard` are long-running readers: after the server is actually listening they emit
+exactly one `framelia.open-ready` JSON record on stdout containing the selected run, bundle path,
+and addresses. Operational URL/progress logs remain on stderr. `report` is finite and emits the
+same deep selected-run projection as `check`/`done-gate`, plus its portable report path. It never
+chooses a latest run implicitly.
 
 Static report output is relocatable and contains only project-portable run identities and copied
 evidence. Serve the exported directory over HTTP; browsers block report JSON loading through

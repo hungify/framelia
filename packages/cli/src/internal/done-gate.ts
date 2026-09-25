@@ -16,26 +16,27 @@ import {
   PROTECTED_JOB_IDENTITY_ENV,
   TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV,
 } from "../cli-constants.ts";
-import { UsageError, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { openProject } from "./project.ts";
+import { readRunProjection, type RunProjection } from "./run-projection.ts";
 
 const doneGateOptionsSchema = z.object({
   run: z.string().min(1).optional(),
   requirements: z.string().min(1).optional(),
   projectRoot: z.string().optional(),
-  artifact: z.string().min(1).optional(),
 });
 
 export interface DoneGateOptions {
   readonly run: string | undefined;
   readonly requirements: string | undefined;
   readonly projectRoot: string | undefined;
-  readonly artifact: string | undefined;
 }
 
 interface IncompleteGateVerdict {
+  formatVersion: 1;
+  kind: "framelia.done-gate-outcome";
+  command: "done-gate";
   executionState: "incomplete";
   visualVerdict: "not-evaluated";
   exitCode: 2;
@@ -45,6 +46,11 @@ interface IncompleteGateVerdict {
 
 export type DoneGateResult = CliResult<
   | (AuthoritativeRunVerdict & {
+      readonly formatVersion: 1;
+      readonly kind: "framelia.done-gate-outcome";
+      readonly command: "done-gate";
+      readonly bundlePath: string;
+      readonly run: RunProjection;
       readonly requirements: {
         role: "protected-signed-envelope";
         runId: string;
@@ -67,11 +73,14 @@ function incomplete(code: string, message: string): DoneGateResult {
     ok: false,
     exitCode: 2,
     body: {
+      formatVersion: 1,
+      kind: "framelia.done-gate-outcome",
+      command: "done-gate",
       executionState: "incomplete",
       visualVerdict: "not-evaluated",
       exitCode: 2,
       issues: [{ code, message }],
-      next: { command: "pnpm", argv: ["exec", "playwright", "test"] },
+      next: { command: "framelia", argv: ["check", "--all"] },
     },
   };
 }
@@ -92,44 +101,30 @@ export async function doneGateCommand(
   now: () => Date = () => new Date(),
 ): Promise<DoneGateResult> {
   const parsed = doneGateOptionsSchema.safeParse(options);
-  if (!parsed.success) throw usageErrorFromZodError(parsed.error);
-
-  if (parsed.data.artifact) {
-    let value: unknown;
-    try {
-      value = JSON.parse(
-        fs.readFileSync(path.resolve(runtime.cwd(), parsed.data.artifact), "utf8"),
-      );
-    } catch {
-      return incomplete(
-        "LEGACY_ARTIFACT_UNREADABLE",
-        "Legacy artifact could not be read. Rerun verification to produce a selected run bundle.",
-      );
-    }
-    if (
-      value !== null &&
-      typeof value === "object" &&
-      "kind" in value &&
-      value.kind === "framelia.visual-verification"
-    ) {
-      return incomplete(
-        "LEGACY_ARTIFACT_UNSUPPORTED",
-        "Legacy visual-verification.json has no trustworthy run/source provenance and cannot be authoritative. Rerun verification to produce a selected run bundle.",
-      );
-    }
-    return incomplete(
-      "LEGACY_ARTIFACT_UNSUPPORTED",
-      "--artifact only recognizes legacy framelia.visual-verification input.",
-    );
+  if (!parsed.success) {
+    return incomplete("DONE_GATE_OPTIONS_INVALID", parsed.error.message);
   }
 
   if (!parsed.data.run || !parsed.data.requirements) {
-    throw new UsageError(
+    return incomplete(
+      "DONE_GATE_OPTIONS_INVALID",
       "done-gate requires --run <id> and --requirements <signed-envelope-path>.",
     );
   }
 
-  const project = openProject(parsed.data.projectRoot, runtime);
+  let project: ReturnType<typeof openProject>;
+  try {
+    project = openProject(parsed.data.projectRoot, runtime);
+  } catch (error) {
+    const code =
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string"
+        ? error.code
+        : "PROJECT_CONFIGURATION_INVALID";
+    return incomplete(code, "The selected project root or Framelia configuration is invalid.");
+  }
   const requirementsPath = path.resolve(runtime.cwd(), parsed.data.requirements);
   let envelopeValue: unknown;
   try {
@@ -244,11 +239,17 @@ export async function doneGateCommand(
     .update(publicKey.export({ type: "spki", format: "der" }))
     .digest("hex")}`;
   try {
+    const projection = readRunProjection(project.root, parsed.data.run);
     const verdict = evaluateAuthoritativeRun(project.root, parsed.data.run, payload);
     return {
       ok: verdict.exitCode === 0,
       exitCode: verdict.exitCode,
       body: {
+        formatVersion: 1,
+        kind: "framelia.done-gate-outcome",
+        command: "done-gate",
+        bundlePath: projection.bundlePath,
+        run: projection,
         requirements: {
           role: "protected-signed-envelope",
           runId: payload.runId,

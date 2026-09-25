@@ -22,11 +22,21 @@ export function createClackPrompts(runtime: CliRuntime): PromptAdapter {
   const interactive = "isTTY" in runtime.stdin && runtime.stdin.isTTY === true;
   return {
     interactive,
-    intro: (message) => clack.intro(message, { output }),
-    outro: (message) => clack.outro(message, { output }),
-    note: (message, title) => clack.note(message, title, { output }),
-    warn: (message) => clack.log.warn(message, { output }),
-    cancel: (message) => clack.cancel(message, { output }),
+    intro: (message) => {
+      if (interactive) clack.intro(message, { output });
+    },
+    outro: (message) => {
+      if (interactive) clack.outro(message, { output });
+    },
+    note: (message, title) => {
+      if (interactive) clack.note(message, title, { output });
+    },
+    warn: (message) => {
+      if (interactive) clack.log.warn(message, { output });
+    },
+    cancel: (message) => {
+      if (interactive) clack.cancel(message, { output });
+    },
     confirm: async (message, initialValue) =>
       normalize(await clack.confirm({ message, initialValue, input, output })),
     text: async (options: TextPromptOptions) =>

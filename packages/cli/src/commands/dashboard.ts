@@ -36,7 +36,7 @@ export const dashboardCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: DashboardOptions) {
-      return dashboardDevserverCommand(flags, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "dashboard" }, this.process);
     };
   },
   parameters: {
@@ -60,7 +60,7 @@ export const openCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: OpenDashboardOptions) {
-      return dashboardDevserverCommand(flags, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "open" }, this.process);
     };
   },
   parameters: {
@@ -90,16 +90,21 @@ export const reportCommand = buildCommand({
   parameters: {
     flags: {
       projectRoot: projectRootFlag,
+      // Deliberately parser-optional: finite commands own missing semantic input so
+      // automation receives one versioned JSON outcome instead of Stricli stderr.
       run: {
         kind: "parsed",
         parse: identityParser,
         brief: "explicit durable run ID",
+        optional: true,
         placeholder: "id",
       },
+      // See --run above. reportCommand validates the required pair together.
       output: {
         kind: "parsed",
         parse: identityParser,
         brief: "empty report output directory",
+        optional: true,
         placeholder: "dir",
       },
     },

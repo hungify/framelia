@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { loadProjectEnv } from "@framelia/verify/env";
+import { discoverProjectConfig } from "@framelia/verify/project-policy";
 import {
   buildApplication,
   buildRouteMap,
@@ -83,15 +84,38 @@ const app = buildApplication(
   },
 );
 
+function explicitProjectRoot(argv: readonly string[]): string | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]!;
+    if (argument.startsWith("--project-root=")) return argument.slice("--project-root=".length);
+    if (argument === "--project-root" || argument === "-r") return argv[index + 1];
+  }
+  return undefined;
+}
+
 export async function run(
   argv: string[] = process.argv.slice(2),
   options: { process?: CliRuntime; loadProjectEnv?: boolean } = {},
 ): Promise<void> {
   const context = buildContext({ process: options.process, version: PACKAGE_VERSION });
-  // Authority identity must come from the protected process environment. In particular,
-  // a checkout-controlled .env file must never be able to supply done-gate trust metadata.
-  if (options.loadProjectEnv !== false && argv[0] !== "done-gate") {
-    loadProjectEnv(context.process.cwd(), { env: context.process.env });
+  // Resolve the selected application root before reading any environment file. Loading
+  // cwd first would let an unrelated parent/sibling .env permanently win over an
+  // explicit --project-root because process environment has highest precedence.
+  if (
+    options.loadProjectEnv !== false &&
+    argv[0] !== "done-gate" &&
+    !argv.includes("--help") &&
+    !argv.includes("--version") &&
+    !argv.includes("-V")
+  ) {
+    let root: string | undefined;
+    try {
+      root = discoverProjectConfig(context.process.cwd(), explicitProjectRoot(argv)).root;
+    } catch {
+      // Discovery is repeated by the routed command, which owns its structured error
+      // shape. Preloading must not reject before that route can emit the outcome.
+    }
+    if (root) loadProjectEnv(root, { env: context.process.env });
   }
   await runApplication(app, argv, context);
   context.process.exitCode = normalizeStricliExitCode(context.process.exitCode);

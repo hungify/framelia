@@ -39,6 +39,59 @@ describe("run: project env", () => {
     const parsed = JSON.parse(fakeProc.stdoutText()) as { figmaTokenAvailable: boolean };
     expect(parsed.figmaTokenAvailable).toBe(true);
   });
+
+  it("loads env from an explicit project root before command routing", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-cwd-env-"));
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-explicit-env-"));
+    temporaryDirectories.push(cwd, projectRoot);
+    fs.writeFileSync(path.join(cwd, ".env"), "FIGMA_ACCESS_TOKEN=wrong-cwd-token\n");
+    fs.writeFileSync(path.join(projectRoot, ".env"), "FIGMA_ACCESS_TOKEN=selected-root-token\n");
+    const fakeProc = { ...createFakeProcess({}), cwd: () => cwd };
+
+    await run(["status", "--project-root", projectRoot], { process: fakeProc });
+
+    expect(fakeProc.env.FIGMA_ACCESS_TOKEN).toBe("selected-root-token");
+    const parsed = JSON.parse(fakeProc.stdoutText()) as {
+      projectRoot: string;
+      figmaTokenAvailable: boolean;
+    };
+    expect(parsed.projectRoot).toBe(projectRoot);
+    expect(parsed.figmaTokenAvailable).toBe(true);
+  });
+
+  it.each([
+    {
+      command: ["contract", "list"],
+      kind: "framelia.contract-list-outcome",
+      diagnostic: "MULTIPLE_PROJECT_CONFIGS",
+    },
+    {
+      command: ["init"],
+      kind: "framelia.init-outcome",
+      diagnostic: "INIT_FAILED",
+    },
+  ])(
+    "lets the $kind route emit one structured multiple-config outcome",
+    async ({ command, kind, diagnostic }) => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-ambiguous-"));
+      temporaryDirectories.push(projectRoot);
+      fs.writeFileSync(path.join(projectRoot, "framelia.config.ts"), "export default {};\n");
+      fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {};\n");
+      const fakeProc = { ...createFakeProcess({}), cwd: () => projectRoot };
+
+      await expect(
+        run([...command, "--project-root", projectRoot], { process: fakeProc }),
+      ).resolves.toBeUndefined();
+
+      expect(fakeProc.stderrText()).toBe("");
+      expect(fakeProc.exitCode).toBe(EXIT_USAGE_ERROR);
+      expect(JSON.parse(fakeProc.stdoutText())).toMatchObject({
+        kind,
+        executionState: "error",
+        diagnostics: [{ code: diagnostic }],
+      });
+    },
+  );
 });
 
 describe("emitResult", () => {

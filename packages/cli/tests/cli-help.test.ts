@@ -94,7 +94,6 @@ describe("published CLI", () => {
       ["status", "--project-rooot", packageRoot],
       "No flag registered for --project-rooot",
     ],
-    ["missing required option", ["done-gate"], "done-gate requires --run <id>"],
     [
       "missing option value",
       ["status", "--project-root"],

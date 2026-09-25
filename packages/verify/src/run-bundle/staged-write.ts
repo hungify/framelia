@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 import { nanoid } from "nanoid";
 
+import { fsyncDirectory } from "../fs-atomic.ts";
 import { AppError } from "../types.ts";
 
 export interface StagedFile {
@@ -80,7 +81,9 @@ export function publishBundleUnit(targetDir: string, files: readonly StagedFile[
     }
     // Deepest first: a child directory's own fsync only guarantees its entries are
     // durable, not that its parent's directory entry for it is -- sync every level.
-    for (const dir of [...syncedDirs].toSorted((a, b) => b.length - a.length)) fsyncDir(dir);
+    for (const dir of [...syncedDirs].toSorted((a, b) => b.length - a.length)) {
+      fsyncDirectory(dir);
+    }
   } catch (error) {
     fs.rmSync(stagingDir, { recursive: true, force: true });
     throw error;
@@ -88,7 +91,7 @@ export function publishBundleUnit(targetDir: string, files: readonly StagedFile[
 
   try {
     fs.renameSync(stagingDir, targetDir);
-    fsyncDir(parentDir);
+    fsyncDirectory(parentDir);
   } catch (error) {
     fs.rmSync(stagingDir, { recursive: true, force: true });
     const code = (error as NodeJS.ErrnoException).code;
@@ -155,15 +158,6 @@ function ancestorDirsWithin(root: string, dir: string): string[] {
 
 function fsyncFile(filePath: string): void {
   const fd = fs.openSync(filePath, "r");
-  try {
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function fsyncDir(dirPath: string): void {
-  const fd = fs.openSync(dirPath, "r");
   try {
     fs.fsyncSync(fd);
   } finally {

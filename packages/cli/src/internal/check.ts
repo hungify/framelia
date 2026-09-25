@@ -1,24 +1,19 @@
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import {
   COLLECTION_FORMAT_VERSION,
   COMMAND_OUTCOME_FORMAT_VERSION,
-  RUN_CONTEXT_FORMAT_VERSION,
   RUN_PLAN_FORMAT_VERSION,
   collectionManifestSchema,
   commandOutcomeSchema,
-  runContextSchema,
   runPlanSchema,
   transportStatusSchema,
   type CollectedCase,
   type CollectionManifest,
   type CommandOutcome,
   type Diagnostic,
-  type RunContext,
   type TransportStatus,
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
@@ -30,21 +25,31 @@ import {
 } from "@framelia/verify/project-policy";
 import {
   buildCasePlanForCollectedCase,
-  casePlansDir,
   computeExecutionGraphDigest,
   finalizeRunRecord,
   freezeRunPlan,
-  readSelectedRun,
   runDir,
-  runPlanPath,
   startRunRecord,
   toProjectRelative,
 } from "@framelia/verify/run-bundle";
 import { nanoid } from "nanoid";
 
 import type { CliRuntime } from "../runtime-types.ts";
+import {
+  RUN_CONTEXT_ENV,
+  assertTransportIdentity,
+  collectPlaywrightBindings,
+  createRunContext,
+  resolveLocalPlaywright,
+  runPlaywrightChild,
+  validateTransport,
+  writePrivateJson,
+  type PlaywrightCancellation,
+  type PlaywrightChildOutcome,
+  type PlaywrightTransportDependencies,
+} from "./playwright-collection.ts";
+import { nextForRun, readRunProjection } from "./run-projection.ts";
 
-const RUN_CONTEXT_ENV = "FRAMELIA_RUN_CONTEXT";
 const AMBIGUOUS_TEST_LIST = /[\r\n›]/u;
 const AMBIGUOUS_NAMED_PROJECT = /\[|\]/u;
 
@@ -52,130 +57,17 @@ export interface CheckRequest {
   contract: readonly string[];
   all?: boolean;
   project: readonly string[];
+  projectRoot?: string;
   runtime: CliRuntime;
 }
 
-interface ChildOutcome {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  cancelled: boolean;
-}
-
-interface CancellationState {
-  requested: boolean;
-  forwarded: boolean;
-  child?: ChildProcess;
-}
-
-export interface CheckDependencies {
-  spawnPlaywright?: (
-    executable: string,
-    argv: readonly string[],
-    options: { cwd: string; env: NodeJS.ProcessEnv },
-  ) => ChildProcessWithoutNullStreams;
+export interface CheckDependencies extends PlaywrightTransportDependencies {
   signalProcess?: Pick<NodeJS.Process, "on" | "removeListener">;
-  playwrightCli?: string;
   finalizeRun?: typeof finalizeRunRecord;
 }
 
 function diagnostic(code: string, stage: string, message: string): Diagnostic {
   return { code, stage, message };
-}
-
-function writePrivateJson(filePath: string, value: unknown): void {
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  fs.chmodSync(filePath, 0o600);
-}
-
-function readJson(filePath: string): unknown {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
-function validateTransport<T>(
-  filePath: string,
-  schema: {
-    safeParse: (input: unknown) => { success: true; data: T } | { success: false; error: Error };
-  },
-  label: string,
-): T {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(
-      `FRAMELIA_REPORTER_MISSING: ${label} was not published. Configure @framelia/playwright/reporter in Playwright's reporter list.`,
-    );
-  }
-  let input: unknown;
-  try {
-    input = readJson(filePath);
-  } catch (error) {
-    throw new Error(`${label} is not valid JSON: ${String(error)}`, { cause: error });
-  }
-  const result = schema.safeParse(input);
-  if (!result.success) throw new Error(`${label} is incompatible: ${result.error.message}`);
-  return result.data;
-}
-
-function assertTransportIdentity(
-  record: { runId: string; projectRoot: string; policyDigest?: string; mode?: string },
-  context: RunContext,
-  label: string,
-): void {
-  if (
-    record.runId !== context.runId ||
-    record.projectRoot !== context.projectRoot ||
-    (record.policyDigest !== undefined && record.policyDigest !== context.policyDigest) ||
-    (record.mode !== undefined && record.mode !== context.mode)
-  ) {
-    throw new Error(
-      `${label} run/root/policy/mode identity does not match its invocation context.`,
-    );
-  }
-}
-
-function resolveLocalPlaywright(projectRoot: string): string {
-  const packageJson = path.join(projectRoot, "package.json");
-  if (!fs.existsSync(packageJson)) {
-    throw new Error(`Cannot resolve local Playwright without ${packageJson}.`);
-  }
-  try {
-    return createRequire(packageJson).resolve("@playwright/test/cli");
-  } catch (error) {
-    throw new Error(
-      `Cannot resolve the consumer project's local @playwright/test/cli from ${projectRoot}. Install @playwright/test in that project.`,
-      { cause: error },
-    );
-  }
-}
-
-async function runChild(
-  executable: string,
-  argv: readonly string[],
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  runtime: CliRuntime,
-  dependencies: CheckDependencies,
-  cancellation: CancellationState,
-): Promise<ChildOutcome> {
-  const child = dependencies.spawnPlaywright
-    ? dependencies.spawnPlaywright(executable, argv, { cwd, env })
-    : spawn(executable, argv, { cwd, env, shell: false, stdio: ["ignore", "pipe", "pipe"] });
-  cancellation.child = child;
-  const stderr = runtime.stderr as unknown as NodeJS.WritableStream;
-  child.stdout.pipe(stderr, { end: false });
-  child.stderr.pipe(stderr, { end: false });
-  if (cancellation.requested) {
-    cancellation.forwarded = true;
-    child.kill("SIGINT");
-  }
-  try {
-    return await new Promise<ChildOutcome>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", (code, signal) =>
-        resolve({ code, signal, cancelled: cancellation.requested }),
-      );
-    });
-  } finally {
-    if (cancellation.child === child) cancellation.child = undefined;
-  }
 }
 
 function validateUnique(values: readonly string[], label: string): void {
@@ -318,30 +210,6 @@ export function buildTestList(cases: readonly CollectedCase[]): string {
   return `${[...lines.keys()].join("\n")}\n`;
 }
 
-function createContext(
-  mode: RunContext["mode"],
-  root: string,
-  runId: string,
-  policyDigest: `sha256:${string}`,
-  selectedProjects: string[],
-  directory: string,
-): RunContext {
-  return runContextSchema.parse({
-    formatVersion: RUN_CONTEXT_FORMAT_VERSION,
-    kind: "framelia.run-context",
-    mode,
-    projectRoot: root,
-    runId,
-    policyDigest,
-    selectedProjects,
-    manifestPath: path.join(directory, `${mode}-manifest.json`),
-    statusPath: path.join(directory, `${mode}-status.json`),
-    ...(mode === "execute"
-      ? { planPath: runPlanPath(root, runId), casePlansPath: casePlansDir(root, runId) }
-      : {}),
-  });
-}
-
 function selectionResult(
   request: CheckRequest,
   selectedProjects: string[],
@@ -394,7 +262,7 @@ export async function runCheck(
   let runId: string | undefined;
   let bundlePath: string | undefined;
   let outcomeSelection: CommandOutcome["selection"];
-  const cancellation: CancellationState = { requested: false, forwarded: false };
+  const cancellation: PlaywrightCancellation = { requested: false, forwarded: false };
   const signalProcess = dependencies.signalProcess ?? process;
   const handleSignal = (): void => {
     if (cancellation.requested) {
@@ -412,6 +280,7 @@ export async function runCheck(
   try {
     const policy = await resolveProjectPolicy({
       cwd,
+      ...(request.projectRoot ? { projectRoot: request.projectRoot } : {}),
       env: request.runtime.env,
     });
     outcomeRoot = policy.root;
@@ -433,66 +302,20 @@ export async function runCheck(
       throw new Error("Check was cancelled before Playwright collection.");
 
     runId = nanoid();
+    const manifest = await collectPlaywrightBindings({
+      policy,
+      selectedProjects: selection.selectedProjects,
+      runtime: request.runtime,
+      runId,
+      dependencies,
+      cancellation,
+    });
+    if (cancellation.requested) throw new Error("Check was cancelled after Playwright collection.");
+
     temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-check-"));
     fs.chmodSync(temporaryDirectory, 0o700);
     const playwrightCli = dependencies.playwrightCli ?? resolveLocalPlaywright(policy.root);
-    const collectContext = createContext(
-      "collect",
-      policy.root,
-      runId,
-      policy.policyDigest,
-      selection.selectedProjects,
-      temporaryDirectory,
-    );
-    const collectContextPath = path.join(temporaryDirectory, "collect-context.json");
-    writePrivateJson(collectContextPath, collectContext);
     const projectArgs = selection.selectedProjects.map((project) => `--project=${project}`);
-    const collectOutcome = await runChild(
-      process.execPath,
-      [playwrightCli, "test", "--config", policy.playwright.configPath, "--list", ...projectArgs],
-      policy.root,
-      { ...request.runtime.env, [RUN_CONTEXT_ENV]: collectContextPath },
-      request.runtime,
-      dependencies,
-      cancellation,
-    );
-    if (collectOutcome.cancelled) throw new Error("Playwright collection was cancelled.");
-    if (
-      !fs.existsSync(collectContext.statusPath) &&
-      (collectOutcome.signal !== null ||
-        (collectOutcome.code !== null && collectOutcome.code !== 0))
-    ) {
-      const childFailure =
-        collectOutcome.signal !== null
-          ? `was terminated by signal ${collectOutcome.signal}`
-          : `exited with code ${collectOutcome.code}`;
-      throw new Error(
-        `Playwright collection ${childFailure} before the Framelia collection status was published. Review the Playwright output forwarded to stderr above for configuration or spec errors.`,
-      );
-    }
-    const collectStatus = validateTransport(
-      collectContext.statusPath,
-      transportStatusSchema,
-      "Framelia collection status",
-    );
-    assertTransportIdentity(collectStatus, collectContext, "Collection status");
-    if (collectStatus.state !== "completed") {
-      throw new Error(
-        `Framelia collection reporter failed: ${collectStatus.diagnostics.map((entry) => entry.message).join("; ")}.`,
-      );
-    }
-    const manifest = validateTransport(
-      collectContext.manifestPath,
-      collectionManifestSchema,
-      "Framelia collection manifest",
-    );
-    assertTransportIdentity(manifest, collectContext, "Collection manifest");
-    if (collectOutcome.code !== 0) {
-      throw new Error(
-        `Playwright collection exited ${collectOutcome.code ?? collectOutcome.signal ?? "without a status"}.`,
-      );
-    }
-    if (cancellation.requested) throw new Error("Check was cancelled after Playwright collection.");
 
     const selectedCollected = reconcileSelectedCases(manifest, selection.selected);
     const casePlans = await Promise.all(
@@ -548,7 +371,7 @@ export async function runCheck(
     bundlePath = toProjectRelative(policy.root, runDir(policy.root, runId));
 
     const finalizationDiagnostics: Diagnostic[] = [];
-    let executeOutcome: ChildOutcome = {
+    let executeOutcome: PlaywrightChildOutcome = {
       code: null,
       signal: null,
       cancelled: cancellation.requested,
@@ -558,7 +381,7 @@ export async function runCheck(
     try {
       const testListPath = path.join(temporaryDirectory, "selected-tests.txt");
       fs.writeFileSync(testListPath, buildTestList(selectedCollected), { mode: 0o600 });
-      const executeContext = createContext(
+      const executeContext = createRunContext(
         "execute",
         policy.root,
         runId,
@@ -568,7 +391,7 @@ export async function runCheck(
       );
       const executeContextPath = path.join(temporaryDirectory, "execute-context.json");
       writePrivateJson(executeContextPath, executeContext);
-      executeOutcome = await runChild(
+      executeOutcome = await runPlaywrightChild(
         process.execPath,
         [
           playwrightCli,
@@ -655,12 +478,9 @@ export async function runCheck(
       });
     }
 
-    const selectedRun = readSelectedRun(policy.root, runId);
-    const complete =
-      reporterCompleted &&
-      selectedRun.record.status === "finalized" &&
-      selectedRun.executionState === "completed";
-    const visualVerdict = selectedRun.visualVerdict;
+    const projection = readRunProjection(policy.root, runId);
+    const complete = reporterCompleted && projection.executionState === "completed";
+    const visualVerdict = projection.visualVerdict;
     return commandOutcomeSchema.parse({
       formatVersion: COMMAND_OUTCOME_FORMAT_VERSION,
       kind: "framelia.command-outcome",
@@ -670,22 +490,13 @@ export async function runCheck(
       exitCode: complete ? (visualVerdict === "mismatched" ? 1 : 0) : 2,
       runId,
       bundlePath,
-      diagnostics: selectedRun.record.diagnostics,
+      diagnostics: projection.diagnostics,
       selection: outcomeSelection,
-      ...(!complete
-        ? {
-            next: {
-              command: "framelia",
-              argv: [
-                "check",
-                ...(request.all === true
-                  ? ["--all"]
-                  : request.contract.flatMap((id) => ["--contract", id])),
-                ...request.project.flatMap((project) => ["--project", project]),
-              ],
-            },
-          }
-        : {}),
+      coverage: projection.selection,
+      cases: projection.cases,
+      ...(complete && visualVerdict === "passed"
+        ? {}
+        : { next: nextForRun(projection, request.projectRoot) }),
     });
   } catch (error) {
     return errorOutcome(error, outcomeRoot, {

@@ -57,7 +57,10 @@ export type AppErrorCode =
   | "RUN_BUNDLE_MISSING"
   | "RUN_BUNDLE_INVALID"
   | "RUN_BUNDLE_DIGEST_MISMATCH"
-  | "RUN_BUNDLE_LOCK_TIMEOUT";
+  | "RUN_BUNDLE_LOCK_TIMEOUT"
+  | "BASELINE_ACQUISITION_FAILED"
+  | "AUTHORING_LOCKED"
+  | "AUTHORING_CONFLICT";
 
 export class AppError extends Error {
   readonly code: AppErrorCode;

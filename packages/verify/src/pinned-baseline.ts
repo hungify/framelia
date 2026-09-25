@@ -39,6 +39,15 @@ export interface PinnedBaseline {
   styleBytes?: Buffer;
 }
 
+function resolveSnapshotFile(
+  root: string,
+  snapshotDirectory: string,
+  relativePath: string,
+): string {
+  const colocated = path.resolve(snapshotDirectory, relativePath);
+  if (fs.existsSync(colocated)) return colocated;
+  return path.resolve(root, relativePath);
+}
 /**
  * Resolves and validates the on-disk expected-image (and optional expected-style) bytes
  * a contract's `baseline.snapshotDigest` points at -- the whole of what a pinned Figma
@@ -52,6 +61,7 @@ export interface PinnedBaseline {
  * root `.framelia/baselines` is resolved under; see `defineFigmaTests`'s own doc comment
  * for how it resolves that root per contract file.
  */
+
 export async function readPinnedBaseline(
   root: string,
   contract: AuthoredContract,
@@ -101,7 +111,7 @@ export async function readPinnedBaseline(
     );
   }
 
-  const imagePath = path.resolve(root, snapshot.expected.image.path);
+  const imagePath = resolveSnapshotFile(root, snapshotDir, snapshot.expected.image.path);
   const imageBytes = readAndVerifyFileDigest(
     imagePath,
     snapshot.expected.image.digest,
@@ -113,7 +123,7 @@ export async function readPinnedBaseline(
   let stylePath: string | undefined;
   let styleBytes: Buffer | undefined;
   if (snapshot.expected.style) {
-    stylePath = path.resolve(root, snapshot.expected.style.path);
+    stylePath = resolveSnapshotFile(root, snapshotDir, snapshot.expected.style.path);
     styleBytes = readAndVerifyFileDigest(
       stylePath,
       snapshot.expected.style.digest,

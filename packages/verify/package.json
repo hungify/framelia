@@ -1,6 +1,6 @@
 {
   "name": "@framelia/verify",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Visual verification engine for Figma-to-web and web-to-web workflows.",
   "homepage": "https://github.com/hungify/framelia/tree/main/packages/verify",
   "bugs": {
@@ -61,7 +61,6 @@
   "dependencies": {
     "@figma/rest-api-spec": "^0.41.0",
     "@framelia/contracts": "workspace:*",
-    "@playwright/test": "^1.61.1",
     "dotenv": "^17.4.2",
     "nanoid": "3.3.16",
     "p-map": "^7.0.6",
@@ -71,6 +70,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "26.0.1",
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
@@ -78,6 +78,9 @@
     "tsx": "^4.22.4",
     "typescript": "6.0.3",
     "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@playwright/test": "^1.61.1"
   },
   "engines": {
     "node": ">=22.13"

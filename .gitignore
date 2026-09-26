@@ -6,3 +6,4 @@ dist/
 !.env.example
 .framelia/*
 test-results/
+.release/

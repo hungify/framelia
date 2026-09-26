@@ -170,6 +170,42 @@ Playwright matcher, Reporter, and getting-started quickstart documentation lives
 
 Dashboard-specific development and HMR instructions live in [`apps/dashboard/README.md`](apps/dashboard/README.md).
 
+### Packed-consumer release verification
+
+CI builds and packs all five release packages from a clean checkout, then installs
+the tarballs outside the workspace. The release gate covers npm/pnpm, Node 22.13,
+24 and 26, Playwright 1.61.1 and 1.62.1, and consumer ESM/CommonJS configurations.
+It checks native public imports, declarations, CLI initialization, schema-compatible
+contract fixtures, ordinary test collection, reporter dashboard startup, and
+real browser comparisons with passing and mismatching evidence. A separate
+matcher-only install checks that the optional dashboard peer is not required.
+
+The fixtures use `scale: 1`, supported by the current `main` schema. Higher-DPR
+contract/capture support is separate work, not part of this distribution fix.
+
+To exercise an already-built release set locally:
+
+```bash
+pnpm build
+for package in contracts verify dashboard-server playwright cli; do
+  pnpm --dir "packages/$package" pack --pack-destination "$PWD/.release/$package"
+done
+pnpm test:consumer --pack-dir .release --package-manager npm --install-browser
+pnpm test:consumer --pack-dir .release --package-manager pnpm --install-browser
+```
+
+`--install-browser` explicitly installs the selected consumer runner's Chromium
+(and Linux system dependencies). Omit it when that browser is already available.
+Temporary consumers are removed after each scenario. The harness does not contact
+Figma or claim to verify an authored Figma contract; it checks schema compatibility
+and uses real web-to-web capture to exercise the distributed integration.
+
+Publishing consumes the same verified tarballs, not a second build. A smaller
+registry smoke checks public entry points and collection after publication.
+
+Distribution changes in this checkout are unreleased until package versions are
+advanced and published; the existing `0.0.5` registry artifacts are not replaced.
+
 ## Repository boundary
 
 This repository owns verification engine, CLI, dashboard, artifacts, tests, and npm releases. Agent skills and plugin adapters remain in [`hungify/skills`](https://github.com/hungify/skills) and consume released `framelia` commands.

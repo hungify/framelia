@@ -1,6 +1,6 @@
 {
   "name": "framelia",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "CLI-first Figma-to-web and web-to-web visual verification with stable capture and artifact-based done gates.",
   "keywords": [
     "cli",

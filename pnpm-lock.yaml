@@ -199,6 +199,9 @@ importers:
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.25)(tsx@4.23.1)(typescript@6.0.3)(yaml@2.9.0)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -214,9 +217,6 @@ importers:
       '@framelia/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@playwright/test':
-        specifier: ^1.61.1
-        version: 1.62.1
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -239,6 +239,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@playwright/test':
+        specifier: ^1.61.1
+        version: 1.62.1
       '@types/node':
         specifier: 26.0.1
         version: 26.0.1

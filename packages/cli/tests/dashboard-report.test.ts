@@ -95,7 +95,41 @@ describe("selected run dashboard report", () => {
       stdout: { write: () => true },
       stderr: { write: () => true },
     } as never;
-    const result = await reportCommand({ projectRoot: root, run: "run-command", output }, runtime);
-    expect(result.body).toMatchObject({ runId: "run-command" });
+    const result = await reportCommand({ projectRoot: root, run: "run-command", output }, runtime, {
+      clientRoot: await clientFixture(),
+    });
+    expect(result.body).toMatchObject({
+      kind: "framelia.report-outcome",
+      command: "report",
+      runId: "run-command",
+      bundlePath: expect.stringMatching(/^\.framelia\/runs\/run-command-/),
+      executionState: "completed",
+      selection: {
+        mode: "all",
+        selectedCount: 1,
+        fullRequiredCount: 1,
+      },
+      cases: [
+        expect.objectContaining({
+          contractId: "login.desktop",
+          chosenAttemptId: expect.any(String),
+          attempts: [expect.objectContaining({ chosen: true })],
+        }),
+      ],
+    });
+    await expect(fs.access(path.join(output, "index.html"))).resolves.toBeUndefined();
+
+    const missing = await reportCommand(
+      { projectRoot: root, run: undefined, output: undefined },
+      runtime,
+    );
+    expect(missing).toMatchObject({
+      exitCode: 2,
+      body: {
+        kind: "framelia.report-outcome",
+        executionState: "error",
+        diagnostics: [{ code: "REPORT_FAILED", message: expect.stringContaining("requires") }],
+      },
+    });
   });
 });

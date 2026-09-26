@@ -148,6 +148,25 @@ export const baselineSnapshotSchema = z
     formatVersion: z.literal(SNAPSHOT_FORMAT_VERSION),
     kind: z.literal("framelia.baseline-snapshot"),
     source: baselineSchema,
+    metadata: z
+      .object({
+        nodeId: nonEmptyTrimmed,
+        fileKey: nonEmptyTrimmed,
+        lastModified: z.string().nullable(),
+        fetchedAt: nonEmptyTrimmed,
+        apiCallCount: z.number().int().nonnegative(),
+        apiCallLog: z.array(
+          z
+            .object({
+              endpoint: nonEmptyTrimmed,
+              timestamp: nonEmptyTrimmed,
+              status: z.number().int(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .optional(),
     rendering: z
       .object({
         viewport: viewportSchema,
@@ -181,6 +200,26 @@ export const baselineSnapshotSchema = z
   })
   .strict()
   .superRefine((snapshot, context) => {
+    if (
+      snapshot.metadata?.fileKey !== undefined &&
+      snapshot.metadata.fileKey !== snapshot.source.fileKey
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["metadata", "fileKey"],
+        message: "must match source.fileKey",
+      });
+    }
+    if (
+      snapshot.metadata?.nodeId !== undefined &&
+      snapshot.metadata.nodeId !== snapshot.source.nodeId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["metadata", "nodeId"],
+        message: "must match source.nodeId",
+      });
+    }
     // A page-scope capture is always viewport-sized (see captureReadyPage's
     // fullPage:false convention for a pinned page snapshot), so its expected image
     // dimensions are fully determined by rendering.viewport × deviceScaleFactor and
@@ -217,6 +256,43 @@ export const contractBindingSchema = z
     contractDigest: sha256DigestSchema,
   })
   .strict();
+
+/**
+ * Explicit migration input for one legacy contract id, supplied as a JSON file to
+ * `contract migrate --map`. Interactive mode collects the same fields through prompts;
+ * machine mode never guesses a missing one -- an unresolved field is reported, not
+ * inferred from legacy data. `targetPath` overrides/supplies the route when the legacy
+ * request URL is missing, invalid, or the route must change. `projects` is the confirmed
+ * target Playwright project matrix; legacy contracts carry no project matrix of their
+ * own. `snapshotDigest` adopts an already-published pinned baseline (verified against
+ * `readPinnedBaseline` before use); `refreshBaseline` instead requests a fresh, reviewable
+ * Figma acquisition. Supplying both is rejected -- exactly one baseline resolution path
+ * may apply per contract.
+ */
+export const migrationContractInputSchema = z
+  .object({
+    targetPath: targetPathSchema.optional(),
+    projects: projectNamesSchema.optional(),
+    snapshotDigest: sha256DigestSchema.optional(),
+    refreshBaseline: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.snapshotDigest !== undefined && input.refreshBaseline === true) {
+      context.addIssue({
+        code: "custom",
+        message: "cannot both adopt a pinned snapshotDigest and request refreshBaseline",
+      });
+    }
+  });
+
+export const migrationInputMapSchema = z.record(
+  z.string().regex(CONTRACT_ID_PATTERN),
+  migrationContractInputSchema,
+);
+
+export type MigrationContractInput = z.infer<typeof migrationContractInputSchema>;
+export type MigrationInputMap = z.infer<typeof migrationInputMapSchema>;
 
 /**
  * The full `framelia.contract` Playwright annotation payload attached to every
@@ -965,6 +1041,77 @@ export const runRecordSchema = z
     }
   });
 
+export const projectedEvidenceSchema = z
+  .object({
+    availability: z.enum(["available", "missing", "invalid", "not-recorded"]),
+    path: projectRelativePathSchema.optional(),
+    digest: sha256DigestSchema.optional(),
+    message: nonBlankPreserved.optional(),
+  })
+  .strict();
+
+export const projectedAttemptSchema = z
+  .object({
+    attemptId: nonEmptyTrimmed,
+    retryIndex: z.number().int().nonnegative(),
+    chosen: z.boolean(),
+    executionState: z.enum(["completed", "blocked", "incomplete", "error"]),
+    visualVerdict: z.enum(["passed", "mismatched", "not-evaluated"]),
+    diagnostics: z.array(diagnosticSchema),
+    evidence: z
+      .object({
+        expected: projectedEvidenceSchema,
+        actual: projectedEvidenceSchema,
+        diff: projectedEvidenceSchema,
+        score: projectedEvidenceSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+export const projectedCaseSchema = z
+  .object({
+    caseId: nonEmptyTrimmed,
+    contractId: z.string().regex(CONTRACT_ID_PATTERN),
+    project: projectNameSchema,
+    repeatIndex: z.number().int().nonnegative(),
+    chosenAttemptId: nonEmptyTrimmed.optional(),
+    attempts: z.array(projectedAttemptSchema),
+    missingAttemptIds: z.array(nonEmptyTrimmed),
+    diagnostics: z.array(diagnosticSchema),
+  })
+  .strict();
+
+export const runCoverageSchema = z
+  .object({
+    mode: z.enum(["all", "subset"]),
+    availableCaseIds: z.array(nonEmptyTrimmed),
+    requiredCaseIds: z.array(nonEmptyTrimmed),
+    selectedCaseIds: z.array(nonEmptyTrimmed),
+    selectedCount: z.number().int().nonnegative(),
+    fullRequiredCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const runProjectionSchema = z
+  .object({
+    runId: nonEmptyTrimmed,
+    bundlePath: projectRelativePathSchema,
+    selection: runCoverageSchema,
+    executionState: z.enum(["running", "completed", "incomplete", "error"]),
+    visualVerdict: z.enum(["passed", "mismatched", "not-evaluated"]),
+    cases: z.array(projectedCaseSchema),
+    diagnostics: z.array(diagnosticSchema),
+  })
+  .strict();
+
+export const nextOperationSchema = z
+  .object({
+    command: nonEmptyTrimmed,
+    argv: z.array(z.string()),
+  })
+  .strict();
+
 export const commandOutcomeSchema = z
   .object({
     formatVersion: z.literal(COMMAND_OUTCOME_FORMAT_VERSION),
@@ -976,6 +1123,8 @@ export const commandOutcomeSchema = z
     runId: nonEmptyTrimmed.optional(),
     bundlePath: projectRelativePathSchema.optional(),
     diagnostics: z.array(diagnosticSchema),
+    coverage: runCoverageSchema.optional(),
+    cases: z.array(projectedCaseSchema).optional(),
     selection: z
       .object({
         requested: z.discriminatedUnion("mode", [
@@ -995,13 +1144,7 @@ export const commandOutcomeSchema = z
       })
       .strict()
       .optional(),
-    next: z
-      .object({
-        command: nonEmptyTrimmed,
-        argv: z.array(z.string()),
-      })
-      .strict()
-      .optional(),
+    next: nextOperationSchema.optional(),
   })
   .strict()
   .superRefine((outcome, context) => {
@@ -1039,3 +1182,9 @@ export type SignedAuthoritativeRunRequirements = z.infer<
 export type AttemptRecord = z.infer<typeof attemptRecordSchema>;
 export type RunRecord = z.infer<typeof runRecordSchema>;
 export type CommandOutcome = z.infer<typeof commandOutcomeSchema>;
+export type ProjectedEvidence = z.infer<typeof projectedEvidenceSchema>;
+export type ProjectedAttempt = z.infer<typeof projectedAttemptSchema>;
+export type ProjectedCase = z.infer<typeof projectedCaseSchema>;
+export type RunCoverage = z.infer<typeof runCoverageSchema>;
+export type RunProjection = z.infer<typeof runProjectionSchema>;
+export type NextOperation = z.infer<typeof nextOperationSchema>;

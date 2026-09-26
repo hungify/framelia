@@ -32,7 +32,31 @@ export type {
 } from "./baseline/figma-fetch.ts";
 export { readPinnedBaseline } from "./pinned-baseline.ts";
 export type { PinnedBaseline } from "./pinned-baseline.ts";
+export {
+  assertRawFileState,
+  publishBaselineSnapshot,
+  readRawFileState,
+  stageFigmaBaseline,
+  withAuthoringLock,
+  writeAuthoredContract,
+} from "./authoring.ts";
+export type {
+  AuthoringLockDependencies,
+  FetchBaselineFn,
+  RawFileState,
+  StageFigmaBaselineOptions,
+  StagedBaselineSnapshot,
+} from "./authoring.ts";
+export {
+  assertNoPendingMigrationTransaction,
+  clearMigrationTransaction,
+  migrationTransactionPath,
+  readMigrationTransaction,
+  writeMigrationTransaction,
+} from "./migration.ts";
+export type { MigrationTransactionRecord, MigrationTransactionTarget } from "./migration.ts";
 export { assertProjectRelativePath, loadEnvFiles, loadProjectEnv } from "./load-env.ts";
+export { fsyncDirectory, writeFileAtomic } from "./fs-atomic.ts";
 export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";
 export { checkBaselineStaleness, DEFAULT_MAX_BASELINE_AGE_DAYS } from "./staleness.ts";

@@ -66,7 +66,7 @@ describe("golden baseline: version", () => {
 
 describe("golden baseline: nested route map with no subcommand", () => {
   it.each([
-    ["contract", ["create", "suggest-masks"]],
+    ["contract", ["create", "list", "refresh-baseline", "suggest-masks"]],
     ["baseline", ["promote"]],
   ])("prints route-map help to STDOUT and exits 0 for bare `%s`", (route, subroutes) => {
     const result = run([route]);
@@ -136,8 +136,6 @@ describe("golden baseline: compare is result-producing (exit 0/1, never a usage 
 describe("golden baseline: fast-failing required-flag routes", () => {
   it.each([
     ["open", ["open"], "Expected input for flag --run"],
-    ["report", ["report"], "Expected input for flag --run"],
-    ["done-gate", ["done-gate"], "done-gate requires --run <id>"],
     ["auth", ["auth"], "Expected input for flag --url"],
     [
       "contract suggest-masks",
@@ -188,72 +186,54 @@ describe("golden baseline: auth URL validation happens before config is loaded",
 });
 
 describe("golden baseline: init lifecycle", () => {
-  it("scaffolds a project, refuses to overwrite, then honors --force", () => {
+  it("dry-runs without writes, then applies and repeats idempotently", () => {
     const projectRoot = tempDir("framelia-init-");
+
+    const dryRun = run(["init", "--project-root", projectRoot, "--dry-run"]);
+    expect(dryRun.status).toBe(0);
+    expect(JSON.parse(dryRun.stdout)).toMatchObject({
+      kind: "framelia.init-outcome",
+      dryRun: true,
+      executionState: "completed",
+    });
+    expect(fs.readdirSync(projectRoot)).toEqual([]);
 
     const first = run(["init", "--project-root", projectRoot]);
     expect(first.status).toBe(0);
-    expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(true);
+    expect(JSON.parse(first.stdout)).toMatchObject({
+      kind: "framelia.init-outcome",
+      dryRun: false,
+    });
+    const configBytes = fs.readFileSync(path.join(projectRoot, "framelia.config.ts"));
 
-    const second = run(["init", "--project-root", projectRoot]);
-    expect(second.status).toBe(2);
-    expect(second.stderr).toContain("Refusing to overwrite existing file");
-    expect(second.stderr).toContain("Pass --force to replace it");
-
-    const third = run(["init", "--project-root", projectRoot, "--force"]);
-    expect(third.status).toBe(0);
+    const second = run(["init", "--project-root", projectRoot, "--force"]);
+    expect(second.status).toBe(0);
+    expect(fs.readFileSync(path.join(projectRoot, "framelia.config.ts"))).toEqual(configBytes);
   });
 });
 
-describe("contract create JSON and merge lifecycle", () => {
-  it("creates, adds and replaces without mixing prompts into JSON or deleting siblings", () => {
-    const projectRoot = tempDir("framelia-contract-merge-");
-    const output = path.join(projectRoot, "visual-contract.json");
-    const create = (id: string, force = false) =>
-      run(
-        [
-          "contract",
-          "create",
-          "--project-root",
-          projectRoot,
-          "--output",
-          output,
-          "--target-url",
-          "http://localhost:3000/login",
-          "--contract-id",
-          id,
-          "--name",
-          id,
-          "--file-key",
-          "fixture",
-          "--node-id",
-          "1:2",
-          "--viewport",
-          "desktop",
-          "--scope",
-          "page",
-          "--page-reason",
-          "Full page",
-          ...(force ? ["--force"] : []),
-        ],
-        { env: { ...process.env, FIGMA_ACCESS_TOKEN: "", FIGMA_TOKEN: "" } },
-      );
-    const created = create("login.desktop");
-    expect(created.status).toBe(0);
-    expect(JSON.parse(created.stdout)).toMatchObject({ outcome: "created" });
-    const added = create("login.mobile");
-    expect(added.status).toBe(0);
-    expect(JSON.parse(added.stdout)).toMatchObject({ outcome: "added" });
-    const original = fs.readFileSync(output, "utf8");
-    expect(create("login.mobile").status).toBe(2);
-    expect(fs.readFileSync(output, "utf8")).toBe(original);
-    const replaced = create("login.mobile", true);
-    expect(replaced.status).toBe(0);
-    expect(JSON.parse(replaced.stdout)).toMatchObject({ outcome: "replaced" });
-    expect(JSON.parse(fs.readFileSync(output, "utf8")).contracts).toMatchObject([
-      { id: "login.desktop" },
-      { id: "login.mobile" },
-    ]);
+describe("contract create JSON lifecycle", () => {
+  it("fails immediately with one structured noninteractive missing-input result and no project writes", () => {
+    const projectRoot = tempDir("framelia-contract-missing-");
+    const initialized = run(["init", "--project-root", projectRoot]);
+    expect(initialized.status).toBe(0);
+    const before = fs.readdirSync(projectRoot, { recursive: true }).map(String).toSorted();
+
+    const result = run(["contract", "create", "--project-root", projectRoot]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      kind: "framelia.contract-create-outcome",
+      executionState: "error",
+      authored: false,
+      diagnostics: [
+        {
+          code: "CONTRACT_AUTHORING_FAILED",
+          message: expect.stringContaining("MISSING_INPUT"),
+        },
+      ],
+    });
+    expect(fs.readdirSync(projectRoot, { recursive: true }).map(String).toSorted()).toEqual(before);
   });
 });
 
@@ -319,6 +299,23 @@ describe("golden baseline: dashboard bare default command", () => {
       await ready;
       expect(stderr).toMatch(/➜ {2}Local: {3}http:\/\/localhost:\d+\//);
       expect(stderr).toContain("Network: use --host to expose");
+      if (!stdout.trim()) {
+        await new Promise<void>((resolve) => {
+          child.stdout.once("data", () => resolve());
+        });
+      }
+      const readiness = JSON.parse(stdout.trim()) as {
+        kind: string;
+        command: string;
+        selectedRun: { runId: string };
+        address: { local: string[] };
+      };
+      expect(readiness).toMatchObject({
+        kind: "framelia.open-ready",
+        command: "dashboard",
+        selectedRun: { runId: "run-selected" },
+        address: { local: [expect.stringMatching(/^http:\/\/localhost:\d+\/$/)] },
+      });
     } finally {
       // Unconditional: a failed assertion above would otherwise leave the
       // dashboard holding its port and keep the runner from exiting.

@@ -2,14 +2,25 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { captureDefaultsSchema, type CaptureDefaults } from "@framelia/contracts";
+import {
+  captureDefaultsSchema,
+  verificationContractSchema,
+  verificationRequestSchema,
+  webTargetSchema,
+  type CaptureDefaults,
+  type VerificationContract,
+  type WebTarget,
+} from "@framelia/contracts";
 import { authoredContractSchema, type AuthoredContract } from "@framelia/contracts/workflow";
+import { glob } from "tinyglobby";
 import { require as tsxRequire } from "tsx/cjs/api";
 import { tsImport } from "tsx/esm/api";
 import * as z from "zod";
 
 import { canonicalJson, canonicalJsonDigest, type CanonicalJsonValue } from "./canonical-json.ts";
+import { sha256Hex } from "./hash.ts";
 import { assertProjectRelativePath, loadEnvFileSequence } from "./load-env.ts";
+import { assertNoPendingMigrationTransaction } from "./migration.ts";
 import { AppError } from "./types.ts";
 
 // Re-exported so a caller resolving a project's config path (e.g. via
@@ -450,9 +461,82 @@ export interface ContractProjectMatrix {
   requiredCases: ContractProjectCase[];
 }
 
-export async function discoverAuthoredContracts(
+export interface InvalidAuthoredContract {
+  file: string;
+  code: "CONTRACT_FILE_INVALID" | "DUPLICATE_CONTRACT_ID";
+  message: string;
+  contractId?: string;
+}
+
+export interface AuthoredContractInspection {
+  contracts: DiscoveredAuthoredContract[];
+  invalid: InvalidAuthoredContract[];
+}
+
+interface ContractFileWalkEntry {
+  portableFile: string;
+  realPath: string;
+}
+
+interface ContractFileWalkInvalid {
+  file: string;
+  code: "CONTRACT_FILE_INVALID";
+  message: string;
+}
+
+/** Shared glob-match, sort, and project-root-escape check every contract discovery
+ *  walk (authored or legacy) needs; format-specific JSON parsing stays with each caller. */
+async function walkContractFiles(policy: ResolvedProjectPolicy): Promise<{
+  entries: ContractFileWalkEntry[];
+  invalid: ContractFileWalkInvalid[];
+}> {
+  const matched = new Set(
+    await glob(policy.contracts!.patterns, {
+      cwd: policy.root,
+      dot: true,
+      onlyFiles: true,
+    }),
+  );
+  const realRoot = fs.realpathSync(policy.root);
+  const entries: ContractFileWalkEntry[] = [];
+  const invalid: ContractFileWalkInvalid[] = [];
+  for (const file of [...matched].toSorted()) {
+    const portableFile = file.split(path.sep).join("/");
+    const absolutePath = path.resolve(policy.root, file);
+    let realPath: string;
+    try {
+      realPath = fs.realpathSync(absolutePath);
+    } catch (error) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Cannot read contract ${portableFile}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      continue;
+    }
+    if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${path.sep}`)) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Contract path escapes project root: ${portableFile}`,
+      });
+      continue;
+    }
+    entries.push({ portableFile, realPath });
+  }
+  return { entries, invalid };
+}
+
+/**
+ * Uses the same roots, parser and global-ID rules as execution discovery, but retains
+ * every malformed/duplicate file so `contract list` can report the whole repair set.
+ * Refuses to trust any contract state while a `contract migrate` transaction is pending
+ * -- an interrupted multi-file migration must never look like a valid, complete set.
+ */
+export async function inspectAuthoredContracts(
   policy: ResolvedProjectPolicy,
-): Promise<DiscoveredAuthoredContract[]> {
+): Promise<AuthoredContractInspection> {
+  assertNoPendingMigrationTransaction(policy.root);
   if (!policy.contracts) {
     throw new AppError(
       "PROJECT_POLICY_INCOMPLETE",
@@ -460,57 +544,248 @@ export async function discoverAuthoredContracts(
     );
   }
 
-  const matched = new Set<string>();
-  for (const pattern of policy.contracts.patterns) {
-    // eslint-disable-next-line no-await-in-loop -- each pattern is streamed without retaining duplicate path arrays
-    for await (const relativePath of fs.promises.glob(pattern, { cwd: policy.root })) {
-      matched.add(relativePath);
-    }
-  }
-
-  const realRoot = fs.realpathSync(policy.root);
-  const discovered: DiscoveredAuthoredContract[] = [];
-  const idOwners = new Map<string, string>();
-  for (const file of [...matched].toSorted()) {
-    const absolutePath = path.resolve(policy.root, file);
-    const realPath = fs.realpathSync(absolutePath);
-    if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${path.sep}`)) {
-      throw new AppError("CONTRACT_FILE_INVALID", `Contract path escapes project root: ${file}`);
-    }
-
+  const walked = await walkContractFiles(policy);
+  const contracts: DiscoveredAuthoredContract[] = [];
+  const invalid: InvalidAuthoredContract[] = [...walked.invalid];
+  const idOwners = new Map<
+    string,
+    { file: string; entry: DiscoveredAuthoredContract; alreadyInvalid: boolean }
+  >();
+  for (const { portableFile, realPath } of walked.entries) {
     let input: unknown;
     try {
       input = JSON.parse(fs.readFileSync(realPath, "utf8")) as unknown;
-    } catch (error: unknown) {
-      throw new AppError(
-        "CONTRACT_FILE_INVALID",
-        `Cannot read contract ${file}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch (error) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Cannot read contract ${portableFile}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      continue;
     }
     const result = authoredContractSchema.safeParse(input);
     if (!result.success) {
-      throw new AppError(
-        "CONTRACT_FILE_INVALID",
-        `Invalid contract ${file}: ${z.prettifyError(result.error)}`,
-      );
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Invalid contract ${portableFile}: ${z.prettifyError(result.error)}`,
+      });
+      continue;
     }
 
-    const portableFile = file.split(path.sep).join("/");
-    const previousOwner = idOwners.get(result.data.id);
-    if (previousOwner) {
-      throw new AppError(
-        "DUPLICATE_CONTRACT_ID",
-        `Duplicate contract id ${result.data.id}: ${previousOwner}, ${portableFile}`,
-      );
-    }
-    idOwners.set(result.data.id, portableFile);
-    discovered.push({
+    const entry = {
       file: portableFile,
       digest: canonicalJsonDigest(result.data as CanonicalJsonValue),
       contract: result.data,
-    });
+    };
+    const previousOwner = idOwners.get(result.data.id);
+    if (previousOwner) {
+      const message = `Duplicate contract id ${result.data.id}: ${previousOwner.file}, ${portableFile}`;
+      if (!previousOwner.alreadyInvalid) {
+        const previousIndex = contracts.indexOf(previousOwner.entry);
+        if (previousIndex !== -1) contracts.splice(previousIndex, 1);
+        invalid.push({
+          file: previousOwner.file,
+          code: "DUPLICATE_CONTRACT_ID",
+          contractId: result.data.id,
+          message,
+        });
+        previousOwner.alreadyInvalid = true;
+      }
+      invalid.push({
+        file: portableFile,
+        code: "DUPLICATE_CONTRACT_ID",
+        contractId: result.data.id,
+        message,
+      });
+      continue;
+    }
+    idOwners.set(result.data.id, { file: portableFile, entry, alreadyInvalid: false });
+    contracts.push(entry);
   }
-  return discovered;
+  return { contracts, invalid };
+}
+
+export interface LegacyContractCandidate {
+  /** Legacy request file, portable and relative to the project root. */
+  file: string;
+  /** `sha256:<hex>` digest of the legacy file's raw bytes, for the migration CAS check. */
+  fileDigest: `sha256:${string}`;
+  /** Request-level target shared by every contract entry in this legacy file. Undefined
+   *  when the file's own `target` is missing or invalid but its `contracts` entries still
+   *  validate individually -- migration must still surface those ids with route unresolved
+   *  rather than dropping the whole file as opaque. */
+  target: WebTarget | undefined;
+  contract: VerificationContract;
+  /** How many contract entries this legacy file holds in total -- migrating the last
+   *  remaining entry deletes the file outright rather than rewriting an empty array. */
+  siblingCount: number;
+}
+
+export interface InvalidLegacyContract {
+  file: string;
+  code: "CONTRACT_FILE_INVALID" | "DUPLICATE_CONTRACT_ID";
+  message: string;
+  contractId?: string;
+}
+
+export interface LegacyContractInspection {
+  legacy: LegacyContractCandidate[];
+  invalid: InvalidLegacyContract[];
+}
+
+/**
+ * Walks the same configured discovery roots as `inspectAuthoredContracts`, but for the
+ * pre-authored-contract `verificationRequestSchema` shape `contract migrate` converts
+ * from. A file already in the current authored shape is silently skipped (not a
+ * migration candidate, not invalid); a file matching neither schema is reported invalid
+ * so `contract migrate` can surface it as a blocker instead of silently ignoring it.
+ *
+ * A file whose own request-level `target` is missing/invalid, but whose individual
+ * `contracts[]` entries still validate against `verificationContractSchema`, is still
+ * recovered leniently -- with `target: undefined` -- rather than dropped wholesale: a
+ * broken/absent legacy route is exactly the "missing route" case `contract migrate` must
+ * report per contract id, not a reason to hide that id from migration entirely.
+ */
+export async function inspectLegacyContracts(
+  policy: ResolvedProjectPolicy,
+): Promise<LegacyContractInspection> {
+  if (!policy.contracts) {
+    throw new AppError(
+      "PROJECT_POLICY_INCOMPLETE",
+      "framelia.config must declare at least one contract discovery pattern.",
+    );
+  }
+
+  const walked = await walkContractFiles(policy);
+  const legacy: LegacyContractCandidate[] = [];
+  const invalid: InvalidLegacyContract[] = [...walked.invalid];
+  const idOwners = new Map<string, { file: string; alreadyInvalid: boolean }>();
+  for (const { portableFile, realPath } of walked.entries) {
+    let raw: Buffer;
+    try {
+      raw = fs.readFileSync(realPath);
+    } catch (error) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Cannot read contract ${portableFile}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      continue;
+    }
+    let input: unknown;
+    try {
+      input = JSON.parse(raw.toString("utf8")) as unknown;
+    } catch (error) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `Cannot read contract ${portableFile}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      continue;
+    }
+    // Already migrated -- not a legacy candidate, and not an error either.
+    if (authoredContractSchema.safeParse(input).success) continue;
+
+    const fileDigest = `sha256:${sha256Hex(raw)}` as const;
+    const fullResult = verificationRequestSchema.safeParse(input);
+    let recoveredTarget: WebTarget | undefined;
+    let recoveredContracts: VerificationContract[] | undefined;
+    if (fullResult.success) {
+      recoveredTarget = fullResult.data.target;
+      recoveredContracts = fullResult.data.contracts;
+    } else if (typeof input === "object" && input !== null && "contracts" in input) {
+      const rawContractsField = input.contracts;
+      if (Array.isArray(rawContractsField)) {
+        const targetField = "target" in input ? input.target : undefined;
+        const targetResult = webTargetSchema.safeParse(targetField);
+        const parseResults = rawContractsField.map((rawContract: unknown) =>
+          verificationContractSchema.safeParse(rawContract),
+        );
+        const parsedContracts = parseResults
+          .filter((parsedContract) => parsedContract.success)
+          .map((parsedContract) => parsedContract.data);
+        if (parsedContracts.length > 0) {
+          recoveredTarget = targetResult.success ? targetResult.data : undefined;
+          recoveredContracts = parsedContracts;
+          // Some entries parsed and some didn't -- the parsed ones are still safe to
+          // migrate, but the file can never be deleted out from under the entries that
+          // failed to parse. Report each dropped entry as a global blocker (matching
+          // every other invalid-legacy-file case below) so dry-run surfaces it and write
+          // mode changes nothing until the file is fixed, rather than silently deleting
+          // an entry nothing ever migrated.
+          parseResults.forEach((parsedContract, index) => {
+            if (parsedContract.success) return;
+            const rawEntry = rawContractsField[index];
+            const rawId =
+              typeof rawEntry === "object" &&
+              rawEntry !== null &&
+              typeof (rawEntry as Record<string, unknown>).id === "string"
+                ? ((rawEntry as Record<string, unknown>).id as string)
+                : undefined;
+            invalid.push({
+              file: portableFile,
+              code: "CONTRACT_FILE_INVALID",
+              ...(rawId ? { contractId: rawId } : {}),
+              message: `${portableFile}: contracts[${index}]${rawId ? ` (${rawId})` : ""} is not a valid legacy contract entry and cannot be safely migrated or silently discarded: ${z.prettifyError(parsedContract.error)}`,
+            });
+          });
+        }
+      }
+    }
+
+    if (!recoveredContracts) {
+      invalid.push({
+        file: portableFile,
+        code: "CONTRACT_FILE_INVALID",
+        message: `${portableFile} is neither an authored contract nor a legacy verification request: ${z.prettifyError(fullResult.error!)}`,
+      });
+      continue;
+    }
+
+    for (const contract of recoveredContracts) {
+      const previousOwner = idOwners.get(contract.id);
+      if (previousOwner) {
+        const message = `Duplicate legacy contract id ${contract.id}: ${previousOwner.file}, ${portableFile}`;
+        if (!previousOwner.alreadyInvalid) {
+          const previousIndex = legacy.findIndex((entry) => entry.contract.id === contract.id);
+          if (previousIndex !== -1) legacy.splice(previousIndex, 1);
+          invalid.push({
+            file: previousOwner.file,
+            code: "DUPLICATE_CONTRACT_ID",
+            contractId: contract.id,
+            message,
+          });
+          previousOwner.alreadyInvalid = true;
+        }
+        invalid.push({
+          file: portableFile,
+          code: "DUPLICATE_CONTRACT_ID",
+          contractId: contract.id,
+          message,
+        });
+        continue;
+      }
+      idOwners.set(contract.id, { file: portableFile, alreadyInvalid: false });
+      legacy.push({
+        file: portableFile,
+        fileDigest,
+        target: recoveredTarget,
+        contract,
+        siblingCount: recoveredContracts.length,
+      });
+    }
+  }
+  return { legacy, invalid };
+}
+
+export async function discoverAuthoredContracts(
+  policy: ResolvedProjectPolicy,
+): Promise<DiscoveredAuthoredContract[]> {
+  const inspected = await inspectAuthoredContracts(policy);
+  const firstInvalid = inspected.invalid[0];
+  if (firstInvalid) throw new AppError(firstInvalid.code, firstInvalid.message);
+  return inspected.contracts;
 }
 
 export function resolveContractProjectMatrix(

@@ -8,6 +8,9 @@ import {
 } from "../cli-constants.ts";
 import type { CliContext } from "../context.ts";
 import type { ContractCreateOptions } from "../internal/contract-create.ts";
+import type { ContractListOptions } from "../internal/contract-list.ts";
+import type { ContractMigrateOptions } from "../internal/contract-migrate.ts";
+import type { ContractRefreshBaselineOptions } from "../internal/contract-refresh-baseline.ts";
 import type { SuggestMasksOptions } from "../internal/contract-suggest-masks.ts";
 import { emitResult } from "../output.ts";
 
@@ -38,11 +41,18 @@ const createCommand = buildCommand({
         placeholder: "path",
       },
       force: { kind: "boolean", optional: true, brief: "replace existing contract" },
+      targetPath: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "application-relative target path, e.g. /login?state=error",
+        placeholder: "path",
+      },
       targetUrl: {
         kind: "parsed",
         parse: identityParser,
         optional: true,
-        brief: "target application URL",
+        brief: "absolute URL convenience input; only its path and query are authored",
         placeholder: "url",
       },
       contractId: {
@@ -58,6 +68,13 @@ const createCommand = buildCommand({
         optional: true,
         brief: "display name for just this contract, e.g. Login",
         placeholder: "name",
+      },
+      figmaUrl: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "Figma design URL containing file key and node-id",
+        placeholder: "url",
       },
       fileKey: {
         kind: "parsed",
@@ -154,7 +171,7 @@ const createCommand = buildCommand({
       r: "projectRoot",
       o: "output",
       f: "force",
-      t: "targetUrl",
+      t: "targetPath",
       c: "contractId",
       k: "fileKey",
       n: "nodeId",
@@ -164,7 +181,98 @@ const createCommand = buildCommand({
     },
   },
   docs: {
-    brief: "Create a schema-v5 visual contract. Prompts interactively for any flag left unset.",
+    brief: "Author a pinned Figma visual contract; prompts only on an interactive TTY.",
+  },
+});
+
+const listCommand = buildCommand({
+  loader: async () => {
+    const { contractListCommand } = await import("../internal/contract-list.ts");
+    return async function (this: CliContext, flags: ContractListOptions) {
+      emitResult(this, await contractListCommand(flags, this.process));
+    };
+  },
+  parameters: {
+    flags: { projectRoot: projectRootFlag },
+    aliases: { r: "projectRoot" },
+  },
+  docs: { brief: "Reconcile authored contracts with collected Playwright bindings." },
+});
+
+const refreshBaselineCommand = buildCommand({
+  loader: async () => {
+    const { contractRefreshBaselineCommand } =
+      await import("../internal/contract-refresh-baseline.ts");
+    return async function (this: CliContext, flags: ContractRefreshBaselineOptions) {
+      emitResult(this, await contractRefreshBaselineCommand(flags, this.process));
+    };
+  },
+  parameters: {
+    flags: {
+      projectRoot: projectRootFlag,
+      contract: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "exact authored contract id",
+        placeholder: "id",
+      },
+    },
+    aliases: { r: "projectRoot", c: "contract" },
+  },
+  docs: { brief: "Explicitly reacquire and atomically repin one Figma baseline." },
+});
+
+const migrateCommand = buildCommand({
+  loader: async () => {
+    const [{ contractMigrateCommand }, { createClackPrompts }] = await Promise.all([
+      import("../internal/contract-migrate.ts"),
+      import("../internal/clack-prompts.ts"),
+    ]);
+    return async function (this: CliContext, flags: ContractMigrateOptions) {
+      const result = await contractMigrateCommand(
+        flags,
+        createClackPrompts(this.process),
+        this.process,
+      );
+      emitResult(this, result);
+    };
+  },
+  parameters: {
+    flags: {
+      projectRoot: projectRootFlag,
+      dryRun: {
+        kind: "boolean",
+        optional: true,
+        brief: "preview every migration blocker without writing",
+      },
+      contract: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        variadic: true,
+        brief:
+          "exact legacy contract id to migrate (repeatable; default: every discovered legacy contract)",
+        placeholder: "id",
+      },
+      map: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "path to a migration input map JSON file, keyed by legacy contract id",
+        placeholder: "path",
+      },
+      recover: {
+        kind: "boolean",
+        optional: true,
+        brief: "finish or clear a pending interrupted migration transaction and exit",
+      },
+    },
+    aliases: { r: "projectRoot", c: "contract", m: "map" },
+  },
+  docs: {
+    brief:
+      "Explicitly and transactionally migrate legacy contracts/pinned snapshots to the authored contract schema.",
   },
 });
 
@@ -227,6 +335,12 @@ const suggestMasksCommand = buildCommand({
 });
 
 export const contractRoutes = buildRouteMap({
-  routes: { create: createCommand, "suggest-masks": suggestMasksCommand },
+  routes: {
+    create: createCommand,
+    list: listCommand,
+    migrate: migrateCommand,
+    "refresh-baseline": refreshBaselineCommand,
+    "suggest-masks": suggestMasksCommand,
+  },
   docs: { brief: "Create and manage visual contracts." },
 });

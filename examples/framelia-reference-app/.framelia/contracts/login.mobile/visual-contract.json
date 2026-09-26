@@ -1,0 +1,30 @@
+{
+  "formatVersion": 1,
+  "kind": "framelia.contract",
+  "id": "login.mobile",
+  "name": "Mobile",
+  "revision": 2,
+  "target": {
+    "path": "/login"
+  },
+  "viewport": {
+    "preset": "mobile",
+    "width": 356,
+    "height": 728
+  },
+  "scope": {
+    "kind": "page",
+    "pageReason": "Baseline node represents complete page."
+  },
+  "baseline": {
+    "snapshotDigest": "sha256:6f57c515df7970255857f242537dd0d3b6f770156faefa6546422bc6e2e3ded4"
+  },
+  "required": true,
+  "projects": [
+    "unauthenticated"
+  ],
+  "profileOverrides": {
+    "minMatch": 0.999,
+    "minSSIM": 0.995
+  }
+}

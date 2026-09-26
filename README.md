@@ -165,6 +165,8 @@ Playwright matcher, Reporter, and getting-started quickstart documentation lives
 
 Dashboard-specific development and HMR instructions live in [`apps/dashboard/README.md`](apps/dashboard/README.md).
 
+An end-to-end standalone consumer reference app lives in [`examples/framelia-reference-app/`](examples/framelia-reference-app/). It demonstrates Better Auth + Drizzle protected routes, deterministic demo data, responsive UI, and `toMatchFigma` / `toMatchPage` / `toMatchUrl` in a real TanStack Start app.
+
 ### Packed-consumer release verification
 
 CI builds and packs all five release packages from a clean checkout, then installs

@@ -4,7 +4,7 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { writeFileAtomic } from "../src/fs-atomic.ts";
+import { fsyncDirectory, writeFileAtomic } from "../src/fs-atomic.ts";
 
 const roots: string[] = [];
 
@@ -46,5 +46,16 @@ describe("writeFileAtomic", () => {
 
     const entries = fs.readdirSync(root);
     expect(entries).toEqual(["out.json"]);
+  });
+
+  it("skips directory handles on Windows without weakening file writes", () => {
+    const root = tempRoot();
+    const missingDirectory = path.join(root, "directory-that-must-not-be-opened");
+
+    expect(() => fsyncDirectory(missingDirectory, "win32")).not.toThrow();
+
+    const target = path.join(root, "out.json");
+    writeFileAtomic(target, "durable bytes");
+    expect(fs.readFileSync(target, "utf8")).toBe("durable bytes");
   });
 });

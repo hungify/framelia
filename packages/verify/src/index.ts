@@ -47,8 +47,16 @@ export type {
   StageFigmaBaselineOptions,
   StagedBaselineSnapshot,
 } from "./authoring.ts";
+export {
+  assertNoPendingMigrationTransaction,
+  clearMigrationTransaction,
+  migrationTransactionPath,
+  readMigrationTransaction,
+  writeMigrationTransaction,
+} from "./migration.ts";
+export type { MigrationTransactionRecord, MigrationTransactionTarget } from "./migration.ts";
 export { assertProjectRelativePath, loadEnvFiles, loadProjectEnv } from "./load-env.ts";
-export { writeFileAtomic } from "./fs-atomic.ts";
+export { fsyncDirectory, writeFileAtomic } from "./fs-atomic.ts";
 export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";
 export { checkBaselineStaleness, DEFAULT_MAX_BASELINE_AGE_DAYS } from "./staleness.ts";

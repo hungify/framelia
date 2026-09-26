@@ -258,6 +258,43 @@ export const contractBindingSchema = z
   .strict();
 
 /**
+ * Explicit migration input for one legacy contract id, supplied as a JSON file to
+ * `contract migrate --map`. Interactive mode collects the same fields through prompts;
+ * machine mode never guesses a missing one -- an unresolved field is reported, not
+ * inferred from legacy data. `targetPath` overrides/supplies the route when the legacy
+ * request URL is missing, invalid, or the route must change. `projects` is the confirmed
+ * target Playwright project matrix; legacy contracts carry no project matrix of their
+ * own. `snapshotDigest` adopts an already-published pinned baseline (verified against
+ * `readPinnedBaseline` before use); `refreshBaseline` instead requests a fresh, reviewable
+ * Figma acquisition. Supplying both is rejected -- exactly one baseline resolution path
+ * may apply per contract.
+ */
+export const migrationContractInputSchema = z
+  .object({
+    targetPath: targetPathSchema.optional(),
+    projects: projectNamesSchema.optional(),
+    snapshotDigest: sha256DigestSchema.optional(),
+    refreshBaseline: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.snapshotDigest !== undefined && input.refreshBaseline === true) {
+      context.addIssue({
+        code: "custom",
+        message: "cannot both adopt a pinned snapshotDigest and request refreshBaseline",
+      });
+    }
+  });
+
+export const migrationInputMapSchema = z.record(
+  z.string().regex(CONTRACT_ID_PATTERN),
+  migrationContractInputSchema,
+);
+
+export type MigrationContractInput = z.infer<typeof migrationContractInputSchema>;
+export type MigrationInputMap = z.infer<typeof migrationInputMapSchema>;
+
+/**
  * The full `framelia.contract` Playwright annotation payload attached to every
  * `defineFigmaTests` registration: `binding` identifies the authored contract, while
  * `specFile`/`specDigest` pin the caller-supplied `specUrl` at registration time.

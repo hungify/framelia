@@ -29,6 +29,7 @@ npx framelia status --project-root "$PWD"
 | `framelia contract create`           | Author one pinned Figma contract object and immutable snapshot.                        |
 | `framelia contract list`             | Reconcile authored contract/project cases with executable Playwright bindings.         |
 | `framelia contract refresh-baseline` | Explicitly reacquire and atomically repin one exact contract.                          |
+| `framelia contract migrate`          | Explicitly and transactionally migrate legacy contracts to the current schema.         |
 | `framelia contract suggest-masks`    | Scan a live page and propose mask selectors without modifying a contract.              |
 | `framelia baseline promote`          | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                |
 | `framelia status`                    | Show CLI version, project root, and Figma token availability.                          |
@@ -196,6 +197,53 @@ Print the live input schemas with:
 npx framelia schema --target contract
 npx framelia schema --target requirements
 ```
+
+## Migrating legacy contracts
+
+`contract migrate` explicitly and previewably converts a pre-authored `verificationRequestSchema`
+file (the low-level `{ target: { kind: "web", url }, contracts: [...] }` shape `capture`/`compare`
+and `@framelia/playwright`'s low-level matchers still accept) into one `AuthoredContract` file per
+contract, discovered from the same configured `contracts` roots. It never runs implicitly during
+`check`, and dry-run performs zero writes and zero Figma calls:
+
+```bash
+npx framelia contract migrate --project-root "$PWD" --dry-run
+npx framelia contract migrate --project-root "$PWD" --map ./migration-map.json
+```
+
+IDs, display names, masks, and reviewed threshold/style-tolerance overrides carry over unchanged.
+The legacy per-contract `outDir` is dropped -- that output path is now owned by runs. A valid
+legacy request URL proposes its pathname and query as `target.path` and reports the removed
+origin; a route that cannot be derived, or must change, needs an explicit `targetPath` in
+`--map`. Legacy contracts carry no Playwright project matrix, so `projects` is always required
+from `--map` (or an interactive prompt on a TTY). Legacy output PNGs/caches are never treated as
+an approved snapshot: supply an already-published pinned `snapshotDigest`, or set
+`refreshBaseline: true` to acquire one from Figma during write mode only -- dry-run never fetches
+or silently approves cached output.
+
+```json
+{
+  "login.error.desktop": {
+    "projects": ["chromium"],
+    "refreshBaseline": true
+  },
+  "settings.mobile": {
+    "targetPath": "/settings?tab=billing",
+    "projects": ["chromium"],
+    "snapshotDigest": "sha256:<already-reviewed-digest>"
+  }
+}
+```
+
+Every legacy contract is resolved before any file is touched; a blocker on any selected contract
+reports every blocker for every contract together and leaves write mode's filesystem unchanged,
+exactly like dry-run. A successful migration stages every changed contract file and published
+snapshot behind a `.framelia/migration.transaction` marker and the same project authoring lock
+`contract create`/`refresh-baseline` use, with the same concurrent-edit CAS check. `check` and
+`contract list` refuse to run while that marker is present; `contract migrate --recover` finishes
+or clears an interrupted transaction deterministically, without re-prompting or re-fetching Figma.
+Old evidence never acquires invented provenance: a legacy contract that already has an authored
+counterpart is reported as a conflict, never silently overwritten.
 
 ## Running exact authored checks
 

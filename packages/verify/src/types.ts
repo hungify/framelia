@@ -60,7 +60,9 @@ export type AppErrorCode =
   | "RUN_BUNDLE_LOCK_TIMEOUT"
   | "BASELINE_ACQUISITION_FAILED"
   | "AUTHORING_LOCKED"
-  | "AUTHORING_CONFLICT";
+  | "AUTHORING_CONFLICT"
+  | "MIGRATION_INCOMPLETE"
+  | "MIGRATION_TRANSACTION_INVALID";
 
 export class AppError extends Error {
   readonly code: AppErrorCode;

@@ -9,7 +9,7 @@
   "env": {
     "node": true
   },
-  "ignorePatterns": ["dist", "node_modules", "*.tsbuildinfo"],
+  "ignorePatterns": ["dist", "node_modules", "*.tsbuildinfo", "examples/framelia-reference-app/**"],
   "overrides": [
     {
       "files": [

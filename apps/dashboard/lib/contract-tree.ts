@@ -64,11 +64,16 @@ function contractChildLabel(
   normalizedFeatureKey: string,
 ): string {
   const idLower = contract.id.toLowerCase();
-  const prefix = `${normalizedFeatureKey}.`;
+  // feature can use "/" for a nested evidence folder while id stays "."-only -- fold both to
+  // "." just to compare, but slice the *original* id so a real "/" inside it (e.g. a
+  // host:port/route) survives.
+  const normalizedFeatureId = normalizedFeatureKey.replaceAll("/", ".");
+  const foldedId = idLower.replaceAll("/", ".");
+  const prefix = `${normalizedFeatureId}.`;
   const suffix =
-    idLower === normalizedFeatureKey
+    foldedId === normalizedFeatureId
       ? ""
-      : idLower.startsWith(prefix)
+      : foldedId.startsWith(prefix)
         ? contract.id.slice(prefix.length)
         : contract.id;
   if (suffix)

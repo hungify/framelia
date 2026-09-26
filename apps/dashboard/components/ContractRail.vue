@@ -3,6 +3,7 @@ import type { DashboardContractResult, DashboardRun, DashboardVerdict } from "@f
 
 import type { ContractStatusFilter, ContractTreeItem } from "../lib/contract-tree";
 import { formatRatio } from "../lib/format";
+import { altKeyLabel } from "../lib/platform";
 import StatusBadge from "./StatusBadge.vue";
 
 defineProps<{
@@ -28,6 +29,8 @@ const statusOptions: Array<{ label: string; value: ContractStatusFilter }> = [
   { label: "Running", value: "running" },
   { label: "Queued", value: "queued" },
 ];
+
+const modifierKeyLabel = altKeyLabel();
 
 const dotColor: Record<DashboardVerdict, string> = {
   queued: "bg-muted",
@@ -178,7 +181,7 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
     <footer
       class="border-t border-line px-2.5 py-2.5 bg-panel-deep"
       aria-label="Verification summary"
-      title="Alt + ← / → to move selection"
+      :title="`${modifierKeyLabel} + ← / → to move selection`"
     >
       <div class="flex items-center justify-between gap-2 mb-2">
         <span class="text-xs font-semibold">Visual tests</span>

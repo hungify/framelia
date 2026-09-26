@@ -1,138 +1,175 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { PassThrough } from "node:stream";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { UsageError } from "../src/exit.ts";
-import { initializeProject, projectInitCommand } from "../src/internal/project-init.ts";
+import {
+  initializeProject,
+  planProjectInitialization,
+  projectInitCommand,
+} from "../src/internal/project-init.ts";
 import { nonInteractivePrompts } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
 
-const temporaryDirectories: string[] = [];
+const roots: string[] = [];
 
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
+function temporaryProject(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-init-workflow-"));
+  roots.push(root);
+  return root;
+}
 
-function fakeRuntime(overrides: Partial<CliRuntime> = {}): CliRuntime {
+function runtime(root: string): CliRuntime {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  stdout.resume();
+  stderr.resume();
   return {
-    cwd: () => "/project",
+    cwd: () => root,
     env: {},
-    stdin: process.stdin,
-    stdout: { write: vi.fn<(text: string) => void>() },
-    stderr: { write: vi.fn<(text: string) => void>() },
+    stdin: new PassThrough(),
+    stdout,
+    stderr,
     exitCode: undefined,
-    ...overrides,
   };
 }
 
-function captureThrown(fn: () => void): unknown {
-  try {
-    fn();
-    return undefined;
-  } catch (error) {
-    return error;
-  }
-}
-
-function tempProjectRoot(): string {
-  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-project-init-"));
-  temporaryDirectories.push(projectRoot);
-  return projectRoot;
-}
-
-describe("initializeProject (scaffold step)", () => {
-  it("creates config without enabling auth globally", () => {
-    const projectRoot = tempProjectRoot();
-
-    const result = initializeProject(projectRoot);
-    const config = fs.readFileSync(result.configPath, "utf8");
-
-    expect(config).toContain('// storageStatePath: ".framelia/auth/user.json"');
-    expect(config).toContain('// envFile: ".env.e2e"');
-    expect(config).toContain("// stabilitySamples: 3");
-    expect(config).toContain("// timeoutMs: 60_000");
-    expect(config).toContain("// devtoolsSelector: true");
-    expect(config).toContain("// deviceScaleFactor: 1");
-    expect(config).toContain('// fontPolicy: "required"');
-    expect(config).toContain('// animationPolicy: "freeze"');
-    expect(config).toContain("// retry: { attempts: 2, delayMs: 1_000 }");
-    expect(config).toContain("// maxMaskedAreaRatio: 0.15");
-    expect(fs.readFileSync(result.authGitignorePath, "utf8")).toBe("*\n!.gitignore\n");
-    expect(fs.existsSync(result.authStatePath)).toBe(false);
-  });
-
-  it("refuses accidental config overwrite with an ordinary Error, not UsageError", () => {
-    const projectRoot = tempProjectRoot();
-    initializeProject(projectRoot);
-
-    expect(() => initializeProject(projectRoot)).toThrow("Refusing to overwrite existing file");
-    const overwriteError = captureThrown(() => initializeProject(projectRoot));
-    expect(overwriteError).not.toBeInstanceOf(UsageError);
-    expect(overwriteError).toBeInstanceOf(Error);
-    expect(() => initializeProject(projectRoot, true)).not.toThrow();
-  });
-
-  it("does not create a second config format", () => {
-    const projectRoot = tempProjectRoot();
-    const configPath = path.join(projectRoot, "framelia.config.mjs");
-    fs.writeFileSync(configPath, "export default {};\n");
-
-    expect(() => initializeProject(projectRoot)).toThrow("Refusing to overwrite existing file");
-    expect(initializeProject(projectRoot, true).configPath).toBe(configPath);
-    expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(false);
-  });
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe("projectInitCommand (CLI adapter)", () => {
-  it("resolves projectRoot from the explicit option over the injected runtime's cwd", async () => {
-    const projectRoot = tempProjectRoot();
-    await projectInitCommand(
-      { projectRoot, force: undefined },
+describe("project initialization workflow", () => {
+  it("dry-runs a complete plan without mutating the project", async () => {
+    const root = temporaryProject();
+    const result = await projectInitCommand(
+      { projectRoot: root, dryRun: true, force: undefined },
       nonInteractivePrompts,
-      fakeRuntime({ cwd: () => "/should-not-be-used" }),
+      runtime(root),
     );
-    expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(true);
+
+    expect(result).toMatchObject({
+      ok: true,
+      exitCode: 0,
+      body: {
+        kind: "framelia.init-outcome",
+        command: "init",
+        executionState: "completed",
+        dryRun: true,
+        reporter: { status: "configured", configPath: "playwright.config.ts" },
+        changes: expect.arrayContaining([
+          expect.objectContaining({ path: "framelia.config.ts", action: "create" }),
+          expect.objectContaining({ path: "playwright.config.ts", action: "create" }),
+          expect.objectContaining({ path: ".framelia/auth/.gitignore", action: "create" }),
+        ]),
+      },
+    });
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 
-  it("falls back to the injected runtime's cwd when --project-root is not given", async () => {
-    const projectRoot = tempProjectRoot();
-    await projectInitCommand(
-      { projectRoot: undefined, force: undefined },
+  it("creates minimal Framelia and Playwright policy without editing package metadata", async () => {
+    const root = temporaryProject();
+    const packageJson = `${JSON.stringify({ type: "commonjs", scripts: { test: "custom-test" } }, null, 2)}\n`;
+    fs.writeFileSync(path.join(root, "package.json"), packageJson);
+
+    const result = await projectInitCommand(
+      { projectRoot: root, dryRun: false, force: undefined },
       nonInteractivePrompts,
-      fakeRuntime({ cwd: () => projectRoot }),
+      runtime(root),
     );
-    expect(fs.existsSync(path.join(projectRoot, "framelia.config.ts"))).toBe(true);
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.readFileSync(path.join(root, "package.json"), "utf8")).toBe(packageJson);
+    expect(fs.readFileSync(path.join(root, "framelia.config.ts"), "utf8")).toContain(
+      'contracts: [".framelia/contracts/**/visual-contract.json"]',
+    );
+    expect(fs.readFileSync(path.join(root, "framelia.config.ts"), "utf8")).toContain(
+      'playwright: { config: "playwright.config.ts", projects: [""] }',
+    );
+    expect(fs.readFileSync(path.join(root, "playwright.config.ts"), "utf8")).toContain(
+      '["@framelia/playwright/reporter"]',
+    );
+    expect(fs.readFileSync(path.join(root, ".framelia/auth/.gitignore"), "utf8")).toBe(
+      "*\n!.gitignore\n",
+    );
   });
 
-  it("reclassifies overwrite refusal as UsageError at the CLI adapter boundary", async () => {
-    const projectRoot = tempProjectRoot();
-    await projectInitCommand(
-      { projectRoot, force: undefined },
+  it("preserves an existing Playwright config byte-for-byte and gives precise manual instructions", async () => {
+    const root = temporaryProject();
+    const playwright = `import { defineConfig } from "@playwright/test";\nexport default defineConfig({\n  projects: [{ name: "webkit", use: { colorScheme: "dark" } }],\n  webServer: { command: "pnpm dev", port: 4173 },\n});\n`;
+    fs.writeFileSync(path.join(root, "playwright.config.mts"), playwright);
+
+    const result = await projectInitCommand(
+      { projectRoot: root, dryRun: false, force: undefined },
       nonInteractivePrompts,
-      fakeRuntime(),
+      runtime(root),
     );
 
-    await expect(
-      projectInitCommand({ projectRoot, force: undefined }, nonInteractivePrompts, fakeRuntime()),
-    ).rejects.toBeInstanceOf(UsageError);
-    await expect(
-      projectInitCommand({ projectRoot, force: undefined }, nonInteractivePrompts, fakeRuntime()),
-    ).rejects.toThrow("Refusing to overwrite existing file");
+    expect(result).toMatchObject({
+      exitCode: 0,
+      body: {
+        reporter: {
+          status: "manual",
+          configPath: "playwright.config.mts",
+          instructions: expect.stringContaining("remains byte-for-byte unchanged"),
+        },
+        changes: expect.arrayContaining([
+          expect.objectContaining({ path: "playwright.config.mts", action: "manual" }),
+        ]),
+      },
+    });
+    expect(result.body.reporter?.instructions).toContain("do not replace, reorder, or change");
+    expect(fs.readFileSync(path.join(root, "playwright.config.mts"), "utf8")).toBe(playwright);
+    expect(fs.readFileSync(path.join(root, "framelia.config.ts"), "utf8")).not.toContain(
+      "playwright:",
+    );
   });
 
-  it("does not throw when --force is set on an existing config", async () => {
-    const projectRoot = tempProjectRoot();
-    await projectInitCommand(
-      { projectRoot, force: undefined },
-      nonInteractivePrompts,
-      fakeRuntime(),
+  it("is idempotent and treats force as a non-destructive compatibility flag", () => {
+    const root = temporaryProject();
+    initializeProject(root);
+    const before = new Map(
+      ["framelia.config.ts", "playwright.config.ts", ".framelia/auth/.gitignore"].map(
+        (file) => [file, fs.readFileSync(path.join(root, file))] as const,
+      ),
     );
-    await expect(
-      projectInitCommand({ projectRoot, force: true }, nonInteractivePrompts, fakeRuntime()),
-    ).resolves.toBeUndefined();
+
+    const repeated = initializeProject(root, true);
+    for (const [file, bytes] of before) {
+      expect(fs.readFileSync(path.join(root, file))).toEqual(bytes);
+    }
+    expect(repeated.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "framelia.config.ts", action: "unchanged" }),
+        expect.objectContaining({ path: "playwright.config.ts", action: "manual" }),
+        expect.objectContaining({ path: ".framelia/auth/.gitignore", action: "unchanged" }),
+      ]),
+    );
+  });
+
+  it("refuses ambiguous Framelia or Playwright configuration without writing anything", async () => {
+    const root = temporaryProject();
+    fs.writeFileSync(path.join(root, "framelia.config.ts"), "export default {};\n");
+    fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
+    const result = await projectInitCommand(
+      { projectRoot: root, dryRun: false, force: true },
+      nonInteractivePrompts,
+      runtime(root),
+    );
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: { executionState: "error", diagnostics: [{ code: "INIT_FAILED" }] },
+    });
+    expect(fs.existsSync(path.join(root, ".framelia"))).toBe(false);
+
+    const other = temporaryProject();
+    fs.writeFileSync(path.join(other, "playwright.config.ts"), "export default {};\n");
+    fs.writeFileSync(path.join(other, "playwright.config.mjs"), "export default {};\n");
+    expect(() => planProjectInitialization(other)).toThrow(/Multiple Playwright configs/);
+    expect(fs.readdirSync(other).toSorted()).toEqual([
+      "playwright.config.mjs",
+      "playwright.config.ts",
+    ]);
   });
 });

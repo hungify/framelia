@@ -2,9 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { VerificationArtifact, VerificationContract } from "@framelia/contracts";
-import { SCHEMA_VERSION } from "@framelia/contracts";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { resolveDashboardUrls } from "../src/dashboard/urls.ts";
 import { UsageError } from "../src/exit.ts";
@@ -12,8 +10,13 @@ import { dashboardDevserverCommand } from "../src/internal/dashboard-devserver.t
 import { createDashboardOutput, type DashboardOutput } from "../src/internal/dashboard-output.ts";
 import type { DashboardHost } from "../src/internal/dashboard-runtime.ts";
 import { createFakeProcess } from "./fake-process.ts";
+import { createSelectedRun } from "./selected-run-fixture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-dashboard-"));
+beforeAll(async () => {
+  fs.writeFileSync(path.join(tmp, "framelia.config.mjs"), "export default {};\n");
+  await createSelectedRun(tmp, { runId: "run-test" });
+});
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 describe("dashboard URL derivation", () => {
@@ -146,6 +149,7 @@ function createFakeOutput(): DashboardOutput {
 }
 
 const baseDashboardOptions = {
+  run: "run-test",
   projectRoot: undefined,
   host: undefined,
   port: 6789,
@@ -309,88 +313,5 @@ describe("dashboard: lifecycle", () => {
     expect(call?.[0].map((s) => s.key)).toEqual(["r", "u", "o", "c", "q"]);
     triggerShutdown();
     await done;
-  });
-});
-
-function writeMinimalArtifact(): string {
-  const id = "contract-1";
-  const contract: VerificationContract = {
-    id,
-    name: id,
-    baseline: { kind: "figma", fileKey: "file-key", nodeId: "153:5181" },
-    viewport: { preset: "desktop", width: 1440, height: 1024 },
-    outDir: `.framelia/visual-verifications/${id}`,
-    scope: { kind: "page", pageReason: "full page baseline" },
-  };
-  const artifact: VerificationArtifact = {
-    schemaVersion: SCHEMA_VERSION,
-    kind: "framelia.visual-verification",
-    createdAt: new Date().toISOString(),
-    projectRoot: tmp,
-    request: {
-      schemaVersion: SCHEMA_VERSION,
-      target: { kind: "web", url: "http://localhost:3000/" },
-      contracts: [contract],
-    },
-    ok: true,
-    allPassed: true,
-    results: [{ id, ok: true, pass: true, outDir: contract.outDir }],
-  };
-  const artifactPath = path.join(tmp, "open-artifact.json");
-  fs.writeFileSync(artifactPath, JSON.stringify(artifact));
-  return artifactPath;
-}
-
-describe("dashboard: open", () => {
-  it("reads the artifact, derives the suite name from its directory, and serves it", async () => {
-    const artifactPath = writeMinimalArtifact();
-    const { host, triggerShutdown } = createFakeHost();
-    const output = createFakeOutput();
-    triggerShutdown();
-    await dashboardDevserverCommand(
-      { artifact: artifactPath, noOpen: true, host: undefined, port: 6789 },
-      fakeRuntime(),
-      host,
-      output,
-    );
-    expect(output.ready).toHaveBeenCalledTimes(1);
-  });
-
-  it("resolves a relative artifact path against the injected runtime cwd, not global process.cwd()", async () => {
-    writeMinimalArtifact();
-    const runtime = { ...fakeRuntime(), cwd: () => tmp };
-    const { host, triggerShutdown } = createFakeHost();
-    triggerShutdown();
-    await expect(
-      dashboardDevserverCommand(
-        {
-          artifact: "open-artifact.json",
-          noOpen: true,
-          host: undefined,
-          port: 6789,
-        },
-        runtime,
-        host,
-        createFakeOutput(),
-      ),
-    ).resolves.toBeUndefined();
-  });
-
-  it("rejects a non-positive port before reading the artifact", async () => {
-    const { host, startServerSpy } = createFakeHost();
-    await expect(
-      dashboardDevserverCommand(
-        {
-          artifact: "irrelevant.json",
-          noOpen: true,
-          host: undefined,
-          port: 0,
-        },
-        fakeRuntime(),
-        host,
-        createFakeOutput(),
-      ),
-    ).rejects.toBeInstanceOf(UsageError);
-    expect(startServerSpy).not.toHaveBeenCalled();
   });
 });

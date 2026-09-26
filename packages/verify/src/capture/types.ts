@@ -32,9 +32,8 @@ type CaptureScope =
  * Spec for {@link captureReadyPage} (core.ts) — screenshots a `Page` the
  * caller has already navigated, authenticated, and interacted with. No
  * `url`/`navigation`/`state`/`readyEvent`/`readySelector`/`retry` field:
- * this primitive never navigates, so it has no navigation-time concerns, and
- * it never reloads between samples, so it captures exactly one sample (a
- * reload would discard the caller's own auth/form state).
+ * this primitive never navigates or reloads between its back-to-back stability samples,
+ * so it preserves the caller's own auth/form state.
  */
 export interface ReadyCaptureSpec {
   /** Contract identity retained in evidence; renderer never derives state from CLI flags. */
@@ -42,8 +41,15 @@ export interface ReadyCaptureSpec {
   outPath: string;
   scope: CaptureScope;
   screenshot: { masks?: VisualMask[]; maxMaskedAreaRatio?: number };
+  stabilitySamples?: number;
   timeoutMs?: number;
   devtoolsSelector?: true | string;
+  /** Device pixel ratio to capture at (matches the Page's own context configuration --
+   *  see captureReadyPage's doc comment). 1 (the default) captures one PNG pixel per CSS
+   *  px, unchanged from before this option existed. >1 captures at that many physical
+   *  pixels per CSS px instead, for a sharper image; every CSS-px-based bound this module
+   *  reports (mask evidence, selector bounds) is scaled to match. */
+  scale?: number;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
 }
@@ -57,8 +63,7 @@ export interface FontReadiness {
 export interface CaptureEvidence {
   contract: ReadyCaptureSpec["identity"] | null;
   capturePaths: string[];
-  /** Always empty for captureReadyPage (single-sample, no reload) — kept for
-   * evidence-shape compatibility with CaptureSuccess's original stability-sample field. */
+  /** Private stability samples are removed before return; only their hashes are retained. */
   ephemeralSamplePaths: string[];
   capturedAt: string;
   startedAt: string;

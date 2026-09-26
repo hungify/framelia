@@ -1,0 +1,1153 @@
+import * as z from "zod";
+
+import { baselineSchema } from "./baseline.ts";
+import { CONTRACT_ID_PATTERN } from "./constants.ts";
+import { httpUrlSchema, nonEmptyTrimmed } from "./primitives.ts";
+import {
+  captureEvidenceSchema,
+  captureMaskEvidenceSchema,
+  stabilitySchema,
+  topIssueSchema,
+  visualDiagnosticSchema,
+} from "./score.ts";
+import {
+  componentProfileSchema,
+  contractScopeSchema,
+  expectStyleSchema,
+  profileOverridesSchema,
+  profileSchema,
+  styleCheckPointSchema,
+  styleToleranceOverridesSchema,
+  viewportSchema,
+  visualMaskSchema,
+} from "./visual-contract.ts";
+
+export const CONTRACT_FORMAT_VERSION = 1;
+export const SNAPSHOT_FORMAT_VERSION = 1;
+export const BINDING_FORMAT_VERSION = 1;
+export const TEST_REGISTRATION_FORMAT_VERSION = 1;
+export const SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 1 as const;
+export const COLLECTION_FORMAT_VERSION = 2;
+export const COLLECTED_CASE_FORMAT_VERSION = 1;
+export const RUN_CONTEXT_FORMAT_VERSION = 1;
+export const TRANSPORT_STATUS_FORMAT_VERSION = 1;
+export const CASE_PLAN_FORMAT_VERSION = 2;
+export const RUN_PLAN_FORMAT_VERSION = 2;
+export const RUN_FORMAT_VERSION = 2;
+export const ATTEMPT_FORMAT_VERSION = 2;
+export const COMMAND_OUTCOME_FORMAT_VERSION = 1;
+export const ATTEMPT_SCORE_FORMAT_VERSION = 1;
+export const AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 2;
+
+export const sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+export const httpOriginSchema = nonEmptyTrimmed.superRefine((value, context) => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    context.addIssue({ code: "custom", message: "must be a valid URL origin" });
+    return;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    context.addIssue({ code: "custom", message: "must use http or https" });
+  }
+  if (url.username || url.password) {
+    context.addIssue({ code: "custom", message: "must not contain credentials" });
+  }
+  if (value !== url.origin || url.pathname !== "/" || url.search || url.hash) {
+    context.addIssue({
+      code: "custom",
+      message: "must be a normalized URL origin without path, query, or fragment",
+    });
+  }
+});
+
+export const projectRelativePathSchema = nonEmptyTrimmed.refine(
+  (value) => {
+    // Rejects a POSIX-absolute leading slash/backslash, and a Windows drive
+    // reference in either form: "C:\"/"C:/" (drive-absolute) and the more easily
+    // missed "C:foo" (drive-relative -- resolves against that drive's own current
+    // directory, which path.resolve() can't be trusted to keep inside `root`).
+    if (/^(?:[\\/]|[A-Za-z]:)/.test(value)) return false;
+    return !value.split(/[\\/]/).includes("..");
+  },
+  { message: "must be project-relative without parent traversal" },
+);
+
+export const absolutePathSchema = nonEmptyTrimmed.refine(
+  (value) => value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value),
+  { message: "must be an absolute filesystem path" },
+);
+
+export const targetPathSchema = nonEmptyTrimmed.refine(
+  (value) => value.startsWith("/") && !value.startsWith("//"),
+  { message: "must be an application path beginning with one slash" },
+);
+
+const nonBlankPreserved = z.string().refine((value) => value.trim().length > 0, {
+  message: "must contain a non-whitespace character",
+});
+
+const uniqueStrings = <T extends z.ZodType<string>>(item: T) =>
+  z
+    .array(item)
+    .min(1)
+    .superRefine((values, context) => {
+      const seen = new Set<string>();
+      values.forEach((value, index) => {
+        if (seen.has(value)) {
+          context.addIssue({ code: "custom", path: [index], message: `duplicate value: ${value}` });
+        }
+        seen.add(value);
+      });
+    });
+
+export const projectNameSchema = z.string();
+export const projectNamesSchema = uniqueStrings(projectNameSchema);
+
+export const authoredContractSchema = z
+  .object({
+    formatVersion: z.literal(CONTRACT_FORMAT_VERSION),
+    kind: z.literal("framelia.contract"),
+    id: z.string().regex(CONTRACT_ID_PATTERN),
+    name: nonEmptyTrimmed,
+    revision: z.number().int().positive(),
+    target: z.object({ path: targetPathSchema }).strict(),
+    viewport: viewportSchema,
+    scope: contractScopeSchema,
+    baseline: z.object({ snapshotDigest: sha256DigestSchema }).strict(),
+    required: z.boolean().default(true),
+    projects: projectNamesSchema.optional(),
+    profile: componentProfileSchema.optional(),
+    profileOverrides: profileOverridesSchema.optional(),
+    styleToleranceOverrides: styleToleranceOverridesSchema.optional(),
+    gateEligible: z.boolean().optional(),
+    styleGateEligible: z.boolean().optional(),
+    masks: z.array(visualMaskSchema).min(1).optional(),
+  })
+  .strict()
+  .superRefine((contract, context) => {
+    if (contract.scope.kind === "page" && contract.profile != null) {
+      context.addIssue({
+        code: "custom",
+        path: ["profile"],
+        message: "page contract must not set component profile",
+      });
+    }
+  });
+
+const snapshotFileSchema = z
+  .object({
+    path: projectRelativePathSchema,
+    digest: sha256DigestSchema,
+  })
+  .strict();
+
+export const baselineSnapshotSchema = z
+  .object({
+    formatVersion: z.literal(SNAPSHOT_FORMAT_VERSION),
+    kind: z.literal("framelia.baseline-snapshot"),
+    source: baselineSchema,
+    metadata: z
+      .object({
+        nodeId: nonEmptyTrimmed,
+        fileKey: nonEmptyTrimmed,
+        lastModified: z.string().nullable(),
+        fetchedAt: nonEmptyTrimmed,
+        apiCallCount: z.number().int().nonnegative(),
+        apiCallLog: z.array(
+          z
+            .object({
+              endpoint: nonEmptyTrimmed,
+              timestamp: nonEmptyTrimmed,
+              status: z.number().int(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .optional(),
+    rendering: z
+      .object({
+        viewport: viewportSchema,
+        deviceScaleFactor: z.number().positive().max(4),
+      })
+      .strict(),
+    expected: z.discriminatedUnion("kind", [
+      z
+        .object({
+          kind: z.literal("page"),
+          image: snapshotFileSchema.extend({
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          }),
+          style: snapshotFileSchema.optional(),
+          styleChecks: z.array(styleCheckPointSchema).min(1).optional(),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal("region"),
+          image: snapshotFileSchema.extend({
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          }),
+          style: snapshotFileSchema.optional(),
+          expectStyle: expectStyleSchema.optional(),
+        })
+        .strict(),
+    ]),
+  })
+  .strict()
+  .superRefine((snapshot, context) => {
+    if (
+      snapshot.metadata?.fileKey !== undefined &&
+      snapshot.metadata.fileKey !== snapshot.source.fileKey
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["metadata", "fileKey"],
+        message: "must match source.fileKey",
+      });
+    }
+    if (
+      snapshot.metadata?.nodeId !== undefined &&
+      snapshot.metadata.nodeId !== snapshot.source.nodeId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["metadata", "nodeId"],
+        message: "must match source.nodeId",
+      });
+    }
+    // A page-scope capture is always viewport-sized (see captureReadyPage's
+    // fullPage:false convention for a pinned page snapshot), so its expected image
+    // dimensions are fully determined by rendering.viewport × deviceScaleFactor and
+    // can be cross-checked. A region-scope capture is sized to whatever element the
+    // contract's own selector resolves to -- unrelated to the viewport -- so this
+    // schema has no independent way to know its correct dimensions; only the field's
+    // own positive-integer constraint above applies there.
+    if (snapshot.expected.kind !== "page") return;
+    const expectedWidth = snapshot.rendering.viewport.width * snapshot.rendering.deviceScaleFactor;
+    const expectedHeight =
+      snapshot.rendering.viewport.height * snapshot.rendering.deviceScaleFactor;
+    if (snapshot.expected.image.width !== expectedWidth) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected", "image", "width"],
+        message: `must equal CSS viewport width × deviceScaleFactor (${expectedWidth})`,
+      });
+    }
+    if (snapshot.expected.image.height !== expectedHeight) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected", "image", "height"],
+        message: `must equal CSS viewport height × deviceScaleFactor (${expectedHeight})`,
+      });
+    }
+  });
+
+export const contractBindingSchema = z
+  .object({
+    formatVersion: z.literal(BINDING_FORMAT_VERSION),
+    kind: z.literal("framelia.contract-binding"),
+    contractId: z.string().regex(CONTRACT_ID_PATTERN),
+    contractFile: projectRelativePathSchema,
+    contractDigest: sha256DigestSchema,
+  })
+  .strict();
+
+/**
+ * The full `framelia.contract` Playwright annotation payload attached to every
+ * `defineFigmaTests` registration: `binding` identifies the authored contract, while
+ * `specFile`/`specDigest` pin the caller-supplied `specUrl` at registration time.
+ *
+ * `defineFigmaTests` registers its public `test(...)` call with that spec filename so
+ * Playwright's documented collection location and exact `--test-list` file Suite agree
+ * with the caller's spec. These fields remain necessary independent evidence: later
+ * planning and the first-line execution guard rehash the actual file and reject a stale
+ * or dishonest `specUrl` before preparation or capture.
+ *
+ * Spec identity stays beside `binding`, rather than inside
+ * `contractBindingSchema`: the binding answers which contract and digest a test uses,
+ * while the spec fields answer where that binding was registered. This also keeps
+ * `casePlanSchema.bindingDigest` scoped to contract-binding drift; its separate
+ * `specFileDigest` covers spec-file drift.
+ */
+export const testRegistrationSchema = z
+  .object({
+    formatVersion: z.literal(TEST_REGISTRATION_FORMAT_VERSION),
+    kind: z.literal("framelia.test-registration"),
+    binding: contractBindingSchema,
+    specFile: projectRelativePathSchema,
+    specDigest: sha256DigestSchema,
+  })
+  .strict();
+
+export const collectedCaseSchema = z
+  .object({
+    formatVersion: z.literal(COLLECTED_CASE_FORMAT_VERSION),
+    kind: z.literal("framelia.collected-case"),
+    binding: contractBindingSchema,
+    project: projectNameSchema,
+    projectRuntimeDigest: sha256DigestSchema,
+    specFile: projectRelativePathSchema,
+    testListFile: projectRelativePathSchema,
+    specFileDigest: sha256DigestSchema,
+    location: z
+      .object({
+        line: z.number().int().positive(),
+        column: z.number().int().nonnegative(),
+      })
+      .strict(),
+    testTitlePath: z.array(nonBlankPreserved).min(1),
+    repeatIndex: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const collectedProjectSchema = z
+  .object({
+    name: projectNameSchema,
+    runtimeDigest: sha256DigestSchema,
+    dependencies: z.array(projectNameSchema),
+    teardown: projectNameSchema.optional(),
+    repeatEach: z.number().int().positive(),
+    retries: z.number().int().nonnegative(),
+    testDir: projectRelativePathSchema,
+  })
+  .strict();
+
+export const collectedSetupCaseSchema = z
+  .object({
+    project: projectNameSchema,
+    specFile: projectRelativePathSchema,
+    specFileDigest: sha256DigestSchema,
+    location: z
+      .object({
+        line: z.number().int().positive(),
+        column: z.number().int().nonnegative(),
+      })
+      .strict(),
+    testTitlePath: z.array(nonBlankPreserved).min(1),
+    repeatIndex: z.number().int().nonnegative(),
+    graphRole: z.enum(["dependency", "teardown"]),
+  })
+  .strict();
+
+export const collectionManifestSchema = z
+  .object({
+    formatVersion: z.literal(COLLECTION_FORMAT_VERSION),
+    kind: z.literal("framelia.collection"),
+    runId: nonEmptyTrimmed,
+    projectRoot: absolutePathSchema,
+    policyDigest: sha256DigestSchema,
+    projects: z.array(collectedProjectSchema).min(1),
+    visualCases: z.array(collectedCaseSchema),
+    setupCases: z.array(collectedSetupCaseSchema),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    const projectNames = new Set<string>();
+    manifest.projects.forEach((project, index) => {
+      if (projectNames.has(project.name)) {
+        context.addIssue({
+          code: "custom",
+          path: ["projects", index, "name"],
+          message: `duplicate collected project: ${JSON.stringify(project.name)}`,
+        });
+      }
+      projectNames.add(project.name);
+    });
+    manifest.visualCases.forEach((entry, index) => {
+      if (!projectNames.has(entry.project)) {
+        context.addIssue({
+          code: "custom",
+          path: ["visualCases", index, "project"],
+          message: `visual case refers to unknown collected project: ${JSON.stringify(entry.project)}`,
+        });
+      }
+    });
+    manifest.setupCases.forEach((entry, index) => {
+      if (!projectNames.has(entry.project)) {
+        context.addIssue({
+          code: "custom",
+          path: ["setupCases", index, "project"],
+          message: `setup case refers to unknown collected project: ${JSON.stringify(entry.project)}`,
+        });
+      }
+    });
+  });
+
+export const runContextSchema = z
+  .object({
+    formatVersion: z.literal(RUN_CONTEXT_FORMAT_VERSION),
+    kind: z.literal("framelia.run-context"),
+    mode: z.enum(["collect", "execute"]),
+    projectRoot: absolutePathSchema,
+    runId: nonEmptyTrimmed,
+    policyDigest: sha256DigestSchema,
+    selectedProjects: projectNamesSchema,
+    manifestPath: absolutePathSchema,
+    statusPath: absolutePathSchema,
+    planPath: absolutePathSchema.optional(),
+    casePlansPath: absolutePathSchema.optional(),
+  })
+  .strict()
+  .superRefine((context, refinement) => {
+    if (context.mode === "execute" && (!context.planPath || !context.casePlansPath)) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["planPath"],
+        message: "execute context requires frozen plan and case-plan paths",
+      });
+    }
+    if (context.mode === "collect" && (context.planPath || context.casePlansPath)) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["planPath"],
+        message: "collect context must not reference an unfrozen run plan",
+      });
+    }
+  });
+
+export const transportDiagnosticSchema = z
+  .object({
+    code: nonEmptyTrimmed,
+    message: nonEmptyTrimmed,
+  })
+  .strict();
+
+export const transportStatusSchema = z
+  .object({
+    formatVersion: z.literal(TRANSPORT_STATUS_FORMAT_VERSION),
+    kind: z.literal("framelia.transport-status"),
+    writerVersion: nonEmptyTrimmed,
+    phase: z.enum(["collection", "execution-reconciliation"]),
+    mode: z.enum(["collect", "execute"]),
+    projectRoot: absolutePathSchema,
+    runId: nonEmptyTrimmed,
+    state: z.enum(["completed", "error", "ready", "blocked"]),
+    diagnostics: z.array(transportDiagnosticSchema),
+    execution: z
+      .object({
+        resultStatus: z.enum(["passed", "failed", "timedout", "interrupted"]),
+        setupFailures: z.array(nonEmptyTrimmed),
+        teardownFailures: z.array(nonEmptyTrimmed),
+        globalErrors: z.array(nonEmptyTrimmed),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((status, context) => {
+    if (
+      (status.mode === "collect" && status.state !== "completed" && status.state !== "error") ||
+      (status.mode === "execute" &&
+        status.state !== "ready" &&
+        status.state !== "blocked" &&
+        status.state !== "completed")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state"],
+        message: `state ${status.state} is invalid for ${status.mode} mode`,
+      });
+    }
+    if (status.mode === "collect" && status.execution) {
+      context.addIssue({
+        code: "custom",
+        path: ["execution"],
+        message: "collection status cannot contain execution outcomes",
+      });
+    }
+    if (
+      status.mode === "execute" &&
+      status.state === "completed" &&
+      status.execution === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["execution"],
+        message: "completed execution status requires the final lifecycle summary",
+      });
+    }
+  });
+
+export const sourceIdentitySchema = z
+  .object({
+    sourceDigest: sha256DigestSchema.optional(),
+    buildDigest: sha256DigestSchema.optional(),
+    dirty: z.boolean().optional(),
+  })
+  .strict();
+
+export const casePlanSchema = z
+  .object({
+    formatVersion: z.literal(CASE_PLAN_FORMAT_VERSION),
+    kind: z.literal("framelia.case-plan"),
+    runId: nonEmptyTrimmed,
+    caseId: nonEmptyTrimmed,
+    contract: z
+      .object({
+        id: z.string().regex(CONTRACT_ID_PATTERN),
+        file: projectRelativePathSchema,
+        digest: sha256DigestSchema,
+        authored: authoredContractSchema,
+      })
+      .strict(),
+    snapshotDigest: sha256DigestSchema,
+    expectedDigest: sha256DigestSchema,
+    expectedSize: z
+      .object({ width: z.number().positive(), height: z.number().positive() })
+      .strict(),
+    baselineSource: baselineSchema,
+    maxMaskedAreaRatio: z.number().min(0).max(1),
+    stabilitySamples: z.number().int().min(2).max(5),
+    policyDigest: sha256DigestSchema,
+    bindingDigest: sha256DigestSchema,
+    binding: contractBindingSchema,
+    registration: z
+      .object({
+        specFile: projectRelativePathSchema,
+        specDigest: sha256DigestSchema,
+        titlePath: z.array(nonBlankPreserved).min(1),
+      })
+      .strict(),
+    /** Project-relative path to the spec file that registered this case -- kept so a
+     *  later reconciliation pass (see @framelia/verify's run-bundle finalization) can
+     *  relocate and re-hash it against `specFileDigest`, catching a spec edited after
+     *  the case plan was frozen. */
+    specFile: projectRelativePathSchema,
+    specFileDigest: sha256DigestSchema,
+    project: z
+      .object({
+        name: projectNameSchema,
+        runtimeDigest: sha256DigestSchema,
+      })
+      .strict(),
+    repeatIndex: z.number().int().nonnegative(),
+    retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
+    source: sourceIdentitySchema,
+  })
+  .strict()
+  .superRefine((plan, context) => {
+    if (plan.contract.authored.id !== plan.contract.id) {
+      context.addIssue({
+        code: "custom",
+        path: ["contract", "authored", "id"],
+        message: "authored contract id must match the case-plan contract id",
+      });
+    }
+    if (
+      plan.binding.contractId !== plan.contract.id ||
+      plan.binding.contractFile !== plan.contract.file ||
+      plan.binding.contractDigest !== plan.contract.digest
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["binding"],
+        message: "frozen binding must match the case-plan contract identity",
+      });
+    }
+  });
+
+const plannedCaseSchema = z
+  .object({
+    caseId: nonEmptyTrimmed,
+    casePlanDigest: sha256DigestSchema,
+  })
+  .strict();
+
+export const contractProjectMatrixEntrySchema = z
+  .object({
+    contractId: z.string().regex(CONTRACT_ID_PATTERN),
+    contractFile: projectRelativePathSchema,
+    contractDigest: sha256DigestSchema,
+    project: projectNameSchema,
+    required: z.boolean(),
+  })
+  .strict();
+
+export const runSelectionSchema = z
+  .object({
+    mode: z.enum(["all", "subset"]),
+    contracts: uniqueStrings(z.string().regex(CONTRACT_ID_PATTERN)),
+    projects: projectNamesSchema.optional(),
+  })
+  .strict();
+
+export const runPlanSchema = z
+  .object({
+    formatVersion: z.literal(RUN_PLAN_FORMAT_VERSION),
+    kind: z.literal("framelia.run-plan"),
+    runId: nonEmptyTrimmed,
+    policyDigest: sha256DigestSchema,
+    executionGraphDigest: sha256DigestSchema,
+    selection: runSelectionSchema,
+    availableMatrix: z.array(contractProjectMatrixEntrySchema).min(1),
+    requiredMatrix: z.array(contractProjectMatrixEntrySchema),
+    availableCases: z.array(plannedCaseSchema).min(1),
+    requiredCases: z.array(plannedCaseSchema),
+    retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
+    selectedCases: z.array(plannedCaseSchema).min(1),
+  })
+  .strict()
+  .superRefine((plan, context) => {
+    const matrixKeys = new Set<string>();
+    plan.availableMatrix.forEach((entry, index) => {
+      const key = `${entry.contractId}\u0000${entry.project}`;
+      if (matrixKeys.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["availableMatrix", index],
+          message: `duplicate available contract/project: ${entry.contractId}/${entry.project}`,
+        });
+      }
+      matrixKeys.add(key);
+    });
+    const requiredMatrixKeys = new Set<string>();
+    plan.requiredMatrix.forEach((entry, index) => {
+      const key = `${entry.contractId}\u0000${entry.project}`;
+      if (requiredMatrixKeys.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredMatrix", index],
+          message: `duplicate required contract/project: ${entry.contractId}/${entry.project}`,
+        });
+      }
+      requiredMatrixKeys.add(key);
+      if (!entry.required || !matrixKeys.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredMatrix", index],
+          message: `required contract/project is absent or not required in available matrix: ${entry.contractId}/${entry.project}`,
+        });
+      }
+    });
+
+    const available = new Map<string, string>();
+    plan.availableCases.forEach((entry, index) => {
+      if (available.has(entry.caseId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["availableCases", index, "caseId"],
+          message: `duplicate available case: ${entry.caseId}`,
+        });
+      }
+      available.set(entry.caseId, entry.casePlanDigest);
+    });
+
+    const required = new Map<string, string>();
+    plan.requiredCases.forEach((entry, index) => {
+      if (required.has(entry.caseId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredCases", index, "caseId"],
+          message: `duplicate required case: ${entry.caseId}`,
+        });
+      }
+      required.set(entry.caseId, entry.casePlanDigest);
+      if (available.get(entry.caseId) !== entry.casePlanDigest) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredCases", index],
+          message: `required case is absent or changed in available cases: ${entry.caseId}`,
+        });
+      }
+    });
+
+    const selected = new Set<string>();
+    for (const [index, entry] of plan.selectedCases.entries()) {
+      if (selected.has(entry.caseId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["selectedCases", index, "caseId"],
+          message: `duplicate selected case: ${entry.caseId}`,
+        });
+      }
+      selected.add(entry.caseId);
+      if (available.get(entry.caseId) !== entry.casePlanDigest) {
+        context.addIssue({
+          code: "custom",
+          path: ["selectedCases", index],
+          message: `selected case is absent or changed in available cases: ${entry.caseId}`,
+        });
+      }
+    }
+
+    if (
+      plan.selection.mode === "all" &&
+      (selected.size !== required.size ||
+        [...required.keys()].some((caseId) => !selected.has(caseId)))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["selectedCases"],
+        message: "all selection must include every required case and no optional cases",
+      });
+    }
+  });
+
+export const diagnosticSchema = z
+  .object({
+    code: nonEmptyTrimmed,
+    stage: nonEmptyTrimmed,
+    message: nonEmptyTrimmed,
+    field: nonEmptyTrimmed.optional(),
+    selector: nonEmptyTrimmed.optional(),
+  })
+  .strict();
+
+const evidenceReferenceSchema = z
+  .object({
+    path: projectRelativePathSchema,
+    digest: sha256DigestSchema,
+  })
+  .strict();
+/**
+ * Portable, versioned diagnostics captured by one visual comparison. This is the
+ * contracts-owned representation written to an attempt's `score.json`; consumers never
+ * need to decode a Playwright-private attachment or reread mutable project files.
+ */
+export const attemptScoreSchema = z
+  .object({
+    formatVersion: z.literal(ATTEMPT_SCORE_FORMAT_VERSION),
+    kind: z.literal("framelia.attempt-score"),
+    runType: z.literal("final"),
+    pass: z.boolean(),
+    matchRatio: z.number().min(0).max(1).nullable(),
+    ssim: z.number().min(0).max(1).nullable(),
+    avgDeltaE: z.number().nonnegative().nullable(),
+    diffPixels: z.number().int().nonnegative().nullable(),
+    baselineSize: z
+      .object({ width: z.number().nonnegative(), height: z.number().nonnegative() })
+      .strict(),
+    actualSize: z
+      .object({ width: z.number().nonnegative(), height: z.number().nonnegative() })
+      .strict(),
+    targetUrl: httpUrlSchema,
+    baseline: z
+      .object({
+        snapshotDigest: sha256DigestSchema,
+        kind: z.enum(["figma", "web"]),
+        fileKey: nonEmptyTrimmed.optional(),
+        nodeId: nonEmptyTrimmed.optional(),
+        fetchedAt: z.iso.datetime().optional(),
+        lastModified: z.string().nullable().optional(),
+        promotedAt: z.iso.datetime().optional(),
+        promotedBy: nonEmptyTrimmed.optional(),
+        version: z.number().int().positive().optional(),
+        sourceRunId: nonEmptyTrimmed.optional(),
+      })
+      .strict(),
+    resolvedThreshold: z
+      .object({
+        name: profileSchema,
+        minMatch: z.number().min(0).max(1),
+        maxDiffPixels: z.number().int().nonnegative().nullable(),
+        minSSIM: z.number().min(0).max(1),
+        maxAvgDeltaE: z.number().nonnegative(),
+        maxAreaGapPercent: z.number().nonnegative(),
+        cluster: z.boolean(),
+        stabilityMaxDiffRatio: z.number().nonnegative(),
+        gateEligible: z.boolean(),
+        styleGateEligible: z.boolean(),
+      })
+      .strict(),
+    attachmentBaseName: nonEmptyTrimmed,
+    profile: profileSchema,
+    clusterCheck: z.boolean().optional(),
+    profileOverrides: profileOverridesSchema.optional(),
+    styleToleranceOverrides: styleToleranceOverridesSchema.optional(),
+    gateEligible: z.boolean().optional(),
+    styleGateEligible: z.boolean().optional(),
+    scope: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("page"), fullPage: z.boolean() }).strict(),
+      z
+        .object({
+          kind: z.literal("region"),
+          selector: nonEmptyTrimmed,
+          expectedSize: z
+            .object({ width: z.number().nonnegative(), height: z.number().nonnegative() })
+            .strict()
+            .optional(),
+        })
+        .strict(),
+    ]),
+    masks: z.array(visualMaskSchema).optional(),
+    maxMaskedAreaRatio: z.number().min(0).max(1).optional(),
+    captureEvidence: captureEvidenceSchema.optional(),
+    maskEvidence: captureMaskEvidenceSchema.optional(),
+    stability: stabilitySchema,
+    stabilitySampleCount: z.number().int().min(2).max(5),
+    topIssues: z.array(topIssueSchema),
+    diagnostics: z.array(visualDiagnosticSchema),
+    warnings: z.array(z.string()),
+  })
+  .strict();
+
+const trustedRequiredCaseSchema = z
+  .object({
+    caseId: nonEmptyTrimmed,
+    contractId: z.string().regex(CONTRACT_ID_PATTERN),
+    projectName: projectNameSchema,
+    repeatIndex: z.number().int().nonnegative(),
+    casePlanDigest: sha256DigestSchema,
+    contractDigest: sha256DigestSchema,
+    bindingDigest: sha256DigestSchema,
+    specFile: projectRelativePathSchema,
+    specFileDigest: sha256DigestSchema,
+    titlePath: z.array(nonEmptyTrimmed).min(1),
+  })
+  .strict();
+
+/**
+ * Authority supplied independently by protected CI/deployment metadata. A bundle's own
+ * selection, policy, source and endpoint strings are evidence to compare, never authority.
+ */
+export const authoritativeRunRequirementsSchema = z
+  .object({
+    formatVersion: z.literal(AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION),
+    kind: z.literal("framelia.authoritative-run-requirements"),
+    runId: nonEmptyTrimmed,
+    issuedAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime(),
+    jobIdentity: nonEmptyTrimmed,
+    audience: nonEmptyTrimmed,
+    requiredCases: z.array(trustedRequiredCaseSchema).min(1),
+    policyDigest: sha256DigestSchema,
+    source: z
+      .object({
+        sourceDigest: sha256DigestSchema,
+        buildDigest: sha256DigestSchema,
+        dirty: z.literal(false),
+      })
+      .strict(),
+    servedBuild: z.discriminatedUnion("mode", [
+      z
+        .object({
+          mode: z.literal("ci-owned"),
+          observedBuildDigest: sha256DigestSchema,
+          observedOrigin: httpOriginSchema,
+          freshServerOwnedByJob: z.literal(true),
+        })
+        .strict(),
+      z
+        .object({
+          mode: z.literal("deployment-attested"),
+          attestation: z
+            .object({
+              observedBuildDigest: sha256DigestSchema,
+              observedOrigin: httpOriginSchema,
+              issuer: nonEmptyTrimmed,
+              subject: nonEmptyTrimmed,
+              proofDigest: sha256DigestSchema,
+              verifiedBy: nonEmptyTrimmed,
+            })
+            .strict(),
+        })
+        .strict(),
+    ]),
+    retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
+  })
+  .strict()
+  .superRefine((requirements, context) => {
+    const seen = new Set<string>();
+    requirements.requiredCases.forEach((entry, index) => {
+      if (seen.has(entry.caseId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["requiredCases", index, "caseId"],
+          message: `duplicate trusted required case: ${entry.caseId}`,
+        });
+      }
+      seen.add(entry.caseId);
+    });
+    if (Date.parse(requirements.expiresAt) <= Date.parse(requirements.issuedAt)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "must be later than issuedAt",
+      });
+    }
+  });
+
+export const signedAuthoritativeRunRequirementsSchema = z
+  .object({
+    formatVersion: z.literal(SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION),
+    kind: z.literal("framelia.signed-authoritative-run-requirements"),
+    payload: authoritativeRunRequirementsSchema,
+    signature: z
+      .string()
+      .regex(/^(?:[A-Za-z0-9+/_-]{4})*(?:[A-Za-z0-9+/_-]{2}(?:==)?|[A-Za-z0-9+/_-]{3}=?)?$/)
+      .min(40),
+  })
+  .strict();
+
+export const attemptRecordSchema = z
+  .object({
+    formatVersion: z.literal(ATTEMPT_FORMAT_VERSION),
+    kind: z.literal("framelia.attempt"),
+    attemptId: nonEmptyTrimmed,
+    runId: nonEmptyTrimmed,
+    caseId: nonEmptyTrimmed,
+    casePlanDigest: sha256DigestSchema,
+    retryIndex: z.number().int().nonnegative(),
+    executionState: z.enum(["completed", "blocked", "incomplete", "error"]),
+    visualVerdict: z.enum(["passed", "mismatched", "not-evaluated"]),
+    startedAt: z.iso.datetime(),
+    completedAt: z.iso.datetime().optional(),
+    diagnostics: z.array(diagnosticSchema),
+    evidence: z
+      .object({
+        expected: evidenceReferenceSchema.optional(),
+        actual: evidenceReferenceSchema.optional(),
+        diff: evidenceReferenceSchema.optional(),
+        score: evidenceReferenceSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((attempt, context) => {
+    if (attempt.executionState === "completed" && !attempt.completedAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["completedAt"],
+        message: "completed attempt must have completedAt",
+      });
+    }
+    // Skips, blocks, incomplete runs (timeout/interruption), and writer/comparison errors
+    // can never resolve to a visual pass -- only a fully completed execution that actually
+    // ran the capture/compare pipeline to a definitive verdict may claim "passed". This is
+    // the schema-level guard for framelia/#77's acceptance criterion: "Skips, missing
+    // results, writer failures, cancellation and interruptions cannot become visual passes."
+    if (attempt.visualVerdict === "passed" && attempt.executionState !== "completed") {
+      context.addIssue({
+        code: "custom",
+        path: ["visualVerdict"],
+        message: `a "passed" visual verdict requires executionState "completed" (got "${attempt.executionState}")`,
+      });
+    }
+  });
+
+export const runRecordStatusSchema = z.enum([
+  "planned",
+  "running",
+  "finalized",
+  "incomplete",
+  "error",
+]);
+export type RunRecordStatus = z.infer<typeof runRecordStatusSchema>;
+
+export function isTerminalRunStatus(status: RunRecordStatus): boolean {
+  return status === "finalized" || status === "incomplete" || status === "error";
+}
+
+export const runRecordSchema = z
+  .object({
+    formatVersion: z.literal(RUN_FORMAT_VERSION),
+    kind: z.literal("framelia.run"),
+    runId: nonEmptyTrimmed,
+    planDigest: sha256DigestSchema,
+    status: runRecordStatusSchema,
+    createdAt: z.iso.datetime(),
+    finalizedAt: z.iso.datetime().optional(),
+    diagnostics: z.array(diagnosticSchema),
+    cases: z.array(
+      z
+        .object({
+          caseId: nonEmptyTrimmed,
+          attemptIds: z.array(nonEmptyTrimmed),
+          selectedAttemptId: nonEmptyTrimmed.optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((run, context) => {
+    const caseIds = new Set<string>();
+    run.cases.forEach((entry, index) => {
+      if (caseIds.has(entry.caseId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "caseId"],
+          message: `duplicate run case: ${entry.caseId}`,
+        });
+      }
+      caseIds.add(entry.caseId);
+
+      const attemptIds = new Set<string>();
+      entry.attemptIds.forEach((attemptId, attemptIndex) => {
+        if (attemptIds.has(attemptId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["cases", index, "attemptIds", attemptIndex],
+            message: `duplicate attempt id: ${attemptId}`,
+          });
+        }
+        attemptIds.add(attemptId);
+      });
+      if (entry.selectedAttemptId && !attemptIds.has(entry.selectedAttemptId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "selectedAttemptId"],
+          message: "selected attempt must belong to the case",
+        });
+      }
+    });
+    if (isTerminalRunStatus(run.status) && !run.finalizedAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["finalizedAt"],
+        message: "terminal run must have finalizedAt",
+      });
+    }
+  });
+
+export const projectedEvidenceSchema = z
+  .object({
+    availability: z.enum(["available", "missing", "invalid", "not-recorded"]),
+    path: projectRelativePathSchema.optional(),
+    digest: sha256DigestSchema.optional(),
+    message: nonBlankPreserved.optional(),
+  })
+  .strict();
+
+export const projectedAttemptSchema = z
+  .object({
+    attemptId: nonEmptyTrimmed,
+    retryIndex: z.number().int().nonnegative(),
+    chosen: z.boolean(),
+    executionState: z.enum(["completed", "blocked", "incomplete", "error"]),
+    visualVerdict: z.enum(["passed", "mismatched", "not-evaluated"]),
+    diagnostics: z.array(diagnosticSchema),
+    evidence: z
+      .object({
+        expected: projectedEvidenceSchema,
+        actual: projectedEvidenceSchema,
+        diff: projectedEvidenceSchema,
+        score: projectedEvidenceSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+export const projectedCaseSchema = z
+  .object({
+    caseId: nonEmptyTrimmed,
+    contractId: z.string().regex(CONTRACT_ID_PATTERN),
+    project: projectNameSchema,
+    repeatIndex: z.number().int().nonnegative(),
+    chosenAttemptId: nonEmptyTrimmed.optional(),
+    attempts: z.array(projectedAttemptSchema),
+    missingAttemptIds: z.array(nonEmptyTrimmed),
+    diagnostics: z.array(diagnosticSchema),
+  })
+  .strict();
+
+export const runCoverageSchema = z
+  .object({
+    mode: z.enum(["all", "subset"]),
+    availableCaseIds: z.array(nonEmptyTrimmed),
+    requiredCaseIds: z.array(nonEmptyTrimmed),
+    selectedCaseIds: z.array(nonEmptyTrimmed),
+    selectedCount: z.number().int().nonnegative(),
+    fullRequiredCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const runProjectionSchema = z
+  .object({
+    runId: nonEmptyTrimmed,
+    bundlePath: projectRelativePathSchema,
+    selection: runCoverageSchema,
+    executionState: z.enum(["running", "completed", "incomplete", "error"]),
+    visualVerdict: z.enum(["passed", "mismatched", "not-evaluated"]),
+    cases: z.array(projectedCaseSchema),
+    diagnostics: z.array(diagnosticSchema),
+  })
+  .strict();
+
+export const nextOperationSchema = z
+  .object({
+    command: nonEmptyTrimmed,
+    argv: z.array(z.string()),
+  })
+  .strict();
+
+export const commandOutcomeSchema = z
+  .object({
+    formatVersion: z.literal(COMMAND_OUTCOME_FORMAT_VERSION),
+    kind: z.literal("framelia.command-outcome"),
+    command: nonEmptyTrimmed,
+    executionState: z.enum(["completed", "blocked", "incomplete", "error"]),
+    visualVerdict: z.enum(["passed", "mismatched", "not-evaluated"]),
+    exitCode: z.union([z.literal(0), z.literal(1), z.literal(2)]),
+    runId: nonEmptyTrimmed.optional(),
+    bundlePath: projectRelativePathSchema.optional(),
+    diagnostics: z.array(diagnosticSchema),
+    coverage: runCoverageSchema.optional(),
+    cases: z.array(projectedCaseSchema).optional(),
+    selection: z
+      .object({
+        requested: z.discriminatedUnion("mode", [
+          z.object({ mode: z.literal("all") }).strict(),
+          z
+            .object({
+              mode: z.literal("contracts"),
+              contracts: uniqueStrings(z.string().regex(CONTRACT_ID_PATTERN)),
+            })
+            .strict(),
+        ]),
+        selectedProjects: projectNamesSchema,
+        selectedCaseIds: z.array(nonEmptyTrimmed).min(1),
+        fullRequiredCount: z.number().int().nonnegative(),
+        selectedCount: z.number().int().positive(),
+        scope: z.enum(["all", "subset"]),
+      })
+      .strict()
+      .optional(),
+    next: nextOperationSchema.optional(),
+  })
+  .strict()
+  .superRefine((outcome, context) => {
+    const expectedExitCode =
+      outcome.executionState !== "completed" ? 2 : outcome.visualVerdict === "mismatched" ? 1 : 0;
+    if (outcome.exitCode !== expectedExitCode) {
+      context.addIssue({
+        code: "custom",
+        path: ["exitCode"],
+        message: `must be ${expectedExitCode} for ${outcome.executionState}/${outcome.visualVerdict}`,
+      });
+    }
+  });
+
+export type AuthoredContract = z.infer<typeof authoredContractSchema>;
+export type BaselineSnapshot = z.infer<typeof baselineSnapshotSchema>;
+export type ContractBinding = z.infer<typeof contractBindingSchema>;
+export type TestRegistration = z.infer<typeof testRegistrationSchema>;
+export type CollectedCase = z.infer<typeof collectedCaseSchema>;
+export type CollectionManifest = z.infer<typeof collectionManifestSchema>;
+export type CollectedProject = z.infer<typeof collectedProjectSchema>;
+export type CollectedSetupCase = z.infer<typeof collectedSetupCaseSchema>;
+export type RunContext = z.infer<typeof runContextSchema>;
+export type TransportStatus = z.infer<typeof transportStatusSchema>;
+export type SourceIdentity = z.infer<typeof sourceIdentitySchema>;
+export type CasePlan = z.infer<typeof casePlanSchema>;
+export type RunSelection = z.infer<typeof runSelectionSchema>;
+export type RunPlan = z.infer<typeof runPlanSchema>;
+export type Diagnostic = z.infer<typeof diagnosticSchema>;
+export type AttemptScore = z.infer<typeof attemptScoreSchema>;
+export type AuthoritativeRunRequirements = z.infer<typeof authoritativeRunRequirementsSchema>;
+export type SignedAuthoritativeRunRequirements = z.infer<
+  typeof signedAuthoritativeRunRequirementsSchema
+>;
+export type AttemptRecord = z.infer<typeof attemptRecordSchema>;
+export type RunRecord = z.infer<typeof runRecordSchema>;
+export type CommandOutcome = z.infer<typeof commandOutcomeSchema>;
+export type ProjectedEvidence = z.infer<typeof projectedEvidenceSchema>;
+export type ProjectedAttempt = z.infer<typeof projectedAttemptSchema>;
+export type ProjectedCase = z.infer<typeof projectedCaseSchema>;
+export type RunCoverage = z.infer<typeof runCoverageSchema>;
+export type RunProjection = z.infer<typeof runProjectionSchema>;
+export type NextOperation = z.infer<typeof nextOperationSchema>;

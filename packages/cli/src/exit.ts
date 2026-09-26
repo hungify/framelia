@@ -13,11 +13,18 @@ export class UsageError extends Error {
   }
 }
 
+function friendlyZodIssueMessage(issue: ZodError["issues"][number]): string {
+  // Avoid leaking Zod's raw regex pattern from a failed .regex() check.
+  if (issue.code === "invalid_format") return "has an invalid format";
+  return issue.message;
+}
+
 export function usageErrorFromZodError(error: ZodError): UsageError {
   const message = error.issues
-    .map((issue) =>
-      issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message,
-    )
+    .map((issue) => {
+      const text = friendlyZodIssueMessage(issue);
+      return issue.path.length > 0 ? `${issue.path.join(".")}: ${text}` : text;
+    })
     .join("; ");
   return new UsageError(message);
 }

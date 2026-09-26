@@ -13,8 +13,6 @@ import {
   type BaselineSource,
   type CaptureEvidenceArtifact,
   type DashboardContractResult,
-  type VerificationArtifact,
-  type VerificationContract,
 } from "@framelia/contracts";
 import {
   FIGMA_BASELINE_ARTIFACT,
@@ -101,7 +99,11 @@ function dashboardArtifactPath(id: string, name: string): string {
   return `contracts/${encodeURIComponent(id)}/${name}`;
 }
 
-function attachmentPath(
+/** Finds the file path of one of the matcher's `-expected`/`-actual`/`-diff` image
+ *  attachments off a TestResult. Exported so run-bundle-projection.ts's attempt builder
+ *  reads the exact same attachments this module's own durable-evidence writers do,
+ *  rather than a second, independently-maintained lookup convention. */
+export function attachmentPath(
   result: TestResult,
   baseName: string,
   suffix: "-expected" | "-actual" | "-diff",
@@ -127,13 +129,6 @@ function dashboardStatusFor(result: TestResult): DashboardContractResult["status
 export interface DerivedContract {
   id: string;
   dashboardResult: DashboardContractResult;
-  /**
-   * Only set when the primary score is figma-baselined. `VerificationContract.baseline`
-   * is figma-only by schema -- a toMatchPage/toMatchUrl result has no schema-valid
-   * `baseline` value, so it gets no persisted contract, only the live dashboardResult above.
-   */
-  verificationContract?: VerificationContract;
-  verificationResult?: VerificationArtifact["results"][number];
   /** Figma matcher evidence is durable; live two-page (toMatchPage/toMatchUrl) results
    *  remain dashboard/runtime-only -- there is no stable baseline artifact to persist
    *  a pointer to. */
@@ -147,11 +142,8 @@ export interface DerivedContract {
     targetUrl: string;
   };
   /** Set only for a toMatchPageBaseline result (baselineKind "web" with a promoted
-   *  baseline) -- unlike live two-page results, this one does have a stable baseline
-   *  artifact (see @framelia/verify's page-baseline.ts), so its image evidence is
-   *  worth persisting durably too. Deliberately skips the VerificationArtifact/done-gate
-   *  pipeline -- this only lets the dashboard keep showing expected/actual/diff and
-   *  who/when promoted the baseline after the live run ends. */
+   *  baseline) -- unlike live two-page results, this one has a stable baseline artifact,
+   *  so its image evidence remains useful to the low-level live dashboard. */
   writePageBaselineEvidence?: {
     outDir: string;
     expectedPath?: string;
@@ -173,7 +165,6 @@ export function deriveContract(
   const id = total === 1 ? baseId : `${baseId}-${index + 1}`;
   const relativeOutDir = visualArtifactPath(id);
   const absoluteOutDir = path.join(evidenceRoot, relativeOutDir);
-  const outDir = relativeOutDir;
   const primary = score;
   const pass = result.status === "passed";
   const targetUrl = httpTargetUrl(primary?.targetUrl);
@@ -298,54 +289,6 @@ export function deriveContract(
   // primary.profile/clusterCheck are already resolved (set at matcher time by
   // resolveFigmaCompareOptions) -- re-running resolveFigmaCompareOptions on the resolved
   // profile would hit its `explicit` branch and silently drop a forced clusterCheck default.
-  const profile = primary.profile ?? "page";
-  const verificationContract: VerificationContract = {
-    id,
-    name: contractNameFor(test),
-    baseline,
-    viewport: {
-      preset: "matcher",
-      width: primary.actualSize.width || 1,
-      height: primary.actualSize.height || 1,
-    },
-    outDir,
-    scope:
-      scope.kind === "region"
-        ? {
-            kind: "region",
-            selector: scope.selector,
-            // Only the author's declared options.expectSize counts here -- an omitted expectSize
-            // must stay absent so validate.ts's "gate-eligible component contract requires
-            // expectSize" check can actually catch it. Observed capture dimensions
-            // (regionExpectedSize) are for dashboard display only (see the capture region above).
-            ...(scope.expectedSize ? { expectSize: scope.expectedSize } : {}),
-          }
-        : { kind: "page", pageReason: SYNTHETIC_PAGE_REASON },
-    ...(profile === "page" ? {} : { profile }),
-    ...(primary.clusterCheck !== undefined ? { clusterCheck: primary.clusterCheck } : {}),
-    // profileOverrides is an explicit author choice, not a computed default -- there is
-    // nothing to re-derive it from, so it's read straight off the persisted score attachment.
-    ...(primary.profileOverrides ? { profileOverrides: primary.profileOverrides } : {}),
-    // gateEligible is boolean, unlike profileOverrides -- `false` (the "deliberately not
-    // gate-eligible" case) is the value most worth preserving, so this must guard on
-    // `!== undefined`, not truthiness, same as clusterCheck above.
-    ...(primary.gateEligible !== undefined ? { gateEligible: primary.gateEligible } : {}),
-    ...(primary.styleGateEligible !== undefined
-      ? { styleGateEligible: primary.styleGateEligible }
-      : {}),
-    ...(primary.masks?.length ? { masks: primary.masks } : {}),
-  };
-
-  const verificationResult: VerificationArtifact["results"][number] = isTerminal
-    ? { id, ok: true, pass, outDir }
-    : {
-        id,
-        ok: false,
-        pass: false,
-        error: `TEST_${result.status.toUpperCase()}`,
-        message: result.error?.message ?? `Test ${result.status}.`,
-        outDir,
-      };
 
   const expectedPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-expected");
   const actualAttachmentPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-actual");
@@ -381,8 +324,6 @@ export function deriveContract(
   return {
     id,
     dashboardResult: { ...dashboardResult, ...imageEvidence },
-    verificationContract,
-    verificationResult,
     writeEvidence: {
       outDir: absoluteOutDir,
       expectedPath,
@@ -563,7 +504,6 @@ export interface TestEndProjection {
   dashboardId: string;
   dashboardResult: DashboardContractResult;
   files: Array<[string, string]>;
-  artifacts: VerificationArtifact[];
 }
 
 const DURABLE_EVIDENCE_NAMES = [
@@ -607,11 +547,9 @@ function collectWrittenFiles(
 }
 
 /**
- * Everything one Playwright onTestEnd callback needs to do: derive each contract the test's
- * score attachments imply, write durable evidence for the figma-baselined ones, and assemble
- * both the live dashboard result and the durable VerificationArtifacts. The Reporter itself
- * (reporter.ts) only wires this into Playwright's lifecycle hooks and forwards the result --
- * it owns no projection logic of its own.
+ * Everything one low-level Playwright onTestEnd callback needs to do: derive each score,
+ * retain its live dashboard projection, and preserve promoted web-baseline evidence.
+ * Annotated contract tests use the selected run bundle instead.
  */
 export function finalizeTestEnd(
   test: TestCase,
@@ -650,25 +588,6 @@ export function finalizeTestEnd(
   const dashboardId = sanitizeTestId(test);
   const topIssues = derivedContracts.flatMap((derived) => derived.dashboardResult.topIssues ?? []);
 
-  const artifacts: VerificationArtifact[] = [];
-  for (const derived of derivedContracts) {
-    if (!derived.verificationContract || !derived.verificationResult) continue;
-    artifacts.push({
-      schemaVersion: SCHEMA_VERSION,
-      kind: "framelia.visual-verification",
-      createdAt: new Date().toISOString(),
-      projectRoot: evidenceRoot,
-      request: {
-        schemaVersion: SCHEMA_VERSION,
-        target: { kind: "web", url: derived.writeEvidence?.targetUrl ?? FALLBACK_TARGET_URL },
-        contracts: [derived.verificationContract],
-      },
-      ok: derived.verificationResult.ok,
-      allPassed: derived.verificationResult.ok && derived.verificationResult.pass,
-      results: [derived.verificationResult],
-    });
-  }
-
   return {
     dashboardId,
     dashboardResult: {
@@ -677,6 +596,5 @@ export function finalizeTestEnd(
       ...(topIssues.length ? { topIssues } : {}),
     },
     files,
-    artifacts,
   };
 }

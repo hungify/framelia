@@ -21,29 +21,38 @@ export { compare } from "./compare/index.ts";
 export { attributeDiffRegions } from "./compare/attribution.ts";
 export type { DiffRegionAttribution, SelectorBounds } from "./compare/attribution.ts";
 export type { DiffCluster } from "./compare/pixel.ts";
-export {
-  checkDoneGate,
-  DEFAULT_MAX_BASELINE_AGE_MS,
-  DEFAULT_MAX_SCORE_AGE_MS,
-} from "./done-gate/index.ts";
-export type {
-  DoneGateOptions,
-  DoneGateVerdict,
-  DoneGateViewport,
-  ViewportVerdict,
-} from "./done-gate/index.ts";
+export { canonicalJson, canonicalJsonDigest } from "./canonical-json.ts";
+export type { CanonicalJsonValue } from "./canonical-json.ts";
+export { portableErrorMessage, sanitizePortableValue } from "./portable.ts";
 export { fetchBaseline, baselineMetaPath, readBaselineMeta } from "./baseline/figma-fetch.ts";
 export type {
   FetchBaselineOptions,
   FetchBaselineOutcome,
   BaselineMeta,
 } from "./baseline/figma-fetch.ts";
+export { readPinnedBaseline } from "./pinned-baseline.ts";
+export type { PinnedBaseline } from "./pinned-baseline.ts";
+export {
+  assertRawFileState,
+  publishBaselineSnapshot,
+  readRawFileState,
+  stageFigmaBaseline,
+  withAuthoringLock,
+  writeAuthoredContract,
+} from "./authoring.ts";
+export type {
+  AuthoringLockDependencies,
+  FetchBaselineFn,
+  RawFileState,
+  StageFigmaBaselineOptions,
+  StagedBaselineSnapshot,
+} from "./authoring.ts";
 export { assertProjectRelativePath, loadEnvFiles, loadProjectEnv } from "./load-env.ts";
+export { fsyncDirectory, writeFileAtomic } from "./fs-atomic.ts";
 export { runWithConcurrency } from "./concurrency.ts";
 export { resolveArtifactPath } from "./paths.ts";
 export { checkBaselineStaleness, DEFAULT_MAX_BASELINE_AGE_DAYS } from "./staleness.ts";
 export type { StalenessOptions } from "./staleness.ts";
-export { doneGateFromArtifact, writeVerificationArtifact } from "./verify.ts";
 export { SCHEMA_VERSION, AppError } from "./types.ts";
 export type { AppErrorCode } from "./types.ts";
 export { RUN_ARTIFACT, FIGMA_BASELINE_ARTIFACT, WEB_BASELINE_ARTIFACT } from "./artifacts.ts";

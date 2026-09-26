@@ -57,6 +57,9 @@ importers:
       '@vitejs/plugin-vue':
         specifier: ^6.0.8
         version: 6.0.8(vite@8.2.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(vue@3.5.40(typescript@6.0.3))
+      '@vue/server-renderer':
+        specifier: ^3.5.40
+        version: 3.5.40
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -99,9 +102,6 @@ importers:
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
-      tsx:
-        specifier: ^4.22.4
-        version: 4.23.1
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -112,6 +112,9 @@ importers:
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.25)(tsx@4.23.1)(typescript@6.0.3)(yaml@2.9.0)
+      tsx:
+        specifier: ^4.22.4
+        version: 4.23.1
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -183,6 +186,9 @@ importers:
       nanoid:
         specifier: 3.3.16
         version: 3.3.16
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@framelia/dashboard-server':
         specifier: workspace:*
@@ -199,6 +205,9 @@ importers:
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.25)(tsx@4.23.1)(typescript@6.0.3)(yaml@2.9.0)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -214,9 +223,6 @@ importers:
       '@framelia/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@playwright/test':
-        specifier: ^1.61.1
-        version: 1.62.1
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -235,10 +241,19 @@ importers:
       ssim.js:
         specifier: ^3.5.0
         version: 3.5.0
+      tinyglobby:
+        specifier: 0.2.17
+        version: 0.2.17
+      tsx:
+        specifier: ^4.22.4
+        version: 4.23.1
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@playwright/test':
+        specifier: ^1.61.1
+        version: 1.62.1
       '@types/node':
         specifier: 26.0.1
         version: 26.0.1
@@ -251,9 +266,6 @@ importers:
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.25)(tsx@4.23.1)(typescript@6.0.3)(yaml@2.9.0)
-      tsx:
-        specifier: ^4.22.4
-        version: 4.23.1
       typescript:
         specifier: 6.0.3
         version: 6.0.3

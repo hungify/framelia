@@ -158,12 +158,31 @@ function selectedRunFixture(): SelectedRun {
   return {
     runId: "run-42",
     plan: {
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "framelia.run-plan",
       runId: "run-42",
       policyDigest: DIGEST,
+      executionGraphDigest: DIGEST,
       retryAcceptance: "require-first-attempt",
       selection: { mode: "all", contracts: ["home"] },
+      availableMatrix: [
+        {
+          contractId: "home",
+          contractFile: "contracts/home.json",
+          contractDigest: DIGEST,
+          project: "chromium",
+          required: true,
+        },
+      ],
+      requiredMatrix: [
+        {
+          contractId: "home",
+          contractFile: "contracts/home.json",
+          contractDigest: DIGEST,
+          project: "chromium",
+          required: true,
+        },
+      ],
       availableCases: [{ caseId: casePlan.caseId, casePlanDigest: DIGEST }],
       requiredCases: [{ caseId: casePlan.caseId, casePlanDigest: DIGEST }],
       selectedCases: [{ caseId: casePlan.caseId, casePlanDigest: DIGEST }],

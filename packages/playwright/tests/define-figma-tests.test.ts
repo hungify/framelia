@@ -445,7 +445,10 @@ describe("defineFigmaTests (registration)", () => {
     });
 
     expect(registered).toHaveLength(2);
-    expect(registered.map((entry) => entry.title)).toEqual(["Login · Desktop", "Login · Mobile"]);
+    expect(registered.map((entry) => entry.title)).toEqual([
+      "[login.desktop] Login · Desktop",
+      "[login.mobile] Login · Mobile",
+    ]);
     expect(prepareCalls).toBe(0);
 
     const bindings = registered.map((entry) => {
@@ -462,13 +465,13 @@ describe("defineFigmaTests (registration)", () => {
     });
   });
 
-  it("registers a parameterized contracts array from one call site, collecting distinct titles per entry", () => {
+  it("keeps same-source contracts with duplicate human names uniquely selectable by exact ID", () => {
     const root = temporaryRoot();
     const files = ["a", "b", "c"].map((suffix) =>
       writeContractFile(root, `${suffix}.json`, {
         ...validContract,
         id: `login.${suffix}`,
-        name: `Login · ${suffix}`,
+        name: "Login",
       }),
     );
 
@@ -479,7 +482,11 @@ describe("defineFigmaTests (registration)", () => {
       prepare: async () => undefined,
     });
 
-    expect(registered.map((entry) => entry.title)).toEqual(["Login · a", "Login · b", "Login · c"]);
+    expect(registered.map((entry) => entry.title)).toEqual([
+      "[login.a] Login",
+      "[login.b] Login",
+      "[login.c] Login",
+    ]);
   });
 
   it("resolves URL contract inputs the same module-relative way the public example shows", () => {
@@ -494,7 +501,7 @@ describe("defineFigmaTests (registration)", () => {
     });
 
     expect(registered).toHaveLength(1);
-    expect(registered[0]?.title).toBe("Login · Desktop");
+    expect(registered[0]?.title).toBe("[login.desktop] Login · Desktop");
   });
 
   it("throws a clear error for a contract file that is not valid JSON", () => {

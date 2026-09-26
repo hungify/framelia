@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { compileFunction } from "node:vm";
 
 import { MIN_STABILITY_SAMPLES } from "@framelia/contracts";
 import {
@@ -34,6 +35,8 @@ import {
   SCORE_ATTACHMENT_SUFFIX,
 } from "./attach.ts";
 import { resolveFigmaCompareOptions } from "./figma-profile.ts";
+import { CONTRACT_ANNOTATION_TYPE } from "./registration.ts";
+import { assertExecuteCaseReady, assertExecutePolicyReady } from "./run-context.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "./score-attachment.ts";
 import {
   buildAttributionIssues,
@@ -44,12 +47,45 @@ import {
 } from "./style-checks.ts";
 import { withTimeout } from "./timeout.ts";
 
-/** Annotation `type` every registered test carries (see this module's own doc comment).
- *  Exported so the Reporter (and its run-bundle projection) can find these tests without
- *  duplicating the literal. */
-export const CONTRACT_ANNOTATION_TYPE = "framelia.contract";
+/** Annotation `type` every registered test carries. */
+export { CONTRACT_ANNOTATION_TYPE } from "./registration.ts";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+
+type SpecRegistrationFunction = (
+  test: unknown,
+  title: unknown,
+  details: unknown,
+  body: unknown,
+) => unknown;
+const registrationFunctions = new Map<string, SpecRegistrationFunction>();
+
+/**
+ * Playwright derives `TestCase.location.file` from the immediate public `test(...)`
+ * call site, while `--test-list` matches that location against the documented file
+ * Suite title. A normal helper call would therefore point every generated case at this
+ * package file and make the exact file-Suite tuple unselectable. Compile one tiny
+ * forwarding call with the caller's real spec filename so Playwright records the
+ * public registration under that spec without touching private runner APIs.
+ */
+function registerAtSpecLocation<TestArgs extends object, WorkerArgs extends object>(
+  test: TestType<TestArgs, WorkerArgs>,
+  specFilePath: string,
+  title: string,
+  details: unknown,
+  body: (args: TestArgs, testInfo: TestInfo) => void | Promise<void>,
+): void {
+  let register = registrationFunctions.get(specFilePath);
+  if (!register) {
+    register = compileFunction(
+      "test(title, details, body);",
+      ["test", "title", "details", "body"],
+      { filename: specFilePath },
+    ) as SpecRegistrationFunction;
+    registrationFunctions.set(specFilePath, register);
+  }
+  register(test, title, details, body);
+}
 
 // Playwright's own default context viewport (`browser.newContext()` with no explicit
 // `viewport`/`use.viewport` override) -- the sentinel this module uses to tell "a
@@ -72,11 +108,12 @@ export interface FigmaContractTarget {
  * decide which fixtures to resolve for that test (see the registered callback below); it
  * rejects both a plain (non-destructured) parameter and a rest element (`...rest`)
  * outright, at load time, before any code runs. Because `defineFigmaTests` is a generic
- * library function, it cannot know a downstream caller's own custom fixture *names* at
- * its own authoring time, so it cannot statically list them for Playwright's parser --
- * there is no runtime-dynamic way around this without unsafe code generation
- * (`new Function`/`eval`), which this package's own "no internal APIs, no magic"
- * conventions rule out. `page` is the one fixture name `defineFigmaTests` can always,
+ * library function, it cannot know a downstream caller's custom fixture names at
+ * authoring time, so it cannot emit the literal callback destructuring Playwright's
+ * parser requires. Generating a callback signature from caller-controlled names would
+ * be unsafe; the fixed `compileFunction` forwarding call above only attributes the
+ * public registration to its spec file and does not change the callback's fixture
+ * syntax. `page` is the one fixture name `defineFigmaTests` can always,
  * safely declare (it's required by this module's own `TestArgs extends { page: Page }`
  * bound), and it is enough: Playwright's own documented pattern for a scenario that
  * needs extra per-test setup (authentication, seeding, a modal already dismissed) before
@@ -533,14 +570,17 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
     // rejection for a test that was never going to run against it anyway.
     policyPromise.catch(() => undefined);
 
-    test(
-      contract.name,
+    registerAtSpecLocation(
+      test,
+      specFilePath,
+      `[${contract.id}] ${contract.name}`,
       { annotation: { type: CONTRACT_ANNOTATION_TYPE, description: JSON.stringify(registration) } },
       // `{ page }` is the only fixture name this generic library can statically declare
       // here -- see DefineFigmaTestsOptions's own doc comment for why Playwright's
       // fixture-parser constraint rules out forwarding a caller's full, unknown-in-advance
       // fixture set.
-      async ({ page }: { page: Page }, testInfo: TestInfo) => {
+      async ({ page }, testInfo: TestInfo) => {
+        assertExecuteCaseReady(testInfo, registration, projectRoot);
         // Precapture reconciliation: `contract` above was loaded once, at collection
         // time, and closed over by this callback -- Playwright may not actually invoke
         // this callback until long after collection, and nothing else re-validates that
@@ -578,19 +618,11 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
 
         // `specUrl` binds "the file whose bytes were hashed above" to a real identity
         // only by the caller's own honesty -- nothing so far stops a caller from
-        // passing an arbitrary, stable, unrelated file (or simply the wrong file)
-        // whose digest has nothing to do with what Playwright is actually executing.
-        // `testInfo.file` looks like the right runtime-authoritative check but is NOT:
-        // it reports the location where `test(...)` was *textually called* (a stack
-        // trace at registration time), which for every `defineFigmaTests` registration
-        // is always this library's own call site inside this file, never the caller's
-        // spec file -- confirmed empirically against a real `playwright test` run.
-        // `testInfo.titlePath` is documented as "the full title path starting with the
-        // test file name" and is populated from the collected file `Suite`'s own title
-        // (tracked independently of any wrapping function's own call site), relative to
-        // `testInfo.project.testDir` -- resolve it to an absolute path, then to the
-        // same portable form `registration.specFile` is already in, and refuse to run
-        // if they disagree.
+        // passing an arbitrary, stable, unrelated file. Registration deliberately
+        // attributes the public `test(...)` call to `specFilePath`, so Playwright's
+        // documented file Suite and exact `--test-list` tuple should resolve to the
+        // same file. Recompute that documented Suite identity relative to
+        // `testInfo.project.testDir` and refuse to run if it disagrees.
         const liveSpecFile = toPortablePath(
           path.relative(
             projectRoot,
@@ -635,6 +667,11 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
           projectRoot,
           allowUninitialized: true,
         });
+        assertExecutePolicyReady(
+          projectRoot,
+          registeredPolicy.policyDigest,
+          livePolicy.policyDigest,
+        );
         if (registeredPolicy.policyDigest !== livePolicy.policyDigest) {
           throw new Error(
             `defineFigmaTests: project policy for contract "${liveContract.id}" changed on disk after test collection (registered digest ${registeredPolicy.policyDigest ?? "none (uninitialized)"}, now ${livePolicy.policyDigest ?? "none (uninitialized)"}) -- refusing to run a stale project policy's test.`,

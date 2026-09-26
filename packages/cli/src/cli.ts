@@ -14,6 +14,7 @@ import { applicationText } from "./application-text.ts";
 import { authCommand } from "./commands/auth.ts";
 import { baselineRoutes } from "./commands/baseline.ts";
 import { captureCommand } from "./commands/capture.ts";
+import { checkCommand } from "./commands/check.ts";
 import { compareCommand } from "./commands/compare.ts";
 import { contractRoutes } from "./commands/contract.ts";
 import { dashboardCommand, openCommand, reportCommand } from "./commands/dashboard.ts";
@@ -33,6 +34,7 @@ const PACKAGE_VERSION = (
 
 const rootRoutes = buildRouteMap({
   routes: {
+    check: checkCommand,
     dashboard: dashboardCommand,
     open: openCommand,
     report: reportCommand,

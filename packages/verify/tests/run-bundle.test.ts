@@ -228,13 +228,30 @@ function runPlanFixture(runId: string, casePlans: readonly CasePlan[]): RunPlan 
     caseId: casePlan.caseId,
     casePlanDigest: canonicalJsonDigest(casePlan),
   }));
+  const matrix = [
+    ...new Map(
+      casePlans.map((casePlan) => [
+        `${casePlan.contract.id}\u0000${casePlan.project.name}`,
+        {
+          contractId: casePlan.contract.id,
+          contractFile: casePlan.contract.file,
+          contractDigest: casePlan.contract.digest,
+          project: casePlan.project.name,
+          required: true,
+        },
+      ]),
+    ).values(),
+  ];
   return {
     formatVersion: RUN_PLAN_FORMAT_VERSION,
     kind: "framelia.run-plan",
     runId,
     retryAcceptance: casePlans[0]?.retryAcceptance ?? "require-first-attempt",
     policyDigest: A_DIGEST,
+    executionGraphDigest: A_DIGEST,
     selection: { mode: "all", contracts: [...new Set(casePlans.map((c) => c.contract.id))] },
+    availableMatrix: matrix,
+    requiredMatrix: matrix,
     availableCases: planned,
     requiredCases: planned,
     selectedCases: planned,
@@ -542,7 +559,7 @@ describe("two runs in one project root", () => {
 describe("readRunBundle after copying the bundle elsewhere", () => {
   it("resolves every evidence reference from the copy alone, with no absolute-path leakage from the writer", async () => {
     const writerRoot = temporaryRoot();
-    const casePlan = casePlanFixture();
+    const casePlan = await realCasePlanFixture(writerRoot);
     const runId = "run-portable";
     setUpRun(writerRoot, runId, [casePlan]);
     await publishAttempt(writerRoot, runId, attemptFixture(casePlan, 0), {
@@ -598,7 +615,7 @@ describe("finalizeRunRecord", () => {
 
   it("finalizes with status finalized and finalizedAt regardless of prior running state", async () => {
     const root = temporaryRoot();
-    const casePlan = casePlanFixture();
+    const casePlan = await realCasePlanFixture(root);
     const runId = "run-finalize";
     setUpRun(root, runId, [casePlan]);
     expect(readRunRecord(root, runId).status).toBe("running");
@@ -668,6 +685,206 @@ describe("finalizeRunRecord", () => {
     });
     expect(finalized.cases[0]?.attemptIds).toEqual([attempt.attemptId]);
     expect(finalized.cases[0]?.selectedAttemptId).toBeUndefined();
+  });
+});
+
+describe("finalizeRunRecord execution transport classification", () => {
+  it("accepts Playwright failed/exit-1 only when a published selected visual attempt mismatched", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-expected-mismatch";
+    setUpRun(root, runId, [casePlan]);
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+      completeEvidence(Buffer.from("mismatch")),
+    );
+
+    const finalized = await finalizeRunRecord(root, runId, {
+      retryAcceptance: "require-first-attempt",
+      transport: {
+        exitCode: 1,
+        signal: null,
+        cancelled: false,
+        reporterCompleted: true,
+        resultStatus: "failed",
+      },
+    });
+
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.diagnostics).toEqual([]);
+  });
+
+  it("accepts a retry-passed Playwright result while retaining the first mismatch as authoritative", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-retry-passed-authoritative-mismatch";
+    setUpRun(root, runId, [casePlan]);
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+      completeEvidence(Buffer.from("mismatch")),
+    );
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("retry-pass")),
+    );
+
+    const finalized = await finalizeRunRecord(root, runId, {
+      retryAcceptance: "require-first-attempt",
+      transport: {
+        exitCode: 0,
+        signal: null,
+        cancelled: false,
+        reporterCompleted: true,
+        resultStatus: "passed",
+      },
+    });
+
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.diagnostics).toEqual([]);
+    expect(finalized.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 0));
+  });
+
+  it("accepts retry-passed transport and selects the passing retry under allow-passed-after-retry", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    casePlan.retryAcceptance = "allow-passed-after-retry";
+    const runId = "run-retry-passed-authoritative-pass";
+    setUpRun(root, runId, [casePlan]);
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+      completeEvidence(Buffer.from("mismatch")),
+    );
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 1),
+      completeEvidence(Buffer.from("retry-pass")),
+    );
+
+    const finalized = await finalizeRunRecord(root, runId, {
+      retryAcceptance: "allow-passed-after-retry",
+      transport: {
+        exitCode: 0,
+        signal: null,
+        cancelled: false,
+        reporterCompleted: true,
+        resultStatus: "passed",
+      },
+    });
+
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.diagnostics).toEqual([]);
+    expect(finalized.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 1));
+  });
+
+  it.each([
+    ["error", "error"],
+    ["interrupted", "incomplete"],
+  ] as const)(
+    "does not let an earlier mismatch explain transport after the latest retry is %s",
+    async (label, executionState) => {
+      const root = temporaryRoot();
+      const casePlan = await realCasePlanFixture(root);
+      const runId = `run-retry-${label}`;
+      setUpRun(root, runId, [casePlan]);
+      await publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+        completeEvidence(Buffer.from("mismatch")),
+      );
+      await publishAttempt(
+        root,
+        runId,
+        attemptFixture(casePlan, 1, {
+          executionState,
+          visualVerdict: "not-evaluated",
+        }),
+        completeEvidence(Buffer.from(label)),
+      );
+
+      const finalized = await finalizeRunRecord(root, runId, {
+        retryAcceptance: "require-first-attempt",
+        transport: {
+          exitCode: 1,
+          signal: null,
+          cancelled: false,
+          reporterCompleted: true,
+          resultStatus: "failed",
+        },
+      });
+
+      expect(finalized.status).toBe("error");
+      expect(finalized.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 0));
+      expect(finalized.diagnostics.map((entry) => entry.code)).toContain(
+        "execution-exit-unexplained",
+      );
+    },
+  );
+
+  it("rejects an otherwise unexplained nonzero Playwright exit even when visual evidence passed", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-unexplained-exit";
+    setUpRun(root, runId, [casePlan]);
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0),
+      completeEvidence(Buffer.from("pass")),
+    );
+
+    const finalized = await finalizeRunRecord(root, runId, {
+      retryAcceptance: "require-first-attempt",
+      transport: {
+        exitCode: 1,
+        signal: null,
+        cancelled: false,
+        reporterCompleted: true,
+        resultStatus: "failed",
+      },
+    });
+
+    expect(finalized.status).toBe("error");
+    expect(finalized.diagnostics.map((entry) => entry.code)).toContain(
+      "execution-exit-unexplained",
+    );
+  });
+
+  it("terminalizes cancellation with an inspectable run and no fabricated selected attempt", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-cancelled";
+    setUpRun(root, runId, [casePlan]);
+
+    const finalized = await finalizeRunRecord(root, runId, {
+      retryAcceptance: "require-first-attempt",
+      transport: {
+        exitCode: null,
+        signal: "SIGINT",
+        cancelled: true,
+        reporterCompleted: false,
+      },
+    });
+
+    expect(finalized.status).toBe("error");
+    expect(finalized.cases[0]).toEqual({ caseId: casePlan.caseId, attemptIds: [] });
+    expect(finalized.diagnostics.map((entry) => entry.code)).toEqual(
+      expect.arrayContaining([
+        "execution-cancelled",
+        "execution-exit-unexplained",
+        "reporter-lifecycle-incomplete",
+        "selected-attempt-missing",
+      ]),
+    );
   });
 });
 
@@ -956,7 +1173,7 @@ describe("cross-process lock", () => {
 
   it("serializes a slow publishAttempt against a concurrent finalizeRunRecord, so a run never finalizes with an attempt on disk that its own membership omits", async () => {
     const root = temporaryRoot();
-    const casePlan = casePlanFixture();
+    const casePlan = await realCasePlanFixture(root);
     const runId = "run-lock-race";
     setUpRun(root, runId, [casePlan]);
     await publishAttempt(

@@ -237,16 +237,26 @@ export async function createSelectedRun(
     caseId: casePlan.caseId,
     casePlanDigest: canonicalJsonDigest(casePlan),
   }));
+  const matrix = casePlans.map((casePlan) => ({
+    contractId: casePlan.contract.id,
+    contractFile: casePlan.contract.file,
+    contractDigest: casePlan.contract.digest,
+    project: casePlan.project.name,
+    required: true,
+  }));
   const plan: RunPlan = {
     formatVersion: RUN_PLAN_FORMAT_VERSION,
     kind: "framelia.run-plan",
     runId,
     policyDigest,
+    executionGraphDigest: FIXTURE_DIGEST,
     retryAcceptance,
     selection: {
       mode: "all",
       contracts: casePlans.map((casePlan) => casePlan.contract.id),
     },
+    availableMatrix: matrix,
+    requiredMatrix: matrix,
     availableCases: planned,
     requiredCases: planned,
     selectedCases: planned,

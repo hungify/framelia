@@ -6,17 +6,25 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  RUN_CONTEXT_FORMAT_VERSION,
+  RUN_PLAN_FORMAT_VERSION,
   authoredContractSchema,
   baselineSnapshotSchema,
   testRegistrationSchema,
   type AuthoritativeRunRequirements,
   type ContractBinding,
+  type RunContext,
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, readPinnedBaseline } from "@framelia/verify";
+import { resolveProjectPolicy } from "@framelia/verify/project-policy";
 import {
+  casePlansDir,
+  computeExecutionGraphDigest,
   evaluateAuthoritativeRun,
+  freezeRunPlan,
   readRunBundle,
   readSelectedRun,
+  runPlanPath,
 } from "@framelia/verify/run-bundle";
 import { makeSolidPng } from "@framelia/verify/testing";
 import { chromium } from "@playwright/test";
@@ -35,10 +43,17 @@ import { SCORE_ATTACHMENT_SUFFIX } from "../src/attach.ts";
 import { defineFigmaTests, runFigmaContractTest } from "../src/define-figma-tests.ts";
 import FrameliaReporter from "../src/reporter.ts";
 import { buildCasePlanForTest } from "../src/run-bundle-projection.ts";
+import {
+  RUN_CONTEXT_ENV,
+  assertExecuteCaseReady,
+  readTransportStatus,
+} from "../src/run-context.ts";
 import type { FrameliaScoreAttachment } from "../src/score-attachment.ts";
+import { buildTransportCollection } from "../src/transport-collection.ts";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  delete process.env[RUN_CONTEXT_ENV];
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -139,6 +154,9 @@ function fakeProjectSuite(
     name: projectName,
     use: { viewport: null, ...projectUse },
     testDir: path.dirname(specFile),
+    dependencies: [],
+    repeatEach: 1,
+    retries: 0,
   } as unknown as FullProject;
   return {
     type: "file",
@@ -196,21 +214,26 @@ function fakeContractTest(options: {
   } as unknown as TestCase;
 }
 
-/** Fake `TestType`-shaped double: captures every registered `test(title, details, fn)`
- *  call the real `defineFigmaTests` makes, without any real Playwright runtime -- same
- *  pattern as `define-figma-tests.test.ts`'s own `fakeTest`. Used here to prove
- *  `buildCasePlanForTest` reads the annotation `defineFigmaTests` actually produced at
- *  registration time, not a hand-assembled stand-in. */
+/** Fake `TestType`-shaped double: captures every registered public test call. */
 function fakeTest(): {
   test: Parameters<typeof defineFigmaTests>[0];
-  registered: Array<{ annotation: { type: string; description: string } }>;
+  registered: Array<{
+    title: string;
+    annotation: { type: string; description: string };
+    body: (...args: unknown[]) => unknown;
+  }>;
 } {
-  const registered: Array<{ annotation: { type: string; description: string } }> = [];
+  const registered: Array<{
+    title: string;
+    annotation: { type: string; description: string };
+    body: (...args: unknown[]) => unknown;
+  }> = [];
   const test = ((
-    _title: string,
+    title: string,
     details: { annotation: { type: string; description: string } },
+    body: (...args: unknown[]) => unknown,
   ) => {
-    registered.push(details);
+    registered.push({ title, annotation: details.annotation, body });
   }) as unknown as Parameters<typeof defineFigmaTests>[0];
   return { test, registered };
 }
@@ -297,6 +320,293 @@ function initializedProjectRoot(): string {
   fs.writeFileSync(path.join(root, "login.spec.ts"), "// fixture spec file\n");
   return root;
 }
+function installRunContext(context: RunContext): void {
+  const transportDirectory = path.dirname(context.statusPath);
+  fs.mkdirSync(transportDirectory, { recursive: true, mode: 0o700 });
+  const contextPath = path.join(transportDirectory, `${context.mode}-context.json`);
+  fs.writeFileSync(contextPath, JSON.stringify(context), { mode: 0o600 });
+  process.env[RUN_CONTEXT_ENV] = contextPath;
+}
+
+describe("FrameliaReporter coordinator transport lifecycle", () => {
+  it("publishes collection manifest and completed status only from onEnd", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const test = fakeContractTest({
+      id: "login visual",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const transportDirectory = path.join(root, "transport");
+    const context: RunContext = {
+      formatVersion: RUN_CONTEXT_FORMAT_VERSION,
+      kind: "framelia.run-context",
+      mode: "collect",
+      projectRoot: root,
+      runId: "collect-transport",
+      policyDigest: binding.contractDigest,
+      selectedProjects: ["chromium"],
+      manifestPath: path.join(transportDirectory, "manifest.json"),
+      statusPath: path.join(transportDirectory, "status.json"),
+    };
+    installRunContext(context);
+    const reporter = new FrameliaReporter();
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+
+    expect(fs.existsSync(context.manifestPath)).toBe(false);
+    expect(fs.existsSync(context.statusPath)).toBe(false);
+
+    await reporter.onEnd({ status: "passed" } as FullResult);
+
+    expect(fs.existsSync(context.manifestPath)).toBe(true);
+    expect(readTransportStatus(context)).toMatchObject({
+      mode: "collect",
+      state: "completed",
+    });
+    expect(readTransportStatus(context)).not.toHaveProperty("execution");
+  });
+
+  it("publishes ready synchronously in onBegin, then a distinct completed lifecycle in onEnd", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const test = fakeContractTest({
+      id: "login visual",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const visualProject = test.parent.project()! as FullProject & { dependencies: string[] };
+    visualProject.dependencies = [""];
+    const setupSpec = path.join(root, "unnamed-setup.spec.ts");
+    fs.writeFileSync(setupSpec, "// unnamed setup fixture\n");
+    const setupProject = {
+      name: "",
+      use: { viewport: null },
+      testDir: root,
+      dependencies: [],
+      repeatEach: 1,
+      retries: 0,
+    } as unknown as FullProject;
+    const setupTest = {
+      id: "unnamed setup",
+      title: "unnamed setup",
+      tags: [],
+      annotations: [],
+      location: { file: setupSpec, line: 1, column: 0 },
+      repeatEachIndex: 0,
+      parent: {
+        type: "file",
+        title: path.basename(setupSpec),
+        project: () => setupProject,
+      } as unknown as Suite,
+    } as unknown as TestCase;
+    const transportSuite = fakeSuite([test, setupTest]);
+    const policy = await resolveProjectPolicy({ cwd: root, projectRoot: root });
+    const runId = "execute-transport";
+    const built = await buildCasePlanForTest(test, {
+      projectRoot: root,
+      runId,
+      policy,
+      source: {},
+    });
+    const transportDirectory = path.join(root, "transport");
+    const context: RunContext = {
+      formatVersion: RUN_CONTEXT_FORMAT_VERSION,
+      kind: "framelia.run-context",
+      mode: "execute",
+      projectRoot: root,
+      runId,
+      policyDigest: policy.policyDigest!,
+      selectedProjects: ["chromium"],
+      manifestPath: path.join(transportDirectory, "manifest.json"),
+      statusPath: path.join(transportDirectory, "status.json"),
+      planPath: runPlanPath(root, runId),
+      casePlansPath: casePlansDir(root, runId),
+    };
+    const collection = buildTransportCollection(transportSuite, context);
+    const planned = {
+      caseId: built.caseId,
+      casePlanDigest: canonicalJsonDigest(built.casePlan),
+    };
+    const matrixEntry = {
+      contractId: binding.contractId,
+      contractFile: binding.contractFile,
+      contractDigest: binding.contractDigest,
+      project: "chromium",
+      required: true,
+    };
+    freezeRunPlan(
+      root,
+      {
+        formatVersion: RUN_PLAN_FORMAT_VERSION,
+        kind: "framelia.run-plan",
+        runId,
+        policyDigest: policy.policyDigest!,
+        executionGraphDigest: computeExecutionGraphDigest(collection.manifest),
+        selection: { mode: "all", contracts: [binding.contractId] },
+        availableMatrix: [matrixEntry],
+        requiredMatrix: [matrixEntry],
+        availableCases: [planned],
+        requiredCases: [planned],
+        retryAcceptance: policy.retryAcceptance,
+        selectedCases: [planned],
+      },
+      [built.casePlan],
+    );
+    installRunContext(context);
+    const reporter = new FrameliaReporter();
+
+    reporter.onBegin(fakeConfig(root), transportSuite);
+    expect(readTransportStatus(context)).toMatchObject({
+      mode: "execute",
+      state: "ready",
+    });
+    const registration = testRegistrationSchema.parse(
+      JSON.parse(test.annotations[0]!.description!),
+    );
+    const testInfo = {
+      project: test.parent.project()!,
+      repeatEachIndex: 0,
+      titlePath: ["login.spec.ts", "login visual"],
+    } as unknown as Parameters<typeof assertExecuteCaseReady>[0];
+    expect(() => assertExecuteCaseReady(testInfo, registration, root)).not.toThrow();
+    fs.appendFileSync(path.join(root, "login.spec.ts"), "// changed after reconciliation\n");
+    expect(() => assertExecuteCaseReady(testInfo, registration, root)).toThrow(
+      /no longer matches its frozen binding/,
+    );
+    expect(readTransportStatus(context)).not.toHaveProperty("execution");
+    reporter.onTestEnd(setupTest, fakeAttemptResult({ status: "failed" }));
+
+    await reporter.onEnd({ status: "failed" } as FullResult);
+
+    expect(readTransportStatus(context)).toMatchObject({
+      mode: "execute",
+      state: "completed",
+      execution: {
+        resultStatus: "failed",
+        setupFailures: [":unnamed setup"],
+        teardownFailures: [],
+        globalErrors: [],
+      },
+    });
+  });
+
+  it("blocks a policy changed after parent planning before skip, prepare, or capture", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const frozenPolicy = await resolveProjectPolicy({ cwd: root, projectRoot: root });
+    fs.writeFileSync(
+      path.join(root, "framelia.config.mjs"),
+      "export default { stabilitySamples: 3 };\n",
+    );
+
+    let prepareCalls = 0;
+    const generated = fakeTest();
+    defineFigmaTests(generated.test, {
+      contracts: pathToFileURL(path.join(root, binding.contractFile)),
+      specUrl: pathToFileURL(path.join(root, "login.spec.ts")),
+      projectRoot: root,
+      prepare: async () => {
+        prepareCalls += 1;
+      },
+    });
+    expect(generated.registered).toHaveLength(1);
+    const registered = generated.registered[0]!;
+    const test = fakeContractTest({
+      id: registered.title,
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    test.annotations = [registered.annotation];
+
+    const runId = "stale-parent-policy";
+    const built = await buildCasePlanForTest(test, {
+      projectRoot: root,
+      runId,
+      policy: frozenPolicy,
+      source: {},
+    });
+    const transportDirectory = path.join(root, "transport-policy");
+    const context: RunContext = {
+      formatVersion: RUN_CONTEXT_FORMAT_VERSION,
+      kind: "framelia.run-context",
+      mode: "execute",
+      projectRoot: root,
+      runId,
+      policyDigest: frozenPolicy.policyDigest!,
+      selectedProjects: ["chromium"],
+      manifestPath: path.join(transportDirectory, "manifest.json"),
+      statusPath: path.join(transportDirectory, "status.json"),
+      planPath: runPlanPath(root, runId),
+      casePlansPath: casePlansDir(root, runId),
+    };
+    const suite = fakeSuite([test]);
+    const collection = buildTransportCollection(suite, context);
+    const planned = {
+      caseId: built.caseId,
+      casePlanDigest: canonicalJsonDigest(built.casePlan),
+    };
+    const matrixEntry = {
+      contractId: binding.contractId,
+      contractFile: binding.contractFile,
+      contractDigest: binding.contractDigest,
+      project: "chromium",
+      required: true,
+    };
+    freezeRunPlan(
+      root,
+      {
+        formatVersion: RUN_PLAN_FORMAT_VERSION,
+        kind: "framelia.run-plan",
+        runId,
+        policyDigest: frozenPolicy.policyDigest!,
+        executionGraphDigest: computeExecutionGraphDigest(collection.manifest),
+        selection: { mode: "all", contracts: [binding.contractId] },
+        availableMatrix: [matrixEntry],
+        requiredMatrix: [matrixEntry],
+        availableCases: [planned],
+        requiredCases: [planned],
+        retryAcceptance: frozenPolicy.retryAcceptance,
+        selectedCases: [planned],
+      },
+      [built.casePlan],
+    );
+    installRunContext(context);
+    const reporter = new FrameliaReporter();
+    reporter.onBegin(fakeConfig(root), suite);
+    expect(readTransportStatus(context).state).toBe("ready");
+
+    let pageAccesses = 0;
+    let skipCalls = 0;
+    const page = new Proxy(
+      {},
+      {
+        get() {
+          pageAccesses += 1;
+          throw new Error("capture path must not inspect the page");
+        },
+      },
+    );
+    const testInfo = {
+      project: test.parent.project()!,
+      repeatEachIndex: 0,
+      titlePath: ["login.spec.ts", registered.title],
+      skip: () => {
+        skipCalls += 1;
+      },
+    };
+
+    await expect(registered.body({ page }, testInfo)).rejects.toThrow(
+      /frozen .*policy|policy .*frozen/i,
+    );
+    expect(skipCalls).toBe(0);
+    expect(prepareCalls).toBe(0);
+    expect(pageAccesses).toBe(0);
+  });
+});
 
 describe("FrameliaReporter selected-run publication", () => {
   it("freezes a run plan and publishes a passing attempt, finalized once onEnd completes", async () => {
@@ -784,6 +1094,7 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
     const root = initializedProjectRoot();
     const binding = pinContract(root, { id: "login.desktop" });
     const specFile = path.join(root, "login.spec.ts");
+    const policy = await resolveProjectPolicy({ cwd: root, projectRoot: root });
     const projectUses: Array<Partial<FullProject["use"]>> = [
       { browserName: "chromium", locale: "en-US", colorScheme: "light" },
       { browserName: "firefox", locale: "en-US", colorScheme: "light" },
@@ -803,10 +1114,7 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
           {
             projectRoot: root,
             runId: "runtime-identity-run",
-            retryAcceptance: "require-first-attempt",
-            maxMaskedAreaRatio: 0.15,
-            stabilitySamples: 2,
-            policyDigest: `sha256:${"0".repeat(64)}`,
+            policy,
             source: {},
           },
         ),
@@ -817,7 +1125,7 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
     expect(new Set(results.map((result) => canonicalJsonDigest(result.casePlan))).size).toBe(4);
   });
 
-  it("freezes the spec digest captured at defineFigmaTests registration time, not the file's content when buildCasePlanForTest later reads it", async () => {
+  it("rejects a spec changed after collection before freezing a case plan", async () => {
     const root = tempDir("framelia-spec-digest-regression-");
     fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
     pinContract(root, { id: "login.desktop" });
@@ -866,21 +1174,17 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
       repeatEachIndex: 0,
     } as unknown as TestCase;
 
-    const result = await buildCasePlanForTest(test1, {
-      projectRoot: root,
-      runId: "fixture-run",
-      retryAcceptance: "require-first-attempt",
-      maxMaskedAreaRatio: 0.15,
-      stabilitySamples: 2,
-      policyDigest: `sha256:${"0".repeat(64)}`,
-      source: {},
-    });
+    const policy = await resolveProjectPolicy({ cwd: root, projectRoot: root });
+    await expect(
+      buildCasePlanForTest(test1, {
+        projectRoot: root,
+        runId: "fixture-run",
+        policy,
+        source: {},
+      }),
+    ).rejects.toThrow(/spec login\.spec\.ts changed after collection/);
 
-    // The frozen case plan carries the digest that was true AT REGISTRATION TIME, not
-    // the post-edit disk content buildCasePlanForTest would have observed had it
-    // re-hashed the file fresh from disk here.
-    expect(result.casePlan.specFileDigest).toBe(originalSpecDigest);
-    expect(result.casePlan.specFileDigest).not.toBe(mutatedSpecDigest);
+    expect(originalSpecDigest).not.toBe(mutatedSpecDigest);
   });
 
   it("throws when the registered specFile doesn't match the file Playwright says registered this test", async () => {
@@ -905,18 +1209,16 @@ describe("buildCasePlanForTest (framelia/#77's registration-time spec-digest fix
       registeredSpecFile: path.relative(root, wrongSpecFile).split(path.sep).join("/"),
     });
 
+    const policy = await resolveProjectPolicy({ cwd: root, projectRoot: root });
     await expect(
       buildCasePlanForTest(test, {
         projectRoot: root,
         runId: "fixture-run",
-        retryAcceptance: "require-first-attempt",
-        maxMaskedAreaRatio: 0.15,
-        stabilitySamples: 2,
-        policyDigest: `sha256:${"0".repeat(64)}`,
+        policy,
         source: {},
       }),
     ).rejects.toThrow(
-      /registered specUrl \(wrong\.spec\.ts\) does not match the file Playwright says registered this test \(actual\.spec\.ts\)/,
+      /registered spec wrong\.spec\.ts, but Playwright collected it from actual\.spec\.ts/,
     );
   });
 });

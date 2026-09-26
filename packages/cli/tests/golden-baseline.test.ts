@@ -256,11 +256,14 @@ describe("contract create JSON and merge lifecycle", () => {
 describe("golden baseline: dashboard bare default command", () => {
   it("prints a ready banner on stderr and shuts down cleanly on SIGTERM within a bounded timeout", async () => {
     const port = await reservePort();
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-dashboard-golden-"));
+    fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {};\n");
     const child = spawn(
       process.execPath,
       [binPath, "dashboard", "--port", String(port), "--no-open"],
       {
         stdio: ["ignore", "pipe", "pipe"],
+        cwd: projectRoot,
       },
     );
 
@@ -315,6 +318,7 @@ describe("golden baseline: dashboard bare default command", () => {
       // Unconditional: a failed assertion above would otherwise leave the
       // dashboard holding its port and keep the runner from exiting.
       child.kill("SIGTERM");
+      fs.rmSync(projectRoot, { recursive: true, force: true });
     }
     const { code } = await exited;
     expect(code).toBe(0);

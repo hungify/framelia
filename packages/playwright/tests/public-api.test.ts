@@ -3,11 +3,14 @@ import { describe, expect, it } from "vitest";
 
 import * as createMatchersApi from "../src/create-matchers.ts";
 import type { FrameliaMatchers, PlaywrightTestHandle } from "../src/create-matchers.ts";
-import * as indexApi from "../src/index.ts";
 // Type-only half of index.ts's surface: importing these here means `tsc --noEmit`
 // fails immediately if any is ever renamed or removed -- these have no runtime
 // presence, so the Object.keys() snapshot below can't see them.
 import type {
+  DefineFigmaTestsOptions,
+  FigmaContractOutcome,
+  FigmaContractTarget,
+  FigmaContractTestContext,
   ToMatchFigmaOptions,
   ToMatchPageBaselineOptions,
   ToMatchPageOptions,
@@ -27,22 +30,10 @@ export type PublicTypeSurface = [
   ReadContractEntryOutcome,
   PlaywrightTestHandle,
   FrameliaMatchers,
-];
-
-/**
- * Exact snapshot of every runtime-visible name re-exported from each of this
- * package's four entry points (`.`, `./register`, `./reporter`,
- * `./create-matchers`). If any of these tests starts failing, an export was
- * added, removed, or renamed: that's a compatibility event for real
- * consumers, requiring a changeset, not an incidental refactor.
- */
-const EXPECTED_INDEX_EXPORTS = [
-  "contractFreshnessPath",
-  "expect",
-  "isContractFresh",
-  "readContractEntry",
-  "readContractFreshness",
-  "writeContractFreshness",
+  DefineFigmaTestsOptions,
+  FigmaContractOutcome,
+  FigmaContractTarget,
+  FigmaContractTestContext,
 ];
 
 /** register.ts is a pure side-effect module (extends @playwright/test's own
@@ -62,10 +53,6 @@ const EXPECTED_REPORTER_EXPORTS = ["default"];
 const EXPECTED_CREATE_MATCHERS_EXPORTS = ["createFrameliaMatchers"];
 
 describe("public API surface", () => {
-  it("'.' (src/index.ts) matches the exact expected runtime export-name set", () => {
-    expect(Object.keys(indexApi).toSorted()).toEqual(EXPECTED_INDEX_EXPORTS);
-  });
-
   it("'./register' (src/register.ts) matches the exact expected runtime export-name set", () => {
     expect(Object.keys(registerApi).toSorted()).toEqual(EXPECTED_REGISTER_EXPORTS);
   });

@@ -14,6 +14,7 @@ import type { DashboardHost } from "../src/internal/dashboard-runtime.ts";
 import { createFakeProcess } from "./fake-process.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-dashboard-"));
+fs.writeFileSync(path.join(tmp, "framelia.config.mjs"), "export default {};\n");
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 describe("dashboard URL derivation", () => {

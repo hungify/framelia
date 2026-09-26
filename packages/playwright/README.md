@@ -65,6 +65,14 @@ Reporter writes matcher evidence under `.framelia/visual-verifications/`. Final 
 includes `visual-score.json`, `run-meta.json`, `punch-list.json`, hashes, and
 `visual-verification.json`.
 
+### Shared project policy
+
+The reporter resolves `framelia.config.*` through the same project-policy module as the CLI.
+Programmatic Playwright integrations can import `resolveProjectPolicy`,
+`discoverAuthoredContracts`, and `resolveContractProjectMatrix` from
+`@framelia/playwright/project-policy`. Contract/project pairs are resolved from authored policy,
+not inferred from whatever tests collection happens to return.
+
 ### Web-to-web matchers
 
 `toMatchPage` compares two pages already prepared by your test. `toMatchUrl` opens a page in the
@@ -92,6 +100,89 @@ Page-scope calls (no `selector`) may provide `styleChecks`, one style comparison
 check-point against its own baked `expectStyle`; results are tagged with the check-point's
 selector and merged into `topIssues` the same non-blocking way region scope's own style
 comparison is.
+
+## Pinned Figma contracts (`defineFigmaTests`)
+
+`defineFigmaTests(test, options)` registers ordinary Playwright tests -- one per
+`framelia.contract` JSON file -- that compare against a **pinned, digest-verified
+baseline snapshot on disk** (`.framelia/baselines/<digest>/snapshot.json` under the
+project root, plus its referenced image/style bytes). It never fetches from Figma: no
+credentials or network are reachable anywhere in this call path, and a changed or
+unreachable live Figma file can never alter what a pinned check compares against.
+Acquiring/refreshing that pinned snapshot is a separate, explicit step (not covered by
+this package).
+
+```ts
+import { defineFigmaTests } from "@framelia/playwright";
+import { test } from "@playwright/test";
+
+defineFigmaTests(test, {
+  contracts: new URL("./visual-contract.json", import.meta.url),
+  specUrl: new URL(import.meta.url),
+  async prepare({ page }, { target }) {
+    await page.goto(target.path);
+  },
+});
+```
+
+`contracts` accepts one file (a `URL`, resolved module-relatively, or a path string) or
+an array of several -- each becomes exactly one registered test, fanned across every
+configured Playwright project the way any other registered test is. `specUrl` is
+required -- pass `new URL(import.meta.url)` from your own spec file; `defineFigmaTests`
+hashes that file's raw bytes at this exact registration moment and freezes the digest
+into every registered test's own annotation, so a spec file edited on disk after
+Playwright's own collection phase imports it can never be silently frozen into (or
+captured against) a different identity than what Node actually imported. Every
+registered test carries a versioned `framelia.contract` annotation (`{ contractId,
+contractFile, contractDigest }` plus that registration-time spec digest) for downstream
+tooling; a contract's own `projects` field, when set, skips the test on every other
+project instead of narrowing what gets registered.
+
+The contract's own `viewport` is reconciled, and the pinned baseline's
+`deviceScaleFactor` validated, before `prepare` runs. Viewport: applied automatically
+when the page's own viewport is still unset or Playwright's own default; an
+already-customized page viewport that disagrees with the contract's own viewport fails
+the test explicitly instead, without resizing or reloading the page. `deviceScaleFactor`
+can only ever be validated, never applied here -- it's fixed at browser-context creation,
+so a project running a higher-DPR contract must configure its own context/project with a
+matching `deviceScaleFactor`; a mismatch between that live value and the pinned
+baseline's own scale is caught and reported explicitly, instead of silently producing a
+wrong-resolution comparison.
+
+`prepare`'s fixtures argument is deliberately `{ page }`, not a caller's whole extended
+fixtures object -- Playwright's own test-file transform statically requires every
+fixture a test uses to be named literally in that test's own destructuring pattern, which
+a generic library function cannot do for fixture names it never sees at its own authoring
+time. For a scenario that needs setup before `prepare` runs (login, seeding, dismissing a
+modal), override the built-in `page` fixture itself -- Playwright's own documented
+pattern for exactly this:
+
+```ts
+import { defineFigmaTests } from "@framelia/playwright";
+import { test as base } from "@playwright/test";
+
+const test = base.extend({
+  page: async ({ page }, use) => {
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(process.env.SMOKE_USER_EMAIL!);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await use(page);
+  },
+});
+
+defineFigmaTests(test, {
+  contracts: new URL("./dashboard.visual-contract.json", import.meta.url),
+  specUrl: new URL(import.meta.url),
+  async prepare({ page }, { target }) {
+    await page.goto(target.path);
+    await page.getByTestId("dashboard-ready").waitFor();
+  },
+});
+```
+
+By the time `prepare` runs, `page` is already the fixture's fully-prepared page; capture
+only ever happens after `prepare` resolves, so a modal/auth/readiness wait inside
+`prepare` genuinely gates the screenshot.
 
 ## Scaling to many pages
 

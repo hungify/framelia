@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { chromium } from "@playwright/test";
+import { PNG } from "pngjs";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { captureReadyPage } from "../src/capture/core.ts";
@@ -144,6 +145,64 @@ describe("captureReadyPage", () => {
       expect(outcome.error).toBe("CAPTURE_PAGE_CLOSED");
     } finally {
       await context.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("captures at real device-pixel resolution when scale matches the context's own deviceScaleFactor", async () => {
+    const app = await server();
+    const context = await browser.newContext({
+      viewport: { width: 100, height: 80 },
+      deviceScaleFactor: 2,
+    });
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const outcome = await captureReadyPage(page, {
+        outPath: path.join(tmpDir, "capture.png"),
+        scope: { kind: "page", fullPage: false },
+        screenshot: {},
+        timeoutMs: 2_000,
+        scale: 2,
+      });
+
+      if (!outcome.ok) throw new Error(`capture failed: ${outcome.error} ${outcome.message}`);
+      const png = PNG.sync.read(fs.readFileSync(outcome.capturePaths[0]!));
+      expect(png.width).toBe(200);
+      expect(png.height).toBe(160);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects with CAPTURE_SCALE_MISMATCH instead of silently capturing at the wrong resolution", async () => {
+    const app = await server();
+    // deviceScaleFactor defaults to 1, but scale: 2 is requested below.
+    const context = await browser.newContext({ viewport: { width: 100, height: 80 } });
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-ready-capture-"));
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const outcome = await captureReadyPage(page, {
+        outPath: path.join(tmpDir, "capture.png"),
+        scope: { kind: "page", fullPage: false },
+        screenshot: {},
+        timeoutMs: 2_000,
+        scale: 2,
+      });
+
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error("expected rejection");
+      expect(outcome.error).toBe("CAPTURE_SCALE_MISMATCH");
+      expect(fs.existsSync(path.join(tmpDir, "capture.png"))).toBe(false);
+    } finally {
+      await context.close();
+      await app.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

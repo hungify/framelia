@@ -40,6 +40,16 @@
       "types": "./dist/env.d.ts",
       "default": "./dist/env.js"
     },
+    "./project-policy": {
+      "framelia-dev": "./src/project-policy.ts",
+      "types": "./dist/project-policy.d.ts",
+      "default": "./dist/project-policy.js"
+    },
+    "./run-bundle": {
+      "framelia-dev": "./src/run-bundle/index.ts",
+      "types": "./dist/run-bundle.d.ts",
+      "default": "./dist/run-bundle.js"
+    },
     "./testing": {
       "framelia-dev": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
@@ -67,6 +77,7 @@
     "pixelmatch": "^7.2.0",
     "pngjs": "^7.0.0",
     "ssim.js": "^3.5.0",
+    "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -75,7 +86,6 @@
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
     "tsup": "^8.5.1",
-    "tsx": "^4.22.4",
     "typescript": "6.0.3",
     "vitest": "^4.1.10"
   },

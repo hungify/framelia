@@ -6,6 +6,7 @@ export default defineConfig({
     register: "src/register.ts",
     reporter: "src/reporter.ts",
     "create-matchers": "src/create-matchers.ts",
+    "project-policy": "src/project-policy.ts",
   },
   format: "esm",
   target: "node22",

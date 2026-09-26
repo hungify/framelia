@@ -5,7 +5,13 @@ import * as path from "node:path";
 import { verificationArtifactSchema } from "@framelia/contracts";
 import { doneGateFromArtifact } from "@framelia/verify";
 import { makeSolidPng } from "@framelia/verify/testing";
-import type { FullConfig, Suite, TestCase, TestResult } from "@playwright/test/reporter";
+import type {
+  FullConfig,
+  FullResult,
+  Suite,
+  TestCase,
+  TestResult,
+} from "@playwright/test/reporter";
 import { PNG } from "pngjs";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -260,6 +266,30 @@ describe("FrameliaReporter", () => {
       expect(
         fs.existsSync(path.join(projectRoot, ".framelia/visual-verifications/test-a", name)),
       ).toBe(true);
+  });
+
+  it("resolves the same project capture policy used by the CLI", async () => {
+    const projectRoot = tempDir("framelia-reporter-policy-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const clientRoot = clientRootFixture();
+    fs.writeFileSync(
+      path.join(projectRoot, "framelia.config.mjs"),
+      "export default { maxMaskedAreaRatio: 0.1 };\n",
+    );
+    const reporter = new FrameliaReporter({ projectRoot, clientRoot, port: 0 });
+    const testA = fakeTest("test-a", "uses project policy");
+
+    reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+    reporter.onTestEnd(testA, passedResultWithImages("test-a", imageDir));
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+
+    const runMeta = JSON.parse(
+      fs.readFileSync(
+        path.join(projectRoot, ".framelia/visual-verifications/test-a/run-meta.json"),
+        "utf8",
+      ),
+    );
+    expect(runMeta.maxMaskedAreaRatio).toBe(0.1);
   });
 
   it("persists the resolved clusterCheck override into both the contract and the durable score (regression guard: report-projection must not re-derive it from the already-resolved profile)", async () => {

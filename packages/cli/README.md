@@ -53,14 +53,20 @@ The CLI still launches standalone browsers for `auth`, `contract suggest-masks`,
 npx framelia init
 ```
 
-Writes `framelia.config.ts` with the full project-wide config surface as commented examples. Project
+Writes `framelia.config.ts` with the project-wide config surface as commented examples. Project
 initialization does not ask about Figma, routes, selectors, or individual screens — those live in
-your own Playwright test and in whatever contract you author separately.
+authored contracts and the application's own Playwright fixtures.
 
 ```ts
 import { defineConfig } from "framelia";
 
 export default defineConfig({
+  // playwright: {
+  //   config: "playwright.config.ts",
+  //   projects: ["chromium"], // use [""] for Playwright's unnamed project
+  // },
+  // contracts: [".framelia/contracts/**/visual-contract.json"],
+  // retryAcceptance: "require-first-attempt",
   // envFile: ".env.e2e",
   // storageStatePath: ".framelia/auth/user.json",
   // Project-wide capture defaults:
@@ -74,6 +80,11 @@ export default defineConfig({
   // maxMaskedAreaRatio: 0.15,
 });
 ```
+
+Workflow policy resolution starts at `--project-root`, or discovers the nearest config ancestor
+without crossing the enclosing Git root. It loads `.env`, `.env.local`, then configured `envFile`
+entries; later files win while values already present in the process environment remain
+authoritative. Resolved paths are relative to the selected application root.
 
 Set the Figma token used by `contract create` and `capture` (alias `fetch-gold`):
 

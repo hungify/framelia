@@ -20,7 +20,6 @@ import {
   publishBaselineSnapshot,
   readMigrationTransaction,
   readPinnedBaseline,
-  readRawFileState,
   stageFigmaBaseline,
   withAuthoringLock,
   writeAuthoredContract,
@@ -588,13 +587,15 @@ async function executeMigration(
   runtime: CliRuntime,
   dependencies: ContractMigrateDependencies,
 ): Promise<ContractMigratedEntry[]> {
-  // Capture "before" digests first (matching contract-create/refresh-baseline's own
-  // ordering) so a concurrent edit during the network-bound staging window below is
-  // still detected by the CAS check once the lock is acquired -- staging afterward
-  // would let a mutation racing with the fetch escape detection entirely.
+  // Capture "before" state from the discovery-time digest, not a fresh read here --
+  // resolution (including interactive prompts) runs between discovery and this point,
+  // so re-reading now would silently accept an edit that happened during resolution as
+  // long as nothing changed afterward. Comparing against the digest `plan.candidate`
+  // was actually parsed from ensures any edit since discovery is caught once the lock
+  // is acquired, including edits made during the network-bound staging window below.
   const before = plans.map((plan) => ({
     plan,
-    legacyBefore: readRawFileState(path.resolve(root, plan.candidate.file)),
+    legacyBefore: { exists: true as const, digest: plan.candidate.fileDigest },
   }));
 
   // Stage every Figma refresh outside the lock (network I/O), mirroring contract create.
@@ -663,6 +664,17 @@ async function executeMigration(
       const stagedSnapshot = staged.get(target.contractId);
       if (stagedSnapshot) await publishBaselineSnapshot(root, target.newContract, stagedSnapshot);
     }
+
+    writeMigrationTransaction(root, {
+      formatVersion: 1,
+      kind: "framelia.migration-transaction",
+      startedAt: new Date().toISOString(),
+      pid: process.pid,
+      token: nanoid(),
+      targets,
+    });
+    dependencies.afterTransactionMarkerWritten?.();
+
     finishTransactionTargets(root, targets);
 
     return targets.map((target) => {

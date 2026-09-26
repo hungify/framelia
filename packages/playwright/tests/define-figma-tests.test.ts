@@ -235,6 +235,7 @@ describe("runFigmaContractTest (runner-agnostic core)", () => {
       const result = await runFigmaContractTest(page, contract, pinnedBaseline, {
         timeoutMs: 5_000,
         workDir,
+        stabilitySamples: 2,
         attach: async (name, filePath) => {
           attachCalls.push({ name, path: filePath });
         },
@@ -276,6 +277,7 @@ describe("runFigmaContractTest (runner-agnostic core)", () => {
       const result = await runFigmaContractTest(page, contract, pinnedBaseline, {
         timeoutMs: 5_000,
         workDir,
+        stabilitySamples: 2,
         attach: async () => undefined,
         attachJson: async (name, data) => {
           attachJsonCalls.push({ name, data });
@@ -316,6 +318,7 @@ describe("runFigmaContractTest (runner-agnostic core)", () => {
       const result = await runFigmaContractTest(page, contract, pinnedBaseline, {
         timeoutMs: 5_000,
         workDir,
+        stabilitySamples: 2,
         attach: async () => undefined,
         attachJson: async () => undefined,
       });
@@ -354,6 +357,7 @@ describe("runFigmaContractTest (runner-agnostic core)", () => {
       const result = await runFigmaContractTest(page, contract, pinnedBaseline, {
         timeoutMs: 5_000,
         workDir,
+        stabilitySamples: 2,
         attach: async () => undefined,
         attachJson: async () => undefined,
       });

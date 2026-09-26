@@ -41,12 +41,18 @@ export const dashboardCommand = buildCommand({
   },
   parameters: {
     flags: {
+      run: {
+        kind: "parsed",
+        parse: identityParser,
+        brief: "explicit durable run ID",
+        placeholder: "id",
+      },
       projectRoot: projectRootFlag,
       ...dashboardServerFlags,
     },
-    aliases: { r: "projectRoot", H: "host", p: "port", o: "noOpen" },
+    aliases: { r: "projectRoot", R: "run", H: "host", p: "port", o: "noOpen" },
   },
-  docs: { brief: "Open dashboard aggregating every verification artifact." },
+  docs: { brief: "Open dashboard for one selected durable run." },
 });
 
 export const openCommand = buildCommand({
@@ -59,17 +65,18 @@ export const openCommand = buildCommand({
   },
   parameters: {
     flags: {
-      artifact: {
+      projectRoot: projectRootFlag,
+      run: {
         kind: "parsed",
         parse: identityParser,
-        brief: "verification artifact JSON",
-        placeholder: "path",
+        brief: "explicit durable run ID",
+        placeholder: "id",
       },
       ...dashboardServerFlags,
     },
-    aliases: { a: "artifact", H: "host", p: "port", o: "noOpen" },
+    aliases: { r: "projectRoot", R: "run", H: "host", p: "port", o: "noOpen" },
   },
-  docs: { brief: "Open dashboard for an existing verification artifact." },
+  docs: { brief: "Open dashboard for one selected durable run." },
 });
 
 export const reportCommand = buildCommand({
@@ -82,11 +89,12 @@ export const reportCommand = buildCommand({
   },
   parameters: {
     flags: {
-      artifact: {
+      projectRoot: projectRootFlag,
+      run: {
         kind: "parsed",
         parse: identityParser,
-        brief: "verification artifact JSON",
-        placeholder: "path",
+        brief: "explicit durable run ID",
+        placeholder: "id",
       },
       output: {
         kind: "parsed",
@@ -95,7 +103,7 @@ export const reportCommand = buildCommand({
         placeholder: "dir",
       },
     },
-    aliases: { a: "artifact", o: "output" },
+    aliases: { r: "projectRoot", R: "run", o: "output" },
   },
-  docs: { brief: "Export a static dashboard report." },
+  docs: { brief: "Export one selected durable run as a static dashboard report." },
 });

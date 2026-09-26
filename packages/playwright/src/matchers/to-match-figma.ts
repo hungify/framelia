@@ -191,6 +191,7 @@ export async function runToMatchFigma(
         profile,
         clusterCheck,
         profileOverrides: options.profileOverrides,
+        styleToleranceOverrides: options.styleToleranceOverrides,
         gateEligible: options.gateEligible,
         styleGateEligible: options.styleGateEligible,
         scope: options.selector

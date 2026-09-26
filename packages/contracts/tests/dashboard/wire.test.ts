@@ -43,7 +43,7 @@ describe("dashboardEventSchema", () => {
 
 describe("dashboardRunSchema", () => {
   const validRun = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     runId: "run-1",
     status: "passed" as const,
     summary: { queued: 0, running: 0, passed: 1, failed: 0, blocked: 0, total: 1 },
@@ -89,7 +89,7 @@ describe("dashboardRunSchema", () => {
   });
 
   it("rejects a run with a wrong schemaVersion literal", () => {
-    expect(dashboardRunSchema.safeParse({ ...validRun, schemaVersion: 2 }).success).toBe(false);
+    expect(dashboardRunSchema.safeParse({ ...validRun, schemaVersion: 1 }).success).toBe(false);
   });
 
   it("rejects a contract missing a required field (id)", () => {
@@ -134,7 +134,7 @@ describe("wire format vs. the projection that produces it", () => {
     });
 
     const parsed = dashboardRunSchema.safeParse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: "run-1",
       status: "passed",
       summary: { queued: 0, running: 0, passed: 1, failed: 0, blocked: 0, total: 1 },

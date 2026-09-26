@@ -45,13 +45,11 @@ Mock source lives in `mocks/dashboard.ts`. It covers:
 
 ## Run with HMR
 
-For real artifact/API integration, start archived dashboard backend from repository root:
+For real selected-run/API integration, start the dashboard backend from repository root:
 
 ```bash
 pnpm build
-pnpm framelia open \
-  --artifact /absolute/path/to/visual-verification.json \
-  --no-open
+pnpm framelia open --project-root "$PWD" --run <run-id> --no-open
 ```
 
 Backend prints URL such as:
@@ -84,15 +82,15 @@ Without `FRAMELIA_API_ORIGIN`, Vite serves mock API and artifact responses.
 
 ## Run full product
 
-Use CLI's `open` when testing the bundled production dashboard against an existing artifact:
+Use CLI's `open` when testing the bundled production dashboard against an existing selected run:
 
 ```bash
 pnpm build
-pnpm framelia open \
-  --artifact /absolute/path/to/visual-verification.json
+pnpm framelia open --project-root "$PWD" --run <run-id>
 ```
 
-Add `--no-open` to prevent browser auto-open. Process keeps dashboard available until `Ctrl+C`.
+Add `--no-open` to prevent browser auto-open. The process keeps the dashboard available until
+`Ctrl+C`.
 
 For live job progress during an actual run, the dashboard is driven by
 `@framelia/playwright`'s Reporter instead of a CLI command — register it in a Playwright
@@ -132,4 +130,4 @@ GET /artifacts/*   -> baseline, actual, and diff images
 GET /events        -> live SSE progress events
 ```
 
-Portable static reports load `./data/visual-verification.json` and `./data/*` instead. Dashboard contains no database, cloud client, or verification-engine dependency.
+Portable static reports load `./data/selected-run.json` and `./data/*` instead. The dashboard contains no database, cloud client, or verification-engine dependency.

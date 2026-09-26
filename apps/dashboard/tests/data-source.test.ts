@@ -10,7 +10,7 @@ import {
 
 function run(runId: string): DashboardRun {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     status: "running",
     summary: { total: 0, passed: 0, failed: 0, blocked: 0, running: 0, queued: 0 },

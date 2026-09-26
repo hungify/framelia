@@ -1,5 +1,3 @@
-import * as path from "node:path";
-
 import type { DashboardSource } from "@framelia/dashboard-server";
 import {
   DEFAULT_DASHBOARD_HOSTNAME,
@@ -7,11 +5,7 @@ import {
 } from "@framelia/dashboard-server/constants";
 import { z } from "zod";
 
-import {
-  aggregateDashboardSource,
-  archivedDashboardSource,
-  readVerificationArtifact,
-} from "../dashboard/report.ts";
+import { selectedDashboardSource } from "../dashboard/report.ts";
 import { resolveDashboardUrls } from "../dashboard/urls.ts";
 import { usageErrorFromZodError } from "../exit.ts";
 import type { CliRuntime } from "../runtime-types.ts";
@@ -27,16 +21,14 @@ interface DashboardServerFlags {
   readonly port: number;
   readonly noOpen: boolean;
 }
-
 export interface DashboardOptions extends DashboardServerFlags {
   readonly projectRoot: string | undefined;
+  readonly run: string;
 }
 
-export interface OpenDashboardOptions extends DashboardServerFlags {
-  readonly artifact: string;
-}
+export type OpenDashboardOptions = DashboardOptions;
 
-export type DashboardDevserverOptions = DashboardOptions | OpenDashboardOptions;
+export type DashboardDevserverOptions = DashboardOptions;
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -200,13 +192,8 @@ async function loadDashboardSource(
   options: DashboardDevserverOptions,
   runtime: CliRuntime,
 ): Promise<DashboardSource> {
-  if ("artifact" in options) {
-    const artifactPath = path.resolve(runtime.cwd(), options.artifact);
-    const artifact = await readVerificationArtifact(artifactPath);
-    const suiteName = path.basename(path.dirname(artifactPath));
-    return archivedDashboardSource(artifact, suiteName);
-  }
-  return aggregateDashboardSource(openProject(options.projectRoot, runtime));
+  const project = openProject(options.projectRoot, runtime);
+  return selectedDashboardSource(project.root, options.run);
 }
 
 export async function dashboardDevserverCommand(

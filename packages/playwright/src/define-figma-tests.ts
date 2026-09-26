@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { MIN_STABILITY_SAMPLES } from "@framelia/contracts";
 import {
   authoredContractSchema,
   contractBindingSchema,
@@ -157,6 +158,7 @@ export interface FigmaContractTestContext {
   timeoutMs: number;
   workDir: string;
   maxMaskedAreaRatio?: number;
+  stabilitySamples: number;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
   devtoolsSelector?: true | string;
@@ -204,6 +206,7 @@ export async function runFigmaContractTest(
             // which a taller-than-viewport full-page capture could never satisfy.
             { kind: "page", fullPage: false },
       screenshot: { masks: contract.masks, maxMaskedAreaRatio: context.maxMaskedAreaRatio },
+      stabilitySamples: context.stabilitySamples,
       timeoutMs,
       scale,
       devtoolsSelector: context.devtoolsSelector,
@@ -287,6 +290,7 @@ export async function runFigmaContractTest(
         profile,
         clusterCheck,
         profileOverrides: contract.profileOverrides,
+        styleToleranceOverrides: contract.styleToleranceOverrides,
         gateEligible: contract.gateEligible,
         styleGateEligible: contract.styleGateEligible,
         scope:
@@ -707,6 +711,7 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
           timeoutMs,
           workDir,
           maxMaskedAreaRatio: options.maxMaskedAreaRatio,
+          stabilitySamples: livePolicy.capture.stabilitySamples ?? MIN_STABILITY_SAMPLES,
           fontPolicy: options.fontPolicy,
           animationPolicy: options.animationPolicy,
           devtoolsSelector: options.devtoolsSelector,

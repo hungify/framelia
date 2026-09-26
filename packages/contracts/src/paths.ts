@@ -1,7 +1,6 @@
 export const FRAMELIA_DIR = ".framelia";
 export const VISUAL_VERIFICATIONS_DIR = "visual-verifications";
 export const VISUAL_CONTRACT_FILE = "visual-contract.json";
-export const VISUAL_VERIFICATION_FILE = "visual-verification.json";
 export const DISCOVERY_DIR_NAME = ".discovery";
 export const AUTH_STATE_RELATIVE_PATH = "auth/user.json";
 

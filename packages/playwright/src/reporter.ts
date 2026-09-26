@@ -1,17 +1,18 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
-
-import type { CaptureDefaults, VerificationArtifact } from "@framelia/contracts";
+import { DEFAULT_MAX_MASKED_AREA_RATIO, MIN_STABILITY_SAMPLES } from "@framelia/contracts";
+import type { CaptureDefaults, DashboardEvent } from "@framelia/contracts";
 import {
   RUN_PLAN_FORMAT_VERSION,
   runPlanSchema,
+  type CasePlan,
+  type Diagnostic,
   type SourceIdentity,
 } from "@framelia/contracts/workflow";
-import { canonicalJsonDigest, writeVerificationArtifact } from "@framelia/verify";
+import { canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
 import {
   finalizeRunRecord,
   freezeRunPlan,
   publishAttempt,
+  readSelectedRun,
   startRunRecord,
 } from "@framelia/verify/run-bundle";
 import type {
@@ -82,17 +83,15 @@ function loadDashboardServer(): Promise<DashboardServerModule> {
 }
 
 /**
- * Playwright Reporter: drives framelia's live dashboard during a
- * matcher-driven test run, and persists a VerificationArtifact per test
- * afterward so `done-gate`/`report`/`open` keep functioning. Register it
- * in `playwright.config.ts`'s `reporter` array.
+ * Playwright Reporter: records annotated contract tests into one durable run bundle and
+ * projects that selected bundle to the dashboard. Unannotated low-level matchers retain
+ * their ephemeral live ReporterStore view.
  */
 export default class FrameliaReporter implements Reporter {
   readonly #options: FrameliaReporterOptions;
   #store?: ReporterStoreInstance;
   #serverPromise?: Promise<DashboardServer>;
   #projectRoot = process.cwd();
-  #artifacts: VerificationArtifact[] = [];
   #captureDefaults: CaptureDefaults = {};
   /** Loading @framelia/dashboard-server and seeding #store is async; buffers onTestEnd
    * calls that land before it resolves so no result is silently dropped -- Playwright's
@@ -106,7 +105,7 @@ export default class FrameliaReporter implements Reporter {
   #runBundle?: {
     root: string;
     runId: string;
-    cases: Map<string, { caseId: string; casePlanDigest: `sha256:${string}` }>;
+    cases: Map<string, { casePlan: CasePlan }>;
     retryAcceptance: RetryAcceptancePolicy;
   };
   /** Mirrors `#ready`/`#pending` for the run-bundle path -- independent of dashboard
@@ -114,6 +113,9 @@ export default class FrameliaReporter implements Reporter {
    *  prevent durable run-bundle recording (see onBegin's own doc comment). */
   #runBundleReady?: Promise<void>;
   #runBundlePending: Promise<void>[] = [];
+  #publicationDiagnostics: Diagnostic[] = [];
+  #selectedListeners = new Set<(event: DashboardEvent) => void>();
+  #selectedSequence = 0;
 
   constructor(options: FrameliaReporterOptions = {}) {
     this.#options = options;
@@ -138,18 +140,45 @@ export default class FrameliaReporter implements Reporter {
     const ready = Promise.all([loadDashboardServer(), policyPromise]).then(([mod, policy]) => {
       this.#captureDefaults = policy.capture;
       const store = new mod.ReporterStore(
-        tests.map((test) => ({
-          id: sanitizeTestId(test),
-          name: contractNameFor(test),
-          tags: test.tags,
-        })),
+        tests
+          .filter((test) => !readContractRegistration(test))
+          .map((test) => ({
+            id: sanitizeTestId(test),
+            name: contractNameFor(test),
+            tags: test.tags,
+          })),
       );
       this.#store = store;
       this.#serverPromise = mod.startDashboardServer({
         source: {
-          snapshot: () => store.snapshot(),
-          files: () => store.files(),
-          subscribe: (l) => store.subscribe(l),
+          snapshot: async () => {
+            await this.#runBundleReady;
+            const bundle = this.#runBundle;
+            return bundle
+              ? mod.projectSelectedRun(bundle.root, readSelectedRun(bundle.root, bundle.runId)).run
+              : store.snapshot();
+          },
+          files: async () => {
+            await this.#runBundleReady;
+            const bundle = this.#runBundle;
+            return bundle
+              ? mod.projectSelectedRun(bundle.root, readSelectedRun(bundle.root, bundle.runId))
+                  .files
+              : store.files();
+          },
+          subscribe: (listener) => {
+            const unsubscribeStore = store.subscribe((event) =>
+              listener({
+                ...event,
+                runId: this.#runBundle?.runId ?? event.runId,
+              }),
+            );
+            this.#selectedListeners.add(listener);
+            return () => {
+              unsubscribeStore();
+              this.#selectedListeners.delete(listener);
+            };
+          },
         },
         hostname: this.#options.hostname,
         port: this.#options.port,
@@ -179,31 +208,28 @@ export default class FrameliaReporter implements Reporter {
   }
 
   /**
-   * Freezes a `RunPlan` (and starts its `RunRecord`) covering every `framelia.contract`-
-   * annotated test this suite collected. `contractAnnotatedTests IS the "available"/
-   * "selected" set for this run` -- full contract-discovery-vs-collection reconciliation
-   * (what a real subset/`--test-list` selection would narrow `selectedCases` down from)
-   * is #79 (WP6)'s collection-transport job, not this Reporter's: with only Playwright's
-   * own collected suite visible here, every collected case IS what was required and
-   * selected for this particular invocation, so `selection.mode` is always `"all"` and
-   * `requiredCases`/`selectedCases`/`availableCases` are identical. A run with zero
-   * annotated tests has nothing to freeze (`runPlanSchema` requires at least one case)
-   * and is silently skipped -- an ordinary matcher-only suite never gets a run bundle.
-   * Likewise skipped when the project has no resolvable `policyDigest` (no
-   * `framelia.config.*` found): case-plan/run-plan digests need one real policy digest to
-   * anchor to, matching `resolveContractProjectMatrix`'s own `PROJECT_POLICY_INCOMPLETE`
-   * precedent for the same underlying requirement.
+   * Freezes only the contract tests visible in this direct Playwright invocation.
+   * Until WP6 supplies an independently frozen discovery matrix, collected tests are
+   * exact selected membership but never proof of the full required matrix. Direct
+   * reporter plans therefore use `selection.mode: "subset"`, leave `requiredCases`
+   * empty, and rely on the independently signed gate requirements for completeness.
+   * A run with zero annotated tests or no resolvable policy digest is not published.
    */
   async #initializeRunBundle(tests: TestCase[], policy: ResolvedProjectPolicy): Promise<void> {
     if (!policy.policyDigest) return;
     const contractTests = tests.filter((test) => readContractRegistration(test) !== undefined);
     if (contractTests.length === 0) return;
+    const runId = this.#options.runId ?? nanoid();
 
     const results = await Promise.all(
       contractTests.map((test) =>
         buildCasePlanForTest(test, {
           projectRoot: this.#projectRoot,
+          runId,
           policyDigest: policy.policyDigest!,
+          maxMaskedAreaRatio: policy.capture.maxMaskedAreaRatio ?? DEFAULT_MAX_MASKED_AREA_RATIO,
+          stabilitySamples: policy.capture.stabilitySamples ?? MIN_STABILITY_SAMPLES,
+          retryAcceptance: policy.retryAcceptance,
           source: this.#options.source ?? {},
         }),
       ),
@@ -214,15 +240,15 @@ export default class FrameliaReporter implements Reporter {
       casePlanDigest: canonicalJsonDigest(result.casePlan),
     }));
     const contracts = [...new Set(results.map((result) => result.casePlan.contract.id))].toSorted();
-    const runId = this.#options.runId ?? nanoid();
     const plan = runPlanSchema.parse({
       formatVersion: RUN_PLAN_FORMAT_VERSION,
       kind: "framelia.run-plan",
       runId,
       policyDigest: policy.policyDigest,
-      selection: { mode: "all", contracts },
+      retryAcceptance: policy.retryAcceptance,
+      selection: { mode: "subset", contracts },
       availableCases: planned,
-      requiredCases: planned,
+      requiredCases: [],
       selectedCases: planned,
     });
 
@@ -236,18 +262,14 @@ export default class FrameliaReporter implements Reporter {
     this.#runBundle = {
       root: this.#projectRoot,
       runId,
-      cases: new Map(
-        results.map((result) => [
-          result.testId,
-          { caseId: result.caseId, casePlanDigest: canonicalJsonDigest(result.casePlan) },
-        ]),
-      ),
+      cases: new Map(results.map((result) => [result.testId, { casePlan: result.casePlan }])),
       retryAcceptance: policy.retryAcceptance,
     };
   }
 
   onTestEnd(test: TestCase, result: TestResult): void {
     const record = (): void => {
+      if (readContractRegistration(test)) return;
       if (!this.#store) return;
       const projection = finalizeTestEnd(
         test,
@@ -260,7 +282,6 @@ export default class FrameliaReporter implements Reporter {
         projection.dashboardResult,
         projection.files,
       );
-      this.#artifacts.push(...projection.artifacts);
     };
     if (this.#store) {
       record();
@@ -288,14 +309,33 @@ export default class FrameliaReporter implements Reporter {
       try {
         const { record: attemptRecord, files } = buildAttemptRecord(
           result,
-          caseEntry.caseId,
-          caseEntry.casePlanDigest,
+          bundle.runId,
+          caseEntry.casePlan,
+          bundle.root,
         );
         await publishAttempt(bundle.root, bundle.runId, attemptRecord, files);
+        const event: DashboardEvent = {
+          sequence: ++this.#selectedSequence,
+          runId: bundle.runId,
+          timestamp: new Date().toISOString(),
+          contractId: caseEntry.casePlan.caseId,
+          phase: "complete",
+          status:
+            attemptRecord.executionState === "completed"
+              ? attemptRecord.visualVerdict === "passed"
+                ? "passed"
+                : "failed"
+              : "blocked",
+        };
+        for (const listener of this.#selectedListeners) listener(event);
       } catch (error: unknown) {
-        console.error(
-          `framelia reporter: failed to publish run-bundle attempt for ${sanitizeTestId(test)}: ${String(error)}`,
-        );
+        const diagnostic: Diagnostic = {
+          code: "attempt-publication-failed",
+          stage: "publication",
+          message: `Attempt publication failed for "${caseEntry.casePlan.caseId}": ${portableErrorMessage(error, bundle.root)}`,
+        };
+        this.#publicationDiagnostics.push(diagnostic);
+        console.error(`framelia reporter: ${diagnostic.message}`);
       }
     };
     this.#runBundlePending.push(
@@ -307,15 +347,14 @@ export default class FrameliaReporter implements Reporter {
     await this.#ready?.catch(() => undefined);
     await Promise.all(this.#pending);
 
-    // Finalization happens before -- and independent of -- dashboard shutdown/artifact
-    // writing below: "child exit alone is not successful finalization" only holds if
-    // finalizeRunRecord() actually runs regardless of whatever the old path does next.
+    // Finalization seals the selected run's membership after every attempt publish settles.
     await this.#runBundleReady?.catch(() => undefined);
     await Promise.all(this.#runBundlePending);
     if (this.#runBundle) {
       try {
         await finalizeRunRecord(this.#runBundle.root, this.#runBundle.runId, {
           retryAcceptance: this.#runBundle.retryAcceptance,
+          diagnostics: this.#publicationDiagnostics,
         });
       } catch (error: unknown) {
         console.error(
@@ -325,19 +364,6 @@ export default class FrameliaReporter implements Reporter {
     }
 
     this.#store?.finish();
-    for (const artifact of this.#artifacts) {
-      try {
-        // contracts[0].outDir is relative (VISUAL_ARTIFACT_DIR_PATTERN requires it);
-        // resolve it against projectRoot for the actual filesystem write.
-        const outDir = path.join(this.#projectRoot, artifact.request.contracts[0]!.outDir);
-        fs.mkdirSync(outDir, { recursive: true });
-        writeVerificationArtifact(path.join(outDir, "visual-verification.json"), artifact);
-      } catch (error: unknown) {
-        console.error(
-          `framelia reporter: failed to write verification artifact for ${artifact.request.contracts[0]?.id ?? "unknown"}: ${String(error)}`,
-        );
-      }
-    }
     const server = await this.#serverPromise?.catch(() => undefined);
     await server?.close();
   }

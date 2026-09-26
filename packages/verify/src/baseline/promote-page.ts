@@ -64,6 +64,7 @@ export async function captureAndPromotePageBaseline(
         ? { kind: "region", selector: options.selector }
         : { kind: "page", fullPage: options.fullPage ?? false },
       screenshot: {},
+      stabilitySamples: 2,
       timeoutMs,
     });
     if (!captured.ok) {

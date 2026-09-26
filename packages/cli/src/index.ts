@@ -7,13 +7,9 @@
  */
 export { defineConfig, loadFrameliaConfig } from "./config.ts";
 export type { FrameliaConfig, ResolvedFrameliaConfig } from "./config.ts";
+export { exportDashboardReport, selectedDashboardSource } from "./dashboard/report.ts";
 export {
-  archivedDashboardSource,
-  exportDashboardReport,
-  readVerificationArtifact,
-} from "./dashboard/report.ts";
-export {
-  projectArtifact,
+  projectSelectedRun,
   startDashboardServer,
   waitForDashboardShutdown,
 } from "@framelia/dashboard-server";

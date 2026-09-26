@@ -699,13 +699,37 @@ export async function inspectLegacyContracts(
       if (Array.isArray(rawContractsField)) {
         const targetField = "target" in input ? input.target : undefined;
         const targetResult = webTargetSchema.safeParse(targetField);
-        const parsedContracts = rawContractsField
-          .map((rawContract: unknown) => verificationContractSchema.safeParse(rawContract))
+        const parseResults = rawContractsField.map((rawContract: unknown) =>
+          verificationContractSchema.safeParse(rawContract),
+        );
+        const parsedContracts = parseResults
           .filter((parsedContract) => parsedContract.success)
           .map((parsedContract) => parsedContract.data);
         if (parsedContracts.length > 0) {
           recoveredTarget = targetResult.success ? targetResult.data : undefined;
           recoveredContracts = parsedContracts;
+          // Some entries parsed and some didn't -- the parsed ones are still safe to
+          // migrate, but the file can never be deleted out from under the entries that
+          // failed to parse. Report each dropped entry as a global blocker (matching
+          // every other invalid-legacy-file case below) so dry-run surfaces it and write
+          // mode changes nothing until the file is fixed, rather than silently deleting
+          // an entry nothing ever migrated.
+          parseResults.forEach((parsedContract, index) => {
+            if (parsedContract.success) return;
+            const rawEntry = rawContractsField[index];
+            const rawId =
+              typeof rawEntry === "object" &&
+              rawEntry !== null &&
+              typeof (rawEntry as Record<string, unknown>).id === "string"
+                ? ((rawEntry as Record<string, unknown>).id as string)
+                : undefined;
+            invalid.push({
+              file: portableFile,
+              code: "CONTRACT_FILE_INVALID",
+              ...(rawId ? { contractId: rawId } : {}),
+              message: `${portableFile}: contracts[${index}]${rawId ? ` (${rawId})` : ""} is not a valid legacy contract entry and cannot be safely migrated or silently discarded: ${z.prettifyError(parsedContract.error)}`,
+            });
+          });
         }
       }
     }

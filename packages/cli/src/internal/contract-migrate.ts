@@ -465,6 +465,23 @@ async function resolveOneContract(
     );
   }
 
+  // The write target is deterministic from the id alone. A file already sitting at
+  // that exact path -- a foreign file, an already-authored contract the earlier
+  // MIGRATION_ID_CONFLICT check doesn't cover, or (most dangerously) the legacy file's
+  // own future path -- must never be silently overwritten: cleanup reads `legacyFile`
+  // *after* the pointer replacement, so an in-place collision would make cleanup read
+  // back the just-written authored contract and misinterpret or destroy it.
+  const newFile = newFileFor(root, candidate.contract.id);
+  if (fs.existsSync(newFile)) {
+    blockers.push(
+      issue(
+        "MIGRATION_TARGET_EXISTS",
+        "resolution",
+        `${candidate.contract.id}: a file already exists at ${portablePath(root, newFile)}; migration never overwrites an existing file.`,
+      ),
+    );
+  }
+
   if (
     blockers.length > 0 ||
     route.targetPath === undefined ||
@@ -626,6 +643,12 @@ async function executeMigration(
           `Contract ${plan.candidate.contract.id} was authored concurrently while migration was in progress.`,
         );
       }
+      if (fs.existsSync(newFileFor(root, plan.candidate.contract.id))) {
+        throw new AppError(
+          "AUTHORING_CONFLICT",
+          `A file was created at the migration target for ${plan.candidate.contract.id} while migration was in progress.`,
+        );
+      }
     }
 
     const targets: MigrationTransactionTarget[] = plans.map((plan) => {
@@ -649,16 +672,6 @@ async function executeMigration(
         newContract,
       };
     });
-
-    writeMigrationTransaction(root, {
-      formatVersion: 1,
-      kind: "framelia.migration-transaction",
-      startedAt: new Date().toISOString(),
-      pid: process.pid,
-      token: nanoid(),
-      targets,
-    });
-    dependencies.afterTransactionMarkerWritten?.();
 
     for (const target of targets) {
       const stagedSnapshot = staged.get(target.contractId);

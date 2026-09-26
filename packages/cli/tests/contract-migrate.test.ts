@@ -470,4 +470,81 @@ describe("contract migrate", () => {
       diagnostics: [{ code: "MIGRATION_ID_CONFLICT" }],
     });
   });
+
+  it("never deletes a legacy file that still holds an entry which failed to parse", async () => {
+    const root = temporaryProject();
+    // "b.legacy" is missing every required field (name, baseline, viewport, scope) and
+    // fails verificationContractSchema -- the file as a whole also fails
+    // verificationRequestSchema, so recovery falls back to the lenient per-entry path.
+    const legacyPath = writeLegacyFixture(
+      root,
+      "shared-legacy",
+      legacyRequestFixture([legacyContractEntry({ id: "a.legacy" }), { id: "b.legacy" }]),
+    );
+    const mapFile = writeMap(root, {
+      "a.legacy": { projects: ["chromium"], refreshBaseline: true },
+    });
+
+    const result = await contractMigrateCommand(
+      migrateOptions(root, { contract: ["a.legacy"], map: mapFile }),
+      nonInteractivePrompts,
+      runtime(root),
+      { fetchBaseline: fakeFetch() },
+    );
+
+    // The whole migration is blocked -- a.legacy's own resolution succeeded, but
+    // b.legacy could never be recovered, so deleting the shared file would silently
+    // discard it. Nothing is written for either contract.
+    expect(result.exitCode).toBe(2);
+    expect(result.body.migrated).toEqual([]);
+    expect(
+      result.body.diagnostics.some(
+        (d) => d.code === "CONTRACT_FILE_INVALID" && d.message.includes("b.legacy"),
+      ),
+    ).toBe(true);
+    expect(fs.existsSync(legacyPath)).toBe(true);
+    const remaining = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
+    expect(remaining.contracts.map((c: { id: string }) => c.id)).toEqual(["a.legacy", "b.legacy"]);
+    expect(fs.existsSync(path.join(root, ".framelia/contracts/a.legacy"))).toBe(false);
+  });
+
+  it("refuses to migrate onto a target path a foreign file already occupies", async () => {
+    const root = temporaryProject();
+    // A file already sits at the exact path "login.legacy" would migrate to, authored
+    // under a different id -- migration must never overwrite it, even though the id
+    // conflict check (which only inspects authored ids) does not catch this case.
+    const created = await contractCreateCommand(
+      createOptions(root, {
+        contractId: "unrelated.id",
+        output: ".framelia/contracts/login.legacy/visual-contract.json",
+        scope: "page",
+      }),
+      nonInteractivePrompts,
+      runtime(root),
+      { fetchBaseline: fakeFetch() },
+    );
+    expect(created.exitCode).toBe(0);
+    const foreignPath = path.join(root, ".framelia/contracts/login.legacy/visual-contract.json");
+    const foreignBefore = fs.readFileSync(foreignPath, "utf8");
+
+    const legacyPath = writeLegacyFixture(root, "login-legacy-source", legacyRequestFixture());
+    const mapFile = writeMap(root, {
+      "login.legacy": { projects: ["chromium"], refreshBaseline: true },
+    });
+
+    const result = await contractMigrateCommand(
+      migrateOptions(root, { map: mapFile }),
+      nonInteractivePrompts,
+      runtime(root),
+      { fetchBaseline: fakeFetch() },
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.body.migrated).toEqual([]);
+    expect(result.body.unresolved[0]).toMatchObject({
+      contractId: "login.legacy",
+      diagnostics: [{ code: "MIGRATION_TARGET_EXISTS" }],
+    });
+    expect(fs.readFileSync(foreignPath, "utf8")).toBe(foreignBefore);
+    expect(fs.existsSync(legacyPath)).toBe(true);
+  });
 });

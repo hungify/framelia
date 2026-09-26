@@ -49,6 +49,23 @@ export function sanitizeTestId(test: TestCase): string {
   return test.id.replaceAll(/[^a-zA-Z0-9-]+/g, "-");
 }
 
+/** Like sanitizeTestId, but keeps dots (a contractId like "login.desktop" reads literally)
+ *  and collapses any run of dots so it can't spell a ".." traversal segment. */
+export function sanitizeContractId(contractId: string): string {
+  return contractId.replaceAll(/[^a-zA-Z0-9._-]+/g, "-").replaceAll(/\.{2,}/g, ".");
+}
+
+/** Durable evidence folder segments for a contractId, e.g. ("login.desktop", "page") ->
+ *  ["login", "desktop.page"] -- mirrors how `framelia contract create` groups by feature. */
+export function contractDirSegments(contractId: string, leafSuffix: string): string[] {
+  const sanitized = sanitizeContractId(contractId);
+  const dotIndex = sanitized.indexOf(".");
+  if (dotIndex === -1) return [`${sanitized}.${leafSuffix}`];
+  const feature = sanitized.slice(0, dotIndex);
+  const leaf = sanitized.slice(dotIndex + 1);
+  return [feature, `${leaf}.${leafSuffix}`];
+}
+
 export function contractNameFor(test: TestCase): string {
   return test.titlePath().slice(1).join(" › ") || test.title;
 }
@@ -130,8 +147,8 @@ export interface DerivedContract {
   id: string;
   dashboardResult: DashboardContractResult;
   /** Figma matcher evidence is durable; live two-page (toMatchPage/toMatchUrl) results
-   *  remain dashboard/runtime-only -- there is no stable baseline artifact to persist
-   *  a pointer to. */
+   *  remain dashboard/runtime-only under R9 -- there is no stable baseline artifact to
+   *  persist a pointer to. */
   writeEvidence?: {
     outDir: string;
     expectedPath?: string;
@@ -161,14 +178,25 @@ export function deriveContract(
   index: number,
   total: number,
 ): DerivedContract {
-  const baseId = sanitizeTestId(test);
+  // id stays flat ("login.desktop.page") since contractSchema's id field forbids "/".
+  const scopeKind = score?.scope?.kind ?? "page";
+  const baseId = score?.contractId
+    ? `${sanitizeContractId(score.contractId)}.${scopeKind}`
+    : sanitizeTestId(test);
   const id = total === 1 ? baseId : `${baseId}-${index + 1}`;
-  const relativeOutDir = visualArtifactPath(id);
+  // Nests under the same feature folder `framelia contract create` uses, so CLI-authored
+  // config and toMatchFigma evidence share one directory instead of two disconnected ones.
+  const outDirSegments = score?.contractId
+    ? contractDirSegments(score.contractId, total === 1 ? scopeKind : `${scopeKind}-${index + 1}`)
+    : [id];
+  const relativeOutDir = visualArtifactPath(...outDirSegments);
   const absoluteOutDir = path.join(evidenceRoot, relativeOutDir);
   const primary = score;
   const pass = result.status === "passed";
   const targetUrl = httpTargetUrl(primary?.targetUrl);
   const isTerminal = result.status === "passed" || result.status === "failed";
+  // CaptureEvidenceArtifact's `.loose()` schema gives it an index signature verify's
+  // CaptureEvidence doesn't structurally declare, though the runtime shapes match field-for-field.
   const captureEvidence = primary
     ? projectCaptureEvidence(
         primary.captureEvidence as CaptureEvidenceArtifact | undefined,
@@ -225,6 +253,8 @@ export function deriveContract(
     finishedAt: new Date().toISOString(),
   });
 
+  // Worth persisting for the dashboard (#41) even though it skips the schema-v4
+  // VerificationArtifact/done-gate pipeline below (R9 still applies to that part).
   if (primary?.baselineKind === "web" && primary.baselinePromotedAt != null) {
     const expectedPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-expected");
     const actualAttachmentPath = attachmentPath(
@@ -470,6 +500,8 @@ export function writeEvidence(
         ...(gateEligible !== undefined ? { gateEligible } : {}),
         ...(styleGateEligible !== undefined ? { styleGateEligible } : {}),
         ...(score.masks?.length ? { masks: score.masks } : {}),
+        // The project default, not score.maxMaskedAreaRatio -- contractToDoneGate compares
+        // against that same default, so run-meta must match it, not the per-call override.
         ...(maxMaskedAreaRatio !== undefined ? { maxMaskedAreaRatio } : {}),
         ...(captureEvidence ? { captureEvidence } : {}),
       },
@@ -487,6 +519,11 @@ export function writeEvidence(
   );
 }
 
+/**
+ * Copies a toMatchPageBaseline result's expected/actual/diff triplet into the contract's
+ * own durable outDir -- same reasoning as writeEvidence, but no visual-score.json/
+ * VerificationArtifact: that pipeline stays Figma-only (R9).
+ */
 export function writePageBaselineEvidence(
   evidence: NonNullable<DerivedContract["writePageBaselineEvidence"]>,
 ): void {
@@ -586,6 +623,8 @@ export function finalizeTestEnd(
 
   const primary = derivedContracts[0]!;
   const dashboardId = sanitizeTestId(test);
+  // Collapses every matcher call into this one row, so a style issue from any matcher
+  // but the first doesn't silently vanish from the live view.
   const topIssues = derivedContracts.flatMap((derived) => derived.dashboardResult.topIssues ?? []);
 
   return {

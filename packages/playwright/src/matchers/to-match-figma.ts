@@ -1,4 +1,9 @@
-import type { StyleCheckPoint, StyleToleranceOverrides, VisualMask } from "@framelia/contracts";
+import {
+  CONTRACT_ID_PATTERN,
+  type StyleCheckPoint,
+  type StyleToleranceOverrides,
+  type VisualMask,
+} from "@framelia/contracts";
 import type { ExpectSize, SelectorBounds, ProfileOverrides } from "@framelia/verify";
 import { compare, FigmaBaselineProvider } from "@framelia/verify";
 import type { MatcherReturnType, Page } from "@playwright/test";
@@ -24,6 +29,10 @@ import { withTimeout } from "../timeout.ts";
 export interface ToMatchFigmaOptions {
   /** Figma file key. Falls back to FRAMELIA_FIGMA_FILE_KEY when omitted. */
   fileKey?: string;
+  /** The caller's own contract id (e.g. "login.desktop"). When set, the Reporter uses it
+   *  as the durable artifact's id/evidence folder name instead of an opaque test.id hash.
+   *  Must match CONTRACT_ID_PATTERN from @framelia/contracts. */
+  contractId?: string;
   /** Region scope when set (diffs only this selector's bounding box); page scope otherwise. */
   selector?: string;
   expectSize?: ExpectSize;
@@ -46,6 +55,14 @@ export interface ToMatchFigmaOptions {
   styleGateEligible?: boolean;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
+  /** Hides dev-only overlays (TanStack Query/Router devtools, Next.js's dev overlay) before
+   *  capture: `true` uses the built-in selector, or pass a custom CSS selector. */
+  devtoolsSelector?: true | string;
+  /** `true` captures and fetches the Figma baseline at the Page's own live
+   *  `devicePixelRatio` (rounded, capped at 4) instead of 1 -- sharper images, less
+   *  anti-aliasing noise. Always reads the live value rather than a caller-supplied
+   *  number, so the Figma fetch and the web capture can't drift out of sync. */
+  scale?: true;
 }
 
 export interface ToMatchFigmaContext {
@@ -82,18 +99,32 @@ export async function runToMatchFigma(
     };
   }
 
+  // Fail fast here instead of in the Reporter, where a bad contractId would only log to the
+  // console and silently drop the evidence without failing the test.
+  if (options.contractId !== undefined && !CONTRACT_ID_PATTERN.test(options.contractId)) {
+    return {
+      pass: false,
+      message: () =>
+        `toMatchFigma: contractId "${options.contractId}" must match ${CONTRACT_ID_PATTERN} ` +
+        `(lowercase letters/digits, separated by "." or "-" -- e.g. "login.desktop").`,
+    };
+  }
+
   const baseName = sanitizeAttachmentBaseName(nodeId);
   const { profile, clusterCheck } = resolveFigmaCompareOptions(
     options.profile,
     Boolean(options.selector),
   );
   const startedAt = Date.now();
+  const scale = options.scale
+    ? Math.min(4, Math.max(1, Math.round(await received.evaluate(() => window.devicePixelRatio))))
+    : 1;
 
   try {
     const [baselineOutcome, captureOutcome] = await withTimeout(
       Promise.all([
         new FigmaBaselineProvider().resolve({
-          source: { kind: "figma", fileKey, nodeId },
+          source: { kind: "figma", fileKey, nodeId, scale },
           outDir: workDir,
           profile,
           stabilitySamples: 1,
@@ -106,9 +137,11 @@ export async function runToMatchFigma(
           fullPage: options.fullPage,
           masks: options.masks,
           maxMaskedAreaRatio: options.maxMaskedAreaRatio,
+          scale,
           timeoutMs,
           fontPolicy: options.fontPolicy,
           animationPolicy: options.animationPolicy,
+          devtoolsSelector: options.devtoolsSelector,
         }),
       ]),
       timeoutMs,
@@ -166,7 +199,12 @@ export async function runToMatchFigma(
         ? buildAttributionIssues(
             outcome.diffClusters,
             await withTimeout(
-              captureCheckPointBounds(received, options.styleChecks, options.fullPage ?? false),
+              captureCheckPointBounds(
+                received,
+                options.styleChecks,
+                options.fullPage ?? false,
+                scale,
+              ),
               attributionTimeoutMs,
               "toMatchFigma pixel attribution",
             ).catch(() => [] as SelectorBounds[]),
@@ -200,6 +238,7 @@ export async function runToMatchFigma(
         masks: options.masks,
         maxMaskedAreaRatio: options.maxMaskedAreaRatio,
         captureEvidence: captureOutcome,
+        contractId: options.contractId,
       }),
       baselineFetchedAt: baselineOutcome.baseline.evidence.fetchedAt,
       baselineLastModified: baselineOutcome.baseline.evidence.lastModified,

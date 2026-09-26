@@ -24,6 +24,13 @@ export interface ComparePagesOptions {
   profile?: ProfileName;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
+  /** Hides dev-only overlays (TanStack Query/Router devtools, Next.js's dev overlay) before
+   *  capture: `true` uses the built-in selector, or pass a custom CSS selector. */
+  devtoolsSelector?: true | string;
+  /** `true` captures both pages at pageA's own live `devicePixelRatio` (rounded, capped
+   *  at 4) instead of 1. pageB must share the same `deviceScaleFactor`, or the mismatch
+   *  surfaces as a compare() dimension error. */
+  scale?: true;
 }
 
 export interface ComparePagesContext {
@@ -51,6 +58,9 @@ export async function runComparePages(
   // component/strict) — these have no Figma baseline, aren't done-gate
   // eligible, and dev's looser thresholds fit an informal check.
   const profile = options.profile ?? (options.selector ? "component/dev" : "page");
+  const scale = options.scale
+    ? Math.min(4, Math.max(1, Math.round(await pageA.evaluate(() => window.devicePixelRatio))))
+    : 1;
 
   try {
     const [captureA, captureB] = await withTimeout(
@@ -64,6 +74,8 @@ export async function runComparePages(
           timeoutMs,
           fontPolicy: options.fontPolicy,
           animationPolicy: options.animationPolicy,
+          devtoolsSelector: options.devtoolsSelector,
+          scale,
         }),
         captureActual(pageB, {
           outPath: `${workDir}/b.png`,
@@ -73,7 +85,9 @@ export async function runComparePages(
           maxMaskedAreaRatio: options.maxMaskedAreaRatio,
           timeoutMs,
           fontPolicy: options.fontPolicy,
+          scale,
           animationPolicy: options.animationPolicy,
+          devtoolsSelector: options.devtoolsSelector,
         }),
       ]),
       timeoutMs,

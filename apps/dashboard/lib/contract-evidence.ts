@@ -1,25 +1,14 @@
 import type { DashboardContractResult, DashboardTopIssue } from "@framelia/contracts";
 
 /**
- * Whether the evidence-notes section (blockers, diagnostics, baseline
- * provenance, evidence hash, masks) has anything to show. Masked-region
- * detail is the reason a masked-pass contract can hit this even when the
- * other four fields are all empty, so it must gate the section on its own
- * rather than only piggyback on the others being present.
+ * Whether the always-visible "why did this fail" section (blockers,
+ * diagnostics) has anything to show. Baseline provenance, evidence hash, and
+ * masks live in the collapsed Provenance/debug section instead, gated there.
  */
 export function hasEvidenceNotes(
-  contract: Pick<
-    DashboardContractResult,
-    "blockers" | "diagnostics" | "baseline" | "evidenceHash" | "maskEvidence"
-  >,
+  contract: Pick<DashboardContractResult, "blockers" | "diagnostics">,
 ): boolean {
-  return Boolean(
-    contract.blockers.length ||
-    contract.diagnostics?.length ||
-    contract.baseline?.provenance ||
-    contract.evidenceHash ||
-    contract.maskEvidence,
-  );
+  return Boolean(contract.blockers.length || contract.diagnostics?.length);
 }
 
 export interface TopIssueGroup {

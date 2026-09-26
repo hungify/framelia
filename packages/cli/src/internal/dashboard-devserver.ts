@@ -1,5 +1,3 @@
-import * as path from "node:path";
-
 import type { DashboardSource } from "@framelia/dashboard-server";
 import {
   DEFAULT_DASHBOARD_HOSTNAME,
@@ -7,17 +5,14 @@ import {
 } from "@framelia/dashboard-server/constants";
 import { z } from "zod";
 
-import {
-  aggregateDashboardSource,
-  archivedDashboardSource,
-  readVerificationArtifact,
-} from "../dashboard/report.ts";
-import { resolveDashboardUrls } from "../dashboard/urls.ts";
+import { selectedDashboardSource } from "../dashboard/report.ts";
+import { resolveDashboardUrls, type NetworkUrl } from "../dashboard/urls.ts";
 import { usageErrorFromZodError } from "../exit.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { createDashboardOutput, type DashboardOutput } from "./dashboard-output.ts";
 import { productionDashboardHost, type DashboardHost } from "./dashboard-runtime.ts";
 import { openProject } from "./project.ts";
+import { readRunProjection } from "./run-projection.ts";
 
 const portSchema = z.object({ port: z.number().int().positive().max(65_535) });
 const SERVER_CLOSE_TIMEOUT_MS = 5_000;
@@ -27,16 +22,16 @@ interface DashboardServerFlags {
   readonly port: number;
   readonly noOpen: boolean;
 }
-
 export interface DashboardOptions extends DashboardServerFlags {
   readonly projectRoot: string | undefined;
+  readonly run: string;
 }
 
-export interface OpenDashboardOptions extends DashboardServerFlags {
-  readonly artifact: string;
-}
+export interface OpenDashboardOptions extends DashboardOptions {}
 
-export type DashboardDevserverOptions = DashboardOptions | OpenDashboardOptions;
+export interface DashboardDevserverOptions extends DashboardOptions {
+  readonly command?: "open" | "dashboard";
+}
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -138,10 +133,16 @@ async function serveDashboard(
   options: DashboardServerFlags,
   host: DashboardHost,
   output: DashboardOutput,
+  onReady: (address: {
+    browser: string;
+    local: readonly string[];
+    network: readonly NetworkUrl[];
+  }) => void,
 ): Promise<void> {
   const { hostname, explicit } = resolveHost(options.host);
   const shutdown = host.waitForShutdown();
   let shouldOpen = !options.noOpen;
+  let readinessEmitted = false;
   for (;;) {
     const startedAt = host.now();
     // eslint-disable-next-line no-await-in-loop -- must finish starting before this iteration can proceed
@@ -163,6 +164,10 @@ async function serveDashboard(
         networkUrls: urls.network,
         hostExplicit: explicit,
       });
+      if (!readinessEmitted) {
+        readinessEmitted = true;
+        onReady({ browser: urls.browser, local: urls.local, network: urls.network });
+      }
       const restartSignal = createDeferred<void>();
       const quitSignal = createDeferred<void>();
       const stopListening = listenForShortcuts(
@@ -199,14 +204,9 @@ async function serveDashboard(
 async function loadDashboardSource(
   options: DashboardDevserverOptions,
   runtime: CliRuntime,
-): Promise<DashboardSource> {
-  if ("artifact" in options) {
-    const artifactPath = path.resolve(runtime.cwd(), options.artifact);
-    const artifact = await readVerificationArtifact(artifactPath);
-    const suiteName = path.basename(path.dirname(artifactPath));
-    return archivedDashboardSource(artifact, suiteName);
-  }
-  return aggregateDashboardSource(openProject(options.projectRoot, runtime));
+): Promise<{ source: DashboardSource; root: string }> {
+  const project = openProject(options.projectRoot, runtime);
+  return { source: await selectedDashboardSource(project.root, options.run), root: project.root };
 }
 
 export async function dashboardDevserverCommand(
@@ -216,6 +216,17 @@ export async function dashboardDevserverCommand(
   output: DashboardOutput = createDashboardOutput(runtime),
 ): Promise<void> {
   requirePositivePort(options.port);
-  const source = await loadDashboardSource(options, runtime);
-  await serveDashboard(source, options, host, output);
+  const { source, root } = await loadDashboardSource(options, runtime);
+  const projection = readRunProjection(root, options.run);
+  await serveDashboard(source, options, host, output, (address) => {
+    runtime.stdout.write(
+      `${JSON.stringify({
+        formatVersion: 1,
+        kind: "framelia.open-ready",
+        command: options.command ?? "dashboard",
+        selectedRun: { runId: projection.runId, bundlePath: projection.bundlePath },
+        address,
+      })}\n`,
+    );
+  });
 }

@@ -1,5 +1,10 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import { AUTHORITY_AUDIENCE_ENV, PROTECTED_JOB_IDENTITY_ENV } from "../src/cli-constants.ts";
 import { run } from "../src/cli.ts";
 import { createFakeProcess } from "./fake-process.ts";
 
@@ -26,6 +31,27 @@ describe("route map: root routes are reachable", () => {
     await run([route, "--help"], { process: fakeProcess, loadProjectEnv: false });
     expect(fakeProcess.exitCode).toBe(0);
     expect(fakeProcess.stdoutText()).toContain("USAGE");
+  });
+});
+
+describe("done-gate protected environment", () => {
+  it("does not load job identity or audience from a checkout-controlled .env", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-done-gate-env-"));
+    try {
+      fs.writeFileSync(
+        path.join(root, ".env"),
+        `${PROTECTED_JOB_IDENTITY_ENV}=checkout-job\n${AUTHORITY_AUDIENCE_ENV}=checkout-audience\n`,
+      );
+      const fakeProcess = createFakeProcess();
+      const runtime = { ...fakeProcess, cwd: () => root };
+
+      await run(["done-gate"], { process: runtime });
+
+      expect(fakeProcess.env[PROTECTED_JOB_IDENTITY_ENV]).toBeUndefined();
+      expect(fakeProcess.env[AUTHORITY_AUDIENCE_ENV]).toBeUndefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -67,7 +93,7 @@ describe("route map: default command", () => {
     await run(["--port", "-1"], { process: fakeProcess, loadProjectEnv: false });
     expect(fakeProcess.exitCode).toBe(2);
     expect(fakeProcess.stderrText()).not.toContain("No command registered");
-    expect(fakeProcess.stderrText().toLowerCase()).toContain("port");
+    expect(fakeProcess.stderrText()).toContain("--run");
   });
 });
 

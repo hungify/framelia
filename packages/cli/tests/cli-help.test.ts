@@ -46,7 +46,11 @@ describe("published CLI", () => {
 
   it.each([
     ["contract", [], ["schemaVersion", "target", "contracts"]],
-    ["artifact", ["--target", "artifact"], ["schemaVersion", "kind", "request", "results"]],
+    [
+      "requirements",
+      ["--target", "requirements"],
+      ["formatVersion", "kind", "payload", "signature"],
+    ],
   ])("prints the live %s JSON Schema", (_target, args, expectedProperties) => {
     const result = spawnSync(
       process.execPath,
@@ -72,7 +76,7 @@ describe("published CLI", () => {
       ["--baseline", "missing.png", "--actual", "missing.png", "--profile", "audit"],
       'Expected "audit" to be one of (page|component/strict|component/dev)',
     ],
-    ["schema", ["--target", "request"], 'Expected "request" to be one of (contract|artifact)'],
+    ["schema", ["--target", "request"], 'Expected "request" to be one of (contract|requirements)'],
   ])("rejects invalid %s enum flags at usage boundary", (command, args, expectedMessage) => {
     const result = spawnSync(
       process.execPath,
@@ -90,7 +94,6 @@ describe("published CLI", () => {
       ["status", "--project-rooot", packageRoot],
       "No flag registered for --project-rooot",
     ],
-    ["missing required option", ["done-gate"], "Expected input for flag --artifact"],
     [
       "missing option value",
       ["status", "--project-root"],

@@ -139,6 +139,217 @@ const resolvedThresholdTooltip = computed(() => {
       </div>
     </dl>
     <div
+      v-if="contract.sourceRunId"
+      class="mx-3.5 mb-3 border-t border-line-soft pt-3 text-xs"
+      data-testid="selected-run-identity"
+    >
+      <span class="block text-muted">Source run</span>
+      <code class="block mt-1 text-text-soft break-all">{{ contract.sourceRunId }}</code>
+      <div class="mt-2 grid grid-cols-2 gap-2">
+        <span
+          >Project
+          <strong class="block text-text"
+            >{{ contract.projectName ?? "—" }} · repeat {{ contract.repeatIndex ?? 0 }}</strong
+          ></span
+        >
+        <span
+          >Target <code class="block text-text">{{ contract.targetPath ?? "—" }}</code></span
+        >
+      </div>
+    </div>
+    <details
+      v-if="
+        contract.provenance ||
+        contract.evidenceHash ||
+        contract.maskEvidence ||
+        contract.baseline?.provenance ||
+        contract.baseline?.promotedAt
+      "
+      class="mx-3.5 mb-3 border-t border-line-soft pt-3 text-xs"
+    >
+      <summary class="cursor-pointer select-none text-text-soft">Provenance / debug</summary>
+      <dl v-if="contract.provenance" class="mt-2 grid grid-cols-2 gap-2 text-text-soft">
+        <div>
+          <dt class="text-muted">Policy</dt>
+          <dd class="m-0 break-all font-mono">{{ contract.provenance.policyDigest }}</dd>
+        </div>
+        <div>
+          <dt class="text-muted">Retry policy</dt>
+          <dd class="m-0">{{ contract.provenance.retryAcceptance }}</dd>
+        </div>
+        <div>
+          <dt class="text-muted">Source / build</dt>
+          <dd class="m-0 break-all font-mono">
+            {{ contract.provenance.sourceDigest ?? "—" }} /
+            {{ contract.provenance.buildDigest ?? "—" }}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-muted">Dirty</dt>
+          <dd class="m-0">{{ contract.provenance.dirty ?? "unknown" }}</dd>
+        </div>
+        <div>
+          <dt class="text-muted">Binding</dt>
+          <dd class="m-0 break-all font-mono">{{ contract.provenance.bindingDigest }}</dd>
+        </div>
+        <div>
+          <dt class="text-muted">Registration</dt>
+          <dd class="m-0 break-all font-mono">
+            {{ contract.provenance.specFile }} · {{ contract.provenance.specFileDigest }} ·
+            {{ contract.provenance.titlePath.join(" › ") }}
+          </dd>
+        </div>
+      </dl>
+      <div v-if="contract.evidenceHash" class="mt-2">
+        <span class="block text-muted">Evidence hash</span>
+        <code class="block mt-0.75 break-all text-text-soft">{{ contract.evidenceHash }}</code>
+      </div>
+      <div v-if="contract.maskEvidence" class="mt-2 min-w-0">
+        <span class="block text-muted"
+          >Masks — {{ contract.maskEvidence.status }} ·
+          {{ contract.maskEvidence.matchedCount }} region(s),
+          {{ formatRatio(contract.maskEvidence.maskedAreaRatio) }} area</span
+        >
+        <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
+          <li
+            v-for="(mask, index) in contract.maskEvidence.requested"
+            :key="`${mask.selector}-${index}`"
+            class="leading-snug"
+          >
+            <code class="text-amber">{{ mask.selector }}</code>
+            <span class="text-text-soft">
+              — {{ mask.reason }}; {{ mask.matchedCount ?? "—" }} match(es)</span
+            >
+          </li>
+        </ul>
+        <div class="mt-1 text-muted font-mono">
+          Bounds:
+          {{
+            contract.maskEvidence.bounds
+              .map((bound) => `${bound.x},${bound.y} ${bound.width}×${bound.height}`)
+              .join(" · ")
+          }}
+        </div>
+      </div>
+      <div v-if="contract.baseline?.provenance" class="mt-2 min-w-0">
+        <span class="block text-muted">Baseline provenance</span>
+        <code class="block mt-0.75 break-all text-text-soft">{{
+          contract.baseline.provenance
+        }}</code>
+      </div>
+      <div v-if="contract.baseline?.promotedAt" class="mt-2 min-w-0">
+        <span class="block text-muted">Baseline promoted</span>
+        <code class="block mt-0.75 break-all text-text-soft"
+          >{{ contract.baseline.revision ? `${contract.baseline.revision} ` : "" }}by
+          {{ contract.baseline.promotedBy ?? "unknown" }} at
+          {{ new Date(contract.baseline.promotedAt).toLocaleString()
+          }}{{ contract.baseline.runId ? ` (run ${contract.baseline.runId})` : "" }}</code
+        >
+      </div>
+    </details>
+    <details
+      v-if="contract.attempts?.length"
+      class="mx-3.5 mb-3 border-t border-line-soft pt-3 text-xs"
+      data-testid="retry-history"
+    >
+      <summary class="cursor-pointer select-none text-text-soft">
+        Attempts ({{ contract.attempts.length }}) · selected
+        {{ contract.selectedAttemptId ?? "none" }}
+      </summary>
+      <div
+        v-for="attempt in contract.attempts"
+        :key="attempt.attemptId"
+        class="mt-2 border border-line-soft rounded-sm p-2 text-xs"
+      >
+        <div class="flex justify-between gap-2">
+          <code>{{ attempt.attemptId }}</code>
+          <strong>{{ attempt.selected ? "selected" : `retry ${attempt.retryIndex}` }}</strong>
+        </div>
+        <div class="mt-1 text-muted">
+          Execution {{ attempt.executionState }} · Visual {{ attempt.visualVerdict }}
+        </div>
+        <dl class="mt-2 grid grid-cols-1 gap-1 text-text-soft" data-testid="attempt-provenance">
+          <div>
+            <dt class="inline text-muted">Run / case plan:</dt>
+            <dd class="inline ml-1 break-all font-mono">
+              {{ attempt.runId }} / {{ attempt.casePlanDigest }}
+            </dd>
+          </div>
+          <div v-if="attempt.baseline">
+            <dt class="inline text-muted">Baseline:</dt>
+            <dd class="inline ml-1 break-all font-mono">
+              {{ attempt.baseline.snapshotDigest }} · {{ attempt.baseline.kind
+              }}<template v-if="attempt.baseline.fileKey || attempt.baseline.nodeId">
+                · {{ attempt.baseline.fileKey ?? "—" }}/{{
+                  attempt.baseline.nodeId ?? "—"
+                }}</template
+              ><template v-if="attempt.baseline.sourceRunId">
+                · source run {{ attempt.baseline.sourceRunId }}</template
+              >
+            </dd>
+          </div>
+          <div v-if="attempt.scoreProvenance">
+            <dt class="inline text-muted">Score:</dt>
+            <dd class="inline ml-1 break-all font-mono">
+              v{{ attempt.scoreProvenance.formatVersion ?? "?" }} ·
+              {{ attempt.scoreProvenance.digest }}
+            </dd>
+          </div>
+        </dl>
+        <ul class="mt-1.5 p-0 list-none grid grid-cols-2 gap-1">
+          <li
+            v-for="(evidence, kind) in attempt.evidence"
+            :key="kind"
+            :class="
+              evidence.availability === 'available'
+                ? 'text-green'
+                : evidence.availability === 'not-recorded'
+                  ? 'text-muted'
+                  : 'text-amber'
+            "
+          >
+            {{ kind }}: {{ evidence.availability }}
+          </li>
+        </ul>
+        <dl v-if="attempt.comparison" class="mt-2 grid grid-cols-2 gap-1 text-text-soft">
+          <div>
+            <dt class="text-muted">Match</dt>
+            <dd class="m-0 font-mono">{{ formatRatio(attempt.comparison.matchRatio) }}</dd>
+          </div>
+          <div>
+            <dt class="text-muted">SSIM</dt>
+            <dd class="m-0 font-mono">{{ formatRatio(attempt.comparison.ssim) }}</dd>
+          </div>
+          <div>
+            <dt class="text-muted">ΔE</dt>
+            <dd class="m-0 font-mono">{{ attempt.comparison.avgDeltaE ?? "—" }}</dd>
+          </div>
+          <div>
+            <dt class="text-muted">Diff pixels</dt>
+            <dd class="m-0 font-mono">{{ attempt.comparison.diffPixels ?? "—" }}</dd>
+          </div>
+        </dl>
+        <ul
+          v-if="attempt.topIssues.length || attempt.diagnostics.length || attempt.warnings.length"
+          class="mt-2 mb-0 pl-4 text-text-soft"
+        >
+          <li v-for="issue in attempt.topIssues" :key="`issue:${issue.kind}:${issue.message}`">
+            {{ issue.severity }} {{ issue.kind }}: {{ issue.message }}
+          </li>
+          <li
+            v-for="diagnostic in attempt.diagnostics"
+            :key="`diagnostic:${diagnostic.code}:${diagnostic.message}`"
+          >
+            {{ diagnostic.blocking ? "blocking " : "" }}{{ diagnostic.code }}:
+            {{ diagnostic.message }}
+          </li>
+          <li v-for="warning in attempt.warnings" :key="`warning:${warning}`">
+            warning: {{ warning }}
+          </li>
+        </ul>
+      </div>
+    </details>
+    <div
       v-if="contract.resolvedThreshold"
       class="mx-3.5 mb-3 border-t border-line-soft pt-3"
       data-testid="resolved-threshold"
@@ -295,63 +506,6 @@ const resolvedThresholdTooltip = computed(() => {
             </li>
           </ul>
         </template>
-      </div>
-      <div v-if="contract.maskEvidence" class="min-w-0">
-        <span class="block text-muted text-xs"
-          >Masks — {{ contract.maskEvidence.status }} ·
-          {{ contract.maskEvidence.matchedCount }} region(s),
-          {{ formatRatio(contract.maskEvidence.maskedAreaRatio) }} area</span
-        >
-        <ul class="m-0 mt-1.5 p-0 list-none flex flex-col gap-1.5">
-          <li
-            v-for="(mask, index) in contract.maskEvidence.requested"
-            :key="`${mask.selector}-${index}`"
-            class="text-xs leading-snug"
-          >
-            <code class="text-amber text-xs">{{ mask.selector }}</code>
-            <span class="text-text-soft">
-              — {{ mask.reason }}; {{ mask.matchedCount ?? "—" }} match(es)</span
-            >
-          </li>
-        </ul>
-        <div class="mt-1 text-xs text-muted font-mono">
-          Bounds:
-          {{
-            contract.maskEvidence.bounds
-              .map((bound) => `${bound.x},${bound.y} ${bound.width}×${bound.height}`)
-              .join(" · ")
-          }}
-        </div>
-      </div>
-      <div v-if="contract.baseline?.provenance" class="min-w-0">
-        <span class="block overflow-hidden text-ellipsis whitespace-nowrap text-muted text-xs"
-          >Baseline provenance</span
-        >
-        <code
-          class="block overflow-hidden text-ellipsis whitespace-nowrap mt-0.75 text-text-soft text-xs"
-          >{{ contract.baseline.provenance }}</code
-        >
-      </div>
-      <div v-if="contract.baseline?.promotedAt" class="min-w-0">
-        <span class="block overflow-hidden text-ellipsis whitespace-nowrap text-muted text-xs"
-          >Baseline promoted</span
-        >
-        <code
-          class="block overflow-hidden text-ellipsis whitespace-nowrap mt-0.75 text-text-soft text-xs"
-          >{{ contract.baseline.revision ? `${contract.baseline.revision} ` : "" }}by
-          {{ contract.baseline.promotedBy ?? "unknown" }} at
-          {{ new Date(contract.baseline.promotedAt).toLocaleString()
-          }}{{ contract.baseline.runId ? ` (run ${contract.baseline.runId})` : "" }}</code
-        >
-      </div>
-      <div v-if="contract.evidenceHash" class="min-w-0">
-        <span class="block overflow-hidden text-ellipsis whitespace-nowrap text-muted text-xs"
-          >Evidence hash</span
-        >
-        <code
-          class="block overflow-hidden text-ellipsis whitespace-nowrap mt-0.75 text-text-soft text-xs"
-          >{{ contract.evidenceHash }}</code
-        >
       </div>
     </div>
     <details

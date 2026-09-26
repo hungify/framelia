@@ -1,4 +1,4 @@
-import { buildCommand, numberParser } from "@stricli/core";
+import { buildCommand } from "@stricli/core";
 
 import { identityParser, projectRootFlag } from "../cli-constants.ts";
 import type { CliContext } from "../context.ts";
@@ -14,37 +14,23 @@ export const doneGateCommand = buildCommand({
   },
   parameters: {
     flags: {
-      artifact: {
+      run: {
         kind: "parsed",
         parse: identityParser,
-        brief: "verification artifact JSON",
+        optional: true,
+        brief: "explicit durable run ID",
+        placeholder: "id",
+      },
+      requirements: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "protected CI/deployment requirements JSON",
         placeholder: "path",
       },
       projectRoot: projectRootFlag,
-      maxScoreAgeMs: {
-        kind: "parsed",
-        parse: numberParser,
-        optional: true,
-        brief: "maximum score age",
-        placeholder: "ms",
-      },
-      maxBaselineAgeMs: {
-        kind: "parsed",
-        parse: numberParser,
-        optional: true,
-        brief: "maximum baseline age",
-        placeholder: "ms",
-      },
-      maxGoldAgeMs: {
-        kind: "parsed",
-        parse: numberParser,
-        optional: true,
-        hidden: true,
-        brief: "deprecated alias for --max-baseline-age-ms",
-        placeholder: "ms",
-      },
     },
-    aliases: { a: "artifact", r: "projectRoot", s: "maxScoreAgeMs", b: "maxBaselineAgeMs" },
+    aliases: { r: "projectRoot", R: "run", q: "requirements" },
   },
-  docs: { brief: "Evaluate final done gate from verification evidence." },
+  docs: { brief: "Evaluate one selected run against protected trusted requirements." },
 });

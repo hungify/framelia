@@ -63,8 +63,37 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
         <span class="block mt-0.5 text-muted text-xs"
           >{{ contractsCount }} of {{ run.summary.total }} stories</span
         >
+        <span v-if="run.coverage" class="block mt-0.5 text-muted text-xs" data-testid="coverage">
+          <template v-if="run.coverage.selectionMode === 'all'">
+            Coverage {{ run.coverage.selected }}/{{ run.coverage.required }} required · all
+          </template>
+          <template v-else>
+            Selected {{ run.coverage.selected }} case{{ run.coverage.selected === 1 ? "" : "s" }} ·
+            subset (full matrix supplied by authority)
+          </template>
+        </span>
+        <ul
+          v-if="run.diagnostics?.length"
+          class="mt-1 text-amber text-xs"
+          data-testid="run-diagnostics"
+        >
+          <li
+            v-for="diagnostic in run.diagnostics"
+            :key="`${diagnostic.code}:${diagnostic.message}`"
+          >
+            {{ diagnostic.code }}: {{ diagnostic.message }}
+          </li>
+        </ul>
       </div>
-      <StatusBadge :status="run.status" />
+      <span
+        :title="
+          run.executionState && run.visualVerdict
+            ? `Execution ${run.executionState} · Visual ${run.visualVerdict}`
+            : undefined
+        "
+      >
+        <StatusBadge :status="run.status" />
+      </span>
     </header>
     <div class="grid grid-cols-[minmax(0,1fr)_94px] gap-1.5 px-2 pb-2">
       <UInput
@@ -149,6 +178,7 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
     <footer
       class="border-t border-line px-2.5 py-2.5 bg-panel-deep"
       aria-label="Verification summary"
+      title="Alt + ← / → to move selection"
     >
       <div class="flex items-center justify-between gap-2 mb-2">
         <span class="text-xs font-semibold">Visual tests</span>
@@ -174,7 +204,6 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
         <span v-if="run.summary.running" class="text-blue">{{ run.summary.running }} running</span>
         <span v-if="run.summary.queued">{{ run.summary.queued }} queued</span>
       </div>
-      <p class="mt-2 text-muted text-xs">Alt + ← / → to move selection</p>
     </footer>
   </div>
 </template>

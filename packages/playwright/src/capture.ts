@@ -10,6 +10,7 @@ export interface CaptureOptions {
   fullPage?: boolean;
   masks?: ReadyCaptureSpec["screenshot"]["masks"];
   maxMaskedAreaRatio?: number;
+  stabilitySamples?: number;
   timeoutMs?: number;
   fontPolicy?: "required" | "warn";
   animationPolicy?: "freeze" | "allow";
@@ -31,6 +32,7 @@ export async function captureActual(
       ? { kind: "region", selector: options.selector, expectedSize: options.expectedSize }
       : { kind: "page", fullPage: options.fullPage ?? false },
     screenshot: { masks: options.masks, maxMaskedAreaRatio: options.maxMaskedAreaRatio },
+    stabilitySamples: options.stabilitySamples ?? 1,
     timeoutMs: options.timeoutMs,
     fontPolicy: options.fontPolicy,
     animationPolicy: options.animationPolicy,

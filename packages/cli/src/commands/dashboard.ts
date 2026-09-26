@@ -36,17 +36,23 @@ export const dashboardCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: DashboardOptions) {
-      return dashboardDevserverCommand(flags, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "dashboard" }, this.process);
     };
   },
   parameters: {
     flags: {
+      run: {
+        kind: "parsed",
+        parse: identityParser,
+        brief: "explicit durable run ID",
+        placeholder: "id",
+      },
       projectRoot: projectRootFlag,
       ...dashboardServerFlags,
     },
-    aliases: { r: "projectRoot", H: "host", p: "port", o: "noOpen" },
+    aliases: { r: "projectRoot", R: "run", H: "host", p: "port", o: "noOpen" },
   },
-  docs: { brief: "Open dashboard aggregating every verification artifact." },
+  docs: { brief: "Open dashboard for one selected durable run." },
 });
 
 export const openCommand = buildCommand({
@@ -54,22 +60,23 @@ export const openCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: OpenDashboardOptions) {
-      return dashboardDevserverCommand(flags, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "open" }, this.process);
     };
   },
   parameters: {
     flags: {
-      artifact: {
+      projectRoot: projectRootFlag,
+      run: {
         kind: "parsed",
         parse: identityParser,
-        brief: "verification artifact JSON",
-        placeholder: "path",
+        brief: "explicit durable run ID",
+        placeholder: "id",
       },
       ...dashboardServerFlags,
     },
-    aliases: { a: "artifact", H: "host", p: "port", o: "noOpen" },
+    aliases: { r: "projectRoot", R: "run", H: "host", p: "port", o: "noOpen" },
   },
-  docs: { brief: "Open dashboard for an existing verification artifact." },
+  docs: { brief: "Open dashboard for one selected durable run." },
 });
 
 export const reportCommand = buildCommand({
@@ -82,20 +89,26 @@ export const reportCommand = buildCommand({
   },
   parameters: {
     flags: {
-      artifact: {
+      projectRoot: projectRootFlag,
+      // Deliberately parser-optional: finite commands own missing semantic input so
+      // automation receives one versioned JSON outcome instead of Stricli stderr.
+      run: {
         kind: "parsed",
         parse: identityParser,
-        brief: "verification artifact JSON",
-        placeholder: "path",
+        brief: "explicit durable run ID",
+        optional: true,
+        placeholder: "id",
       },
+      // See --run above. reportCommand validates the required pair together.
       output: {
         kind: "parsed",
         parse: identityParser,
         brief: "empty report output directory",
+        optional: true,
         placeholder: "dir",
       },
     },
-    aliases: { a: "artifact", o: "output" },
+    aliases: { r: "projectRoot", R: "run", o: "output" },
   },
-  docs: { brief: "Export a static dashboard report." },
+  docs: { brief: "Export one selected durable run as a static dashboard report." },
 });

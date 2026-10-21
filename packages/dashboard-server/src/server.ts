@@ -4,7 +4,9 @@ import type { DashboardEvent, DashboardRun } from "@framelia/contracts";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
+import { cacheDashboardSource } from "./cached-source.ts";
 import { DEFAULT_DASHBOARD_HOSTNAME, DEFAULT_DASHBOARD_PORT } from "./constants.ts";
+import { hostGuard, noSniff } from "./host-guard.ts";
 import { listenWithPortRetry } from "./port-listener.ts";
 import { assertClientBuildExists, mountArtifactRoute, mountClientRoutes } from "./static-assets.ts";
 
@@ -35,12 +37,13 @@ export function defaultClientRoot(): string {
 /**
  * Wires up the dashboard's routes and binds a real HTTP listener. Static-file
  * serving lives in static-assets.ts, the EADDRINUSE port-retry loop in
- * port-listener.ts, and shutdown-signal handling in shutdown.ts (see
- * `waitForDashboardShutdown`, exported alongside this from index.ts) — every
- * route here is thin wiring onto those modules and `options.source`, except
- * `/events`, whose SSE fan-out (ordered writes, heartbeat, subscriber
- * cleanup) is route-specific enough that it doesn't fit any of the three
- * extracted modules and stays inline.
+ * port-listener.ts, shutdown-signal handling in shutdown.ts (see
+ * `waitForDashboardShutdown`, exported alongside this from index.ts), the
+ * DNS-rebinding guard in host-guard.ts, and per-change memoization of the
+ * source's projections in cached-source.ts — every route here is thin wiring
+ * onto those modules and `options.source`, except `/events`, whose SSE fan-out
+ * (ordered writes, heartbeat, subscriber cleanup) is route-specific enough that
+ * it doesn't fit any of the extracted modules and stays inline.
  */
 export async function startDashboardServer(options: {
   source: DashboardSource;
@@ -51,24 +54,26 @@ export async function startDashboardServer(options: {
   const hostname = options.hostname ?? DEFAULT_DASHBOARD_HOSTNAME;
   const clientRoot = options.clientRoot ?? defaultClientRoot();
   await assertClientBuildExists(clientRoot);
+  const source = cacheDashboardSource(options.source);
   const app = new Hono();
+  let boundPort: number | undefined;
 
+  app.use("*", noSniff);
+  app.use("*", hostGuard({ hostname, port: () => boundPort }));
   app.get("/api/run", async (context) =>
-    context.json(await options.source.snapshot(), 200, { "cache-control": "no-store" }),
+    context.json(await source.snapshot(), 200, { "cache-control": "no-store" }),
   );
   app.get("/api/meta", (context) =>
-    context.json({ live: Boolean(options.source.subscribe) }, 200, { "cache-control": "no-store" }),
+    context.json({ live: Boolean(source.subscribe) }, 200, { "cache-control": "no-store" }),
   );
   app.get("/api/contracts", async (context) => {
     const id = context.req.query("id");
-    const result = (await options.source.snapshot()).contracts.find(
-      (contract) => contract.id === id,
-    );
+    const result = (await source.snapshot()).contracts.find((contract) => contract.id === id);
     return result ? context.json(result) : context.json({ error: "Contract not found" }, 404);
   });
-  mountArtifactRoute(app, options.source.files);
+  mountArtifactRoute(app, source.files);
   app.get("/events", (context) => {
-    const subscribe = options.source.subscribe;
+    const subscribe = source.subscribe;
     if (!subscribe)
       return context.json({ error: "Live events unavailable for archived run." }, 404);
     return streamSSE(context, async (stream) => {
@@ -91,7 +96,7 @@ export async function startDashboardServer(options: {
       });
 
       enqueue(async () => {
-        const snapshot = await options.source.snapshot();
+        const snapshot = await source.snapshot();
         await stream.writeSSE({
           id: "sync",
           event: "run",
@@ -122,10 +127,14 @@ export async function startDashboardServer(options: {
     hostname,
     startPort: options.port ?? DEFAULT_DASHBOARD_PORT,
     onPortInUse: (port, nextPort) => console.error(`Port ${port} is in use, trying ${nextPort}...`),
+  }).catch((error: unknown) => {
+    source.dispose();
+    throw error;
   });
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("Could not resolve dashboard server address.");
+  boundPort = address.port;
   const urlHostname = hostname.includes(":") ? `[${hostname}]` : hostname;
   return {
     hostname,
@@ -133,6 +142,7 @@ export async function startDashboardServer(options: {
     url: `http://${urlHostname}:${address.port}`,
     close: () =>
       new Promise<void>((resolve, reject) => {
+        source.dispose();
         server.close((error) => (error ? reject(error) : resolve()));
         // `close()` alone waits for every active connection, and `/events` holds an SSE
         // stream open for as long as its client is subscribed: one dashboard tab left

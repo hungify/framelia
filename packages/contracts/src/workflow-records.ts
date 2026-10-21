@@ -1,7 +1,8 @@
 import * as z from "zod";
 
 import { baselineSchema } from "./baseline.ts";
-import { CONTRACT_ID_PATTERN } from "./constants.ts";
+import { CONTRACT_ID_PATTERN, MAX_MASK_SELECTORS } from "./constants.ts";
+import { formatVersionSchema } from "./format-version.ts";
 import { httpUrlSchema, nonEmptyTrimmed } from "./primitives.ts";
 import {
   captureEvidenceSchema,
@@ -109,7 +110,7 @@ export const projectNamesSchema = uniqueStrings(projectNameSchema);
 
 export const authoredContractSchema = z
   .object({
-    formatVersion: z.literal(CONTRACT_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(CONTRACT_FORMAT_VERSION, "framelia.contract"),
     kind: z.literal("framelia.contract"),
     id: z.string().regex(CONTRACT_ID_PATTERN),
     name: nonEmptyTrimmed,
@@ -125,7 +126,7 @@ export const authoredContractSchema = z
     styleToleranceOverrides: styleToleranceOverridesSchema.optional(),
     gateEligible: z.boolean().optional(),
     styleGateEligible: z.boolean().optional(),
-    masks: z.array(visualMaskSchema).min(1).optional(),
+    masks: z.array(visualMaskSchema).min(1).max(MAX_MASK_SELECTORS).optional(),
   })
   .strict()
   .superRefine((contract, context) => {
@@ -147,7 +148,7 @@ const snapshotFileSchema = z
 
 export const baselineSnapshotSchema = z
   .object({
-    formatVersion: z.literal(SNAPSHOT_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(SNAPSHOT_FORMAT_VERSION, "framelia.baseline-snapshot"),
     kind: z.literal("framelia.baseline-snapshot"),
     source: baselineSchema,
     metadata: z
@@ -251,7 +252,7 @@ export const baselineSnapshotSchema = z
 
 export const contractBindingSchema = z
   .object({
-    formatVersion: z.literal(BINDING_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(BINDING_FORMAT_VERSION, "framelia.contract-binding"),
     kind: z.literal("framelia.contract-binding"),
     contractId: z.string().regex(CONTRACT_ID_PATTERN),
     contractFile: projectRelativePathSchema,
@@ -278,7 +279,10 @@ export const contractBindingSchema = z
  */
 export const testRegistrationSchema = z
   .object({
-    formatVersion: z.literal(TEST_REGISTRATION_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(
+      TEST_REGISTRATION_FORMAT_VERSION,
+      "framelia.test-registration",
+    ),
     kind: z.literal("framelia.test-registration"),
     binding: contractBindingSchema,
     specFile: projectRelativePathSchema,
@@ -288,7 +292,7 @@ export const testRegistrationSchema = z
 
 export const collectedCaseSchema = z
   .object({
-    formatVersion: z.literal(COLLECTED_CASE_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(COLLECTED_CASE_FORMAT_VERSION, "framelia.collected-case"),
     kind: z.literal("framelia.collected-case"),
     binding: contractBindingSchema,
     project: projectNameSchema,
@@ -338,7 +342,7 @@ export const collectedSetupCaseSchema = z
 
 export const collectionManifestSchema = z
   .object({
-    formatVersion: z.literal(COLLECTION_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(COLLECTION_FORMAT_VERSION, "framelia.collection"),
     kind: z.literal("framelia.collection"),
     runId: nonEmptyTrimmed,
     projectRoot: absolutePathSchema,
@@ -382,7 +386,7 @@ export const collectionManifestSchema = z
 
 export const runContextSchema = z
   .object({
-    formatVersion: z.literal(RUN_CONTEXT_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(RUN_CONTEXT_FORMAT_VERSION, "framelia.run-context"),
     kind: z.literal("framelia.run-context"),
     mode: z.enum(["collect", "execute"]),
     projectRoot: absolutePathSchema,
@@ -421,7 +425,10 @@ export const transportDiagnosticSchema = z
 
 export const transportStatusSchema = z
   .object({
-    formatVersion: z.literal(TRANSPORT_STATUS_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(
+      TRANSPORT_STATUS_FORMAT_VERSION,
+      "framelia.transport-status",
+    ),
     kind: z.literal("framelia.transport-status"),
     writerVersion: nonEmptyTrimmed,
     phase: z.enum(["collection", "execution-reconciliation"]),
@@ -485,7 +492,7 @@ export const sourceIdentitySchema = z
 
 export const casePlanSchema = z
   .object({
-    formatVersion: z.literal(CASE_PLAN_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(CASE_PLAN_FORMAT_VERSION, "framelia.case-plan"),
     kind: z.literal("framelia.case-plan"),
     runId: nonEmptyTrimmed,
     caseId: nonEmptyTrimmed,
@@ -580,7 +587,7 @@ export const runSelectionSchema = z
 
 export const runPlanSchema = z
   .object({
-    formatVersion: z.literal(RUN_PLAN_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(RUN_PLAN_FORMAT_VERSION, "framelia.run-plan"),
     kind: z.literal("framelia.run-plan"),
     runId: nonEmptyTrimmed,
     policyDigest: sha256DigestSchema,
@@ -713,7 +720,7 @@ const evidenceReferenceSchema = z
  */
 export const attemptScoreSchema = z
   .object({
-    formatVersion: z.literal(ATTEMPT_SCORE_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(ATTEMPT_SCORE_FORMAT_VERSION, "framelia.attempt-score"),
     kind: z.literal("framelia.attempt-score"),
     runType: z.literal("final"),
     pass: z.boolean(),
@@ -809,7 +816,10 @@ const trustedRequiredCaseSchema = z
  */
 export const authoritativeRunRequirementsSchema = z
   .object({
-    formatVersion: z.literal(AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(
+      AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION,
+      "framelia.authoritative-run-requirements",
+    ),
     kind: z.literal("framelia.authoritative-run-requirements"),
     runId: nonEmptyTrimmed,
     issuedAt: z.iso.datetime(),
@@ -876,7 +886,10 @@ export const authoritativeRunRequirementsSchema = z
 
 export const signedAuthoritativeRunRequirementsSchema = z
   .object({
-    formatVersion: z.literal(SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(
+      SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION,
+      "framelia.signed-authoritative-run-requirements",
+    ),
     kind: z.literal("framelia.signed-authoritative-run-requirements"),
     payload: authoritativeRunRequirementsSchema,
     signature: z
@@ -888,7 +901,7 @@ export const signedAuthoritativeRunRequirementsSchema = z
 
 export const attemptRecordSchema = z
   .object({
-    formatVersion: z.literal(ATTEMPT_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(ATTEMPT_FORMAT_VERSION, "framelia.attempt"),
     kind: z.literal("framelia.attempt"),
     attemptId: nonEmptyTrimmed,
     runId: nonEmptyTrimmed,
@@ -947,7 +960,7 @@ export function isTerminalRunStatus(status: RunRecordStatus): boolean {
 
 export const runRecordSchema = z
   .object({
-    formatVersion: z.literal(RUN_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(RUN_FORMAT_VERSION, "framelia.run"),
     kind: z.literal("framelia.run"),
     runId: nonEmptyTrimmed,
     planDigest: sha256DigestSchema,
@@ -1079,7 +1092,7 @@ export const nextOperationSchema = z
 
 export const commandOutcomeSchema = z
   .object({
-    formatVersion: z.literal(COMMAND_OUTCOME_FORMAT_VERSION),
+    formatVersion: formatVersionSchema(COMMAND_OUTCOME_FORMAT_VERSION, "framelia.command-outcome"),
     kind: z.literal("framelia.command-outcome"),
     command: nonEmptyTrimmed,
     executionState: z.enum(["completed", "blocked", "incomplete", "error"]),

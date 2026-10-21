@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { DashboardContractResult } from "@framelia/contracts";
-import { computed, nextTick, onBeforeUnmount, ref, toRef, watch } from "vue";
+import type { DashboardAttempt, DashboardContractResult } from "@framelia/contracts";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, toRef, useId, watch } from "vue";
 
 import { useCanvasView, type CanvasSize } from "../composables/useCanvasView";
 import { useEvidenceSizing, type EvidenceKind } from "../composables/useEvidenceSizing";
@@ -10,8 +10,12 @@ import ImageReveal from "./ImageReveal.vue";
 
 const props = defineProps<{
   contract: DashboardContractResult;
-  artifactUrl: (path: string | undefined) => string;
+  /** Set when an earlier (non-selected) attempt's evidence is being inspected. */
+  attempt?: DashboardAttempt;
+  artifactUrl: (path: string | undefined, hash?: string) => string;
 }>();
+
+defineEmits<{ showSelectedAttempt: [] }>();
 
 type Mode = "baseline" | "actual" | "overlay" | "diff" | "split";
 const mode = ref<Mode>("overlay");
@@ -27,10 +31,86 @@ const modes: Array<{ value: Mode; label: string; code: string }> = [
   { value: "split", label: "Split", code: "Digit5" },
 ];
 
-const baselineUrl = computed(() => props.artifactUrl(props.contract.baseline?.path));
-const actualUrl = computed(() => props.artifactUrl(props.contract.actual?.path));
-const diffUrl = computed(() => props.artifactUrl(props.contract.diff?.path));
+const baselineUrl = computed(() =>
+  props.artifactUrl(props.contract.baseline?.path, props.contract.baseline?.hash),
+);
+const actualUrl = computed(() =>
+  props.artifactUrl(props.contract.actual?.path, props.contract.actual?.hash),
+);
+const diffUrl = computed(() =>
+  props.artifactUrl(props.contract.diff?.path, props.contract.diff?.hash),
+);
 const ready = computed(() => Boolean(props.contract.baseline && props.contract.actual));
+
+// Evidence the projection lists but the server/report could not deliver (deleted,
+// moved, or never copied): shown as an explicit missing-artifact state, not a broken
+// image icon.
+const failedImages = reactive<Record<EvidenceKind, boolean>>({
+  baseline: false,
+  actual: false,
+  diff: false,
+});
+const evidenceLabel: Record<EvidenceKind, string> = {
+  baseline: "Baseline",
+  actual: "Actual",
+  diff: "Diff",
+};
+function onImageError(kind: EvidenceKind): void {
+  failedImages[kind] = true;
+}
+const missingInMode = computed<EvidenceKind[]>(() => {
+  const needed: EvidenceKind[] =
+    mode.value === "baseline"
+      ? ["baseline"]
+      : mode.value === "actual"
+        ? ["actual"]
+        : mode.value === "diff"
+          ? diffUrl.value
+            ? ["diff"]
+            : []
+          : ["baseline", "actual"];
+  return needed.filter((kind) => failedImages[kind]);
+});
+function missingPath(kind: EvidenceKind): string | undefined {
+  return props.contract[kind]?.path;
+}
+
+// Comparison-mode tabs: roving tabindex + arrow keys, per the WAI-ARIA tabs pattern.
+const tabsId = useId();
+const tabId = (value: Mode) => `${tabsId}-tab-${value}`;
+const panelId = `${tabsId}-panel`;
+const tabButtons: unknown[] = [];
+function setTabButton(index: number, el: unknown): void {
+  tabButtons[index] = el;
+}
+function focusTab(index: number): void {
+  const target = tabButtons[index];
+  const element =
+    target instanceof HTMLElement ? target : (target as { $el?: unknown } | null)?.$el;
+  if (element instanceof HTMLElement) element.focus();
+}
+function onTabKeydown(event: KeyboardEvent, index: number): void {
+  const last = modes.length - 1;
+  const next =
+    event.key === "ArrowRight"
+      ? index === last
+        ? 0
+        : index + 1
+      : event.key === "ArrowLeft"
+        ? index === 0
+          ? last
+          : index - 1
+        : event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? last
+            : undefined;
+  if (next === undefined) return;
+  event.preventDefault();
+  event.stopPropagation();
+  mode.value = modes[next]!.value;
+  focusTab(next);
+}
 
 const { contentSize, evidenceSize, imageStyle, measureContent, recordNaturalSize, resetSizes } =
   useEvidenceSizing(toRef(props, "contract"));
@@ -94,9 +174,15 @@ watch(
     props.contract.actual?.width,
     props.contract.actual?.height,
     props.contract.diff?.path,
+    baselineUrl.value,
+    actualUrl.value,
+    diffUrl.value,
   ],
   () => {
     resetSizes();
+    failedImages.baseline = false;
+    failedImages.actual = false;
+    failedImages.diff = false;
     autoFit.value = true;
     reveal.value = 50;
     opacity.value = 55;
@@ -177,7 +263,10 @@ onBeforeUnmount(() => {
   >
     <div
       v-if="ready"
+      :id="panelId"
       ref="viewportEl"
+      role="tabpanel"
+      :aria-labelledby="tabId(mode)"
       class="relative col-span-full row-start-2 min-h-0 overflow-hidden bg-[#101214]"
       :class="
         canPan
@@ -215,6 +304,7 @@ onBeforeUnmount(() => {
               alt="Baseline capture"
               draggable="false"
               @load="onImageLoad($event, 'baseline')"
+              @error="onImageError('baseline')"
             />
           </div>
         </div>
@@ -234,6 +324,7 @@ onBeforeUnmount(() => {
               alt="Actual capture"
               draggable="false"
               @load="onImageLoad($event, 'actual')"
+              @error="onImageError('actual')"
             />
           </div>
         </div>
@@ -261,6 +352,8 @@ onBeforeUnmount(() => {
           :after-height="evidenceSize('actual').height"
           @before-load="onImageLoad($event, 'baseline')"
           @after-load="onImageLoad($event, 'actual')"
+          @before-error="onImageError('baseline')"
+          @after-error="onImageError('actual')"
         />
         <img
           v-else-if="mode === 'baseline'"
@@ -270,6 +363,7 @@ onBeforeUnmount(() => {
           alt="Baseline capture"
           draggable="false"
           @load="onImageLoad($event, 'baseline')"
+          @error="onImageError('baseline')"
         />
         <img
           v-else-if="mode === 'actual'"
@@ -279,6 +373,7 @@ onBeforeUnmount(() => {
           alt="Actual capture"
           draggable="false"
           @load="onImageLoad($event, 'actual')"
+          @error="onImageError('actual')"
         />
         <img
           v-else-if="mode === 'diff' && diffUrl"
@@ -288,7 +383,26 @@ onBeforeUnmount(() => {
           alt="Visual difference heatmap"
           draggable="false"
           @load="onImageLoad($event, 'diff')"
+          @error="onImageError('diff')"
         />
+      </div>
+
+      <div
+        v-if="missingInMode.length"
+        class="absolute inset-0 z-2 flex flex-col items-center justify-center gap-1.5 px-6 text-muted text-center bg-bg/90"
+        role="alert"
+        data-testid="missing-artifact"
+      >
+        <strong class="text-text text-base">Artifact missing</strong>
+        <p class="max-w-105 m-0 text-xs">
+          The run lists this evidence, but it could not be loaded — it may have been deleted, moved,
+          or left out of this report.
+        </p>
+        <ul class="m-0 p-0 list-none text-xs">
+          <li v-for="kind in missingInMode" :key="kind">
+            {{ evidenceLabel[kind] }}: <code class="break-all">{{ missingPath(kind) }}</code>
+          </li>
+        </ul>
       </div>
 
       <div
@@ -308,6 +422,17 @@ onBeforeUnmount(() => {
       <p class="max-w-105 m-0 text-xs">
         {{ contract.blockers[0]?.message ?? "Capture has not completed." }}
       </p>
+      <p v-if="attempt" class="m-0 text-amber text-xs" data-testid="inspected-attempt">
+        Showing retry {{ attempt.retryIndex }} ({{ attempt.attemptId }}).
+        <UButton
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="text-xs"
+          @click="$emit('showSelectedAttempt')"
+          >Show selected attempt</UButton
+        >
+      </p>
     </div>
 
     <div
@@ -316,10 +441,15 @@ onBeforeUnmount(() => {
     >
       <UFieldGroup class="flex items-center gap-0.5" role="tablist" aria-label="Comparison mode">
         <UButton
-          v-for="item in modes"
+          v-for="(item, index) in modes"
+          :id="tabId(item.value)"
           :key="item.value"
+          :ref="(el) => setTabButton(index, el)"
           role="tab"
           :aria-selected="mode === item.value"
+          :aria-controls="panelId"
+          :tabindex="mode === item.value ? 0 : -1"
+          :aria-keyshortcuts="item.code.replace('Digit', '')"
           color="neutral"
           variant="ghost"
           size="sm"
@@ -330,6 +460,7 @@ onBeforeUnmount(() => {
               : 'bg-transparent! text-muted! hover:text-text! hover:bg-toolbar-hover!'
           "
           @click="mode = item.value"
+          @keydown="onTabKeydown($event, index)"
         >
           {{ item.label }}
         </UButton>
@@ -358,6 +489,21 @@ onBeforeUnmount(() => {
       <span v-if="sizeMismatch" class="ml-1 text-amber text-xs"
         >Size mismatch — overlay remains 1:1, never stretched</span
       >
+      <span
+        v-if="attempt"
+        class="ml-2 flex shrink-0 items-center gap-1.5 text-amber text-xs"
+        data-testid="inspected-attempt"
+      >
+        Retry {{ attempt.retryIndex }} · not the selected attempt
+        <UButton
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="text-xs"
+          @click="$emit('showSelectedAttempt')"
+          >Show selected</UButton
+        >
+      </span>
     </div>
 
     <UFieldGroup

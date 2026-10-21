@@ -1,0 +1,10 @@
+---
+"@framelia/contracts": patch
+"@framelia/dashboard-server": patch
+---
+
+Harden the dashboard server and client, and make version skew readable.
+
+- Contracts: every workflow record's `formatVersion` mismatch now reads "written by format vN, but this reader supports vM — upgrade/downgrade framelia". New helpers `checkFormatVersion`, `formatVersionMismatchMessage`, `formatVersionSchema`, `describeSchemaIssues`, plus `parseDashboardRun`/`DASHBOARD_RUN_SCHEMA_VERSION` for the dashboard wire format. Authored contract `masks` are capped at `MAX_MASK_SELECTORS`, like the verification contract.
+- Dashboard server: deep links such as `/contracts/<id>` load (the shell gets `<base href="/">`), and missing `/assets/*` or file-looking paths 404 instead of returning HTML. A loopback-bound server rejects requests whose `Host` is not a loopback name on its port (DNS rebinding) and cross-site `Origin`s, and every response carries `X-Content-Type-Options: nosniff`. Artifacts stream from disk with `no-cache` + `ETag` (304 on `If-None-Match`) so retried/re-run screenshots are never stale; a malformed `%` escape 404s instead of 500. The source's `snapshot()`/`files()` are memoized per change (event-invalidated, kept for finished runs).
+- Dashboard client (bundled with the server): static reports use hash routing and resolve `data/` against the report directory, so they can be served from any sub-path; artifact URLs carry `?v=<digest>`; live updates are coalesced, reload when the served run changes, reconnect with backoff, show "Reconnecting…" while down, and keep the last good run behind a banner when a refresh fails; selection is independent of the filter and the dashboard mounts once across routes; search/status filter live in the URL; Alt+←/→ and ↑/↓ follow tree order; earlier retries' evidence can be shown in the inspector; failed page-baseline contracts offer a copyable `framelia baseline promote` command; accessibility fixes for status dots, comparison tabs, and missing artifacts.

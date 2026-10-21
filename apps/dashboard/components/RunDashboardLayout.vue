@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import type { DashboardArtifactMode } from "../lib/artifact-mode";
+import type { DashboardArtifactMode, DashboardConnectionState } from "../lib/artifact-mode";
 import { artifactModeMeta } from "../lib/artifact-mode";
 
 const props = defineProps<{
   loading: boolean;
   error?: string;
+  /** A refresh failed after a run was already shown: a banner, not a full-screen error. */
+  refreshError?: string;
   hasRun: boolean;
   title?: string;
   subtitle?: string;
   artifactMode: DashboardArtifactMode;
+  connection?: DashboardConnectionState;
   railOpen: boolean;
   detailsOpen: boolean;
   showDetails: boolean;
@@ -21,7 +24,7 @@ defineEmits<{
   "update:detailsOpen": [value: boolean];
 }>();
 
-const mode = computed(() => artifactModeMeta(props.artifactMode));
+const mode = computed(() => artifactModeMeta(props.artifactMode, props.connection));
 
 const workspaceStyle = computed(() => {
   const showDetails = props.detailsOpen && props.showDetails;
@@ -67,11 +70,27 @@ const workspaceStyle = computed(() => {
         <span class="text-xs font-semibold">{{ title }}</span>
         <code v-if="subtitle !== title" class="text-muted text-xs">{{ subtitle }}</code>
       </div>
-      <div class="justify-self-end flex items-center gap-1.75 text-muted text-xs">
-        <span class="w-1.5 h-1.5 rounded-full" :class="mode.dotClass" />
+      <div
+        class="justify-self-end flex items-center gap-1.75 text-muted text-xs"
+        role="status"
+        data-testid="dashboard-mode"
+      >
+        <span class="w-1.5 h-1.5 rounded-full" :class="mode.dotClass" aria-hidden="true" />
         {{ mode.label }}
       </div>
     </header>
+
+    <div
+      v-if="hasRun && !loading && refreshError"
+      class="flex items-start gap-2 px-3.5 py-1.5 border-b border-amber/45 bg-amber/10 text-xs"
+      role="alert"
+      data-testid="refresh-error"
+    >
+      <strong class="shrink-0 text-amber">Showing the last loaded run.</strong>
+      <span class="min-w-0 text-text-soft whitespace-pre-line break-words"
+        >Refresh failed: {{ refreshError }}</span
+      >
+    </div>
 
     <main v-if="loading" class="min-h-screen-header flex flex-col items-center justify-center">
       <p class="text-muted text-xs">Loading verification evidence</p>
@@ -86,7 +105,9 @@ const workspaceStyle = computed(() => {
       <h1 class="max-w-155 my-3 text-2xl tracking-tighter">
         Verification artifact could not be loaded.
       </h1>
-      <code class="max-w-170 p-2.5 text-red bg-danger-surface">{{ error }}</code>
+      <code class="max-w-170 p-2.5 text-left text-red bg-danger-surface whitespace-pre-line">{{
+        error
+      }}</code>
       <p class="text-muted text-xs">
         Open this report through <code>framelia open</code> or serve static report directory over
         HTTP.

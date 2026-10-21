@@ -14,7 +14,7 @@ import { checkFontReadiness, checkScopeSize } from "./domain/capture-rules.ts";
 import { resolveMasks } from "./masks.ts";
 import { resolveSelector } from "./readiness.ts";
 import { reject } from "./reject.ts";
-import { fontIncomplete, readComputedTextStyle, settle } from "./settle.ts";
+import { fontIncomplete, readComputedTextStyle, releaseAnimationFreeze, settle } from "./settle.ts";
 import type { CaptureCoreOutcome, CaptureEvidence, ReadyCaptureSpec } from "./types.ts";
 import { MASK_COLOR } from "./types.ts";
 
@@ -29,6 +29,20 @@ export async function captureReadyPage(
   page: Page,
   spec: ReadyCaptureSpec,
 ): Promise<CaptureCoreOutcome> {
+  try {
+    return await captureWithSettledPage(page, spec);
+  } finally {
+    // settle() freezes animations with an injected <style>; never leave it behind in the
+    // caller's page (it would otherwise persist across later interactions and captures).
+    await releaseAnimationFreeze(page);
+  }
+}
+
+async function captureWithSettledPage(
+  page: Page,
+  spec: ReadyCaptureSpec,
+): Promise<CaptureCoreOutcome> {
+  const startedMs = Date.now();
   const timeoutMs = spec.timeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
   const stabilitySamples = spec.stabilitySamples ?? 1;
   const startedAt = new Date().toISOString();
@@ -74,7 +88,7 @@ export async function captureReadyPage(
     warnings,
     devtoolsSelector,
     spec.animationPolicy ?? "freeze",
-    timeoutMs,
+    timeoutMs - (Date.now() - startedMs),
   );
   const fontReject = checkFontReadiness(settled, fontPolicy);
   if (fontReject) return fontReject;

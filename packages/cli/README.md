@@ -19,6 +19,26 @@ npm install --save-dev framelia
 npx framelia status --project-root "$PWD"
 ```
 
+### Shell completion
+
+Bash completion for commands, subcommands, flags and enum values comes from
+[`@stricli/auto-complete`](https://bloomberg.github.io/stricli/packages/auto-complete). It needs
+`framelia` installed where your shell finds it (for example `npm install --global framelia`), because
+bash runs the package's second executable, `__framelia_bash_complete`, on every <kbd>Tab</kbd>.
+
+```bash
+framelia completion install     # adds a marked block to ~/.bashrc; re-running replaces it
+source ~/.bashrc                # or open a new shell
+framelia completion uninstall   # removes exactly that block
+```
+
+Both commands print one `framelia.completion-outcome` JSON object: `profilePath` is the edited
+file and `changed: false` means it already matched. They exit `2` with
+`COMPLETION_SHELL_NOT_DETECTED` when `$SHELL` is not bash and `COMPLETION_PROFILE_MISSING` when
+`~/.bashrc` does not exist; they never read the project's `.env`. The completion executable only
+reads the route tree: it never loads `.env`, runs a command, or launches a browser. Only bash is
+supported, because `@stricli/auto-complete` does not install zsh or fish completion yet.
+
 ## Commands
 
 | Command                              | Purpose                                                                                |
@@ -42,6 +62,8 @@ npx framelia status --project-root "$PWD"
 | `framelia done-gate`                 | Evaluate one selected run against protected signed requirements.                       |
 | `framelia capture`                   | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                                |
 | `framelia compare`                   | Compare two existing PNG files without source provenance gates.                        |
+| `framelia completion install`        | Add bash completion for `framelia` to `~/.bashrc` (idempotent).                        |
+| `framelia completion uninstall`      | Remove the bash completion block `completion install` added.                           |
 
 `verify`, `doctor`, and `discover` — plus the navigation action DSL underneath them — are retired.
 Visual capture remains in `@framelia/playwright`; `check` only coordinates collection, immutable

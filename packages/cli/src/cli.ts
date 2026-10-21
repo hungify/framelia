@@ -1,108 +1,21 @@
-import * as fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { loadProjectEnv } from "@framelia/verify/env";
 import { discoverProjectConfig } from "@framelia/verify/project-policy";
-import {
-  buildApplication,
-  buildRouteMap,
-  help,
-  run as runApplication,
-  version,
-} from "@stricli/core";
+import { run as runApplication } from "@stricli/core";
 
-import { applicationText } from "./application-text.ts";
-import { authCommand } from "./commands/auth.ts";
-import { baselineRoutes } from "./commands/baseline.ts";
-import { captureCommand } from "./commands/capture.ts";
-import { checkCommand } from "./commands/check.ts";
-import { compareCommand } from "./commands/compare.ts";
-import { contractRoutes } from "./commands/contract.ts";
-import { dashboardCommand, openCommand, reportCommand } from "./commands/dashboard.ts";
-import { doneGateCommand } from "./commands/done-gate.ts";
-import { initCommand } from "./commands/init.ts";
-import { runsRoutes } from "./commands/runs.ts";
-import { schemaCommand } from "./commands/schema.ts";
-import { statusCommand } from "./commands/status.ts";
+import { app, PACKAGE_VERSION } from "./app.ts";
 import { buildContext } from "./context.ts";
 import type { CliAdapters, EnvironmentOverrides } from "./environment.ts";
-import { determineExitCode, normalizeStricliExitCode } from "./exit.ts";
+import { normalizeStricliExitCode } from "./exit.ts";
 import type { CliRuntime } from "./runtime-types.ts";
-
-const PACKAGE_VERSION = (
-  JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-    version: string;
-  }
-).version;
-
-const rootRoutes = buildRouteMap({
-  routes: {
-    check: checkCommand,
-    dashboard: dashboardCommand,
-    open: openCommand,
-    report: reportCommand,
-    "done-gate": doneGateCommand,
-    status: statusCommand,
-    schema: schemaCommand,
-    init: initCommand,
-    auth: authCommand,
-    contract: contractRoutes,
-    baseline: baselineRoutes,
-    capture: captureCommand,
-    compare: compareCommand,
-    runs: runsRoutes,
-  },
-  defaultCommand: "dashboard",
-  aliases: { "fetch-gold": "capture", diff: "compare" },
-  docs: {
-    brief: "CLI-first visual verification for Figma-to-web and web-to-web workflows.",
-    fullDescription: [
-      "CLI-first visual verification for Figma-to-web and web-to-web workflows.",
-      "",
-      "Finite commands print one JSON outcome on stdout and exit 0 (passed), 1 (visual",
-      "mismatch) or 2 (usage/operational error); its `next` field names the follow-up.",
-      "With no arguments, framelia lists durable runs (`framelia runs list`).",
-      "",
-      "Examples:",
-      "  framelia init",
-      "  framelia contract create",
-      "  framelia check --all",
-      "  framelia open --run <run-id>",
-    ].join("\n"),
-  },
-});
-
-const app = buildApplication(
-  rootRoutes,
-  {
-    name: "framelia",
-    scanner: { caseStyle: "allow-kebab-for-camel" },
-    localization: { text: applicationText },
-    determineExitCode,
-  },
-  {
-    help: help({
-      brief: "Print help for a command.",
-      defaultForRouteMap: true,
-      formatting: {
-        useAliasInUsageLine: false,
-        onlyRequiredInUsageLine: false,
-        caseStyle: "convert-camel-to-kebab",
-      },
-    }),
-    version: version({
-      brief: "Print the current version.",
-      alias: "V",
-      info: { currentVersion: PACKAGE_VERSION },
-    }),
-  },
-);
 
 /**
  * Routes that must never see the project's .env: done-gate's trust inputs (signing key path,
- * job identity, audience) have to come from the protected job runtime, not the project.
+ * job identity, audience) have to come from the protected job runtime, not the project, and
+ * completion edits the user's shell profile, which no project setting may steer.
  */
-const ROUTES_WITHOUT_PROJECT_ENV = new Set(["done-gate"]);
+const ROUTES_WITHOUT_PROJECT_ENV = new Set(["done-gate", "completion"]);
 
 const HELP_FLAGS = new Set(["--help", "-h", "--help-all", "--version", "-V"]);
 

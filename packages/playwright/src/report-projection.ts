@@ -116,16 +116,34 @@ function dashboardArtifactPath(id: string, name: string): string {
   return `contracts/${encodeURIComponent(id)}/${name}`;
 }
 
-/** Finds the file path of one of the matcher's `-expected`/`-actual`/`-diff` image
- *  attachments off a TestResult. Exported so run-bundle-projection.ts's attempt builder
- *  reads the exact same attachments this module's own durable-evidence writers do,
- *  rather than a second, independently-maintained lookup convention. */
-export function attachmentPath(
+export type EvidenceAttachment = TestResult["attachments"][number];
+
+/** Finds one of the matcher's `-expected`/`-actual`/`-diff` image attachments off a
+ *  TestResult. Exported so run-bundle-projection.ts's attempt builder reads the exact same
+ *  attachments this module's own durable-evidence writers do, rather than a second,
+ *  independently-maintained lookup convention. */
+export function findEvidenceAttachment(
   result: TestResult,
   baseName: string,
   suffix: "-expected" | "-actual" | "-diff",
-): string | undefined {
-  return result.attachments.find((attachment) => attachment.name === `${baseName}${suffix}`)?.path;
+): EvidenceAttachment | undefined {
+  return result.attachments.find(
+    (attachment) =>
+      attachment.name === `${baseName}${suffix}` &&
+      (attachment.body !== undefined || attachment.path !== undefined),
+  );
+}
+
+/** An attachment's bytes: its `body` (how this package's matchers attach images -- see
+ *  `buildAttachContext`), else its `path` while that file still exists. A path-only
+ *  attachment can vanish once Playwright removes the test's `outputDir`. */
+export function readAttachmentBytes(
+  attachment: EvidenceAttachment | undefined,
+): Buffer | undefined {
+  if (!attachment) return undefined;
+  if (attachment.body) return attachment.body;
+  if (attachment.path && fs.existsSync(attachment.path)) return fs.readFileSync(attachment.path);
+  return undefined;
 }
 
 function fileHash(filePath: string): string {
@@ -151,9 +169,9 @@ export interface DerivedContract {
    *  persist a pointer to. */
   writeEvidence?: {
     outDir: string;
-    expectedPath?: string;
-    actualPath?: string;
-    diffPath?: string;
+    expected?: EvidenceAttachment;
+    actual?: EvidenceAttachment;
+    diff?: EvidenceAttachment;
     score: FrameliaScoreAttachment;
     baseline: BaselineSource;
     targetUrl: string;
@@ -163,10 +181,33 @@ export interface DerivedContract {
    *  so its image evidence remains useful to the low-level live dashboard. */
   writePageBaselineEvidence?: {
     outDir: string;
-    expectedPath?: string;
-    actualPath?: string;
-    diffPath?: string;
+    expected?: EvidenceAttachment;
+    actual?: EvidenceAttachment;
+    diff?: EvidenceAttachment;
   };
+}
+
+export interface EvidenceKeyOptions {
+  /** The run configures more than one Playwright project. The project name then joins a
+   *  caller-supplied `contractId`'s evidence key, so the same contract checked in two
+   *  projects can't overwrite one directory. Single-project runs keep the plain key. */
+  multiProject?: boolean;
+}
+
+/**
+ * `-<project>` (multi-project runs only) and `-r<n>` (`repeatEachIndex > 0` only) for a
+ * `contractId`-keyed evidence directory -- the common single-project, non-repeated run
+ * keeps the exact directory `framelia contract create` scaffolds. A test without a
+ * `contractId` is keyed by its own Playwright test id, already unique per project/repeat.
+ */
+function evidenceVariantSuffix(test: TestCase, options: EvidenceKeyOptions): string {
+  const parts: string[] = [];
+  const projectName = test.parent?.project()?.name;
+  if (options.multiProject && projectName) {
+    parts.push(projectName.replaceAll(/[^a-zA-Z0-9-]+/g, "-"));
+  }
+  if (test.repeatEachIndex > 0) parts.push(`r${test.repeatEachIndex}`);
+  return parts.map((part) => `-${part}`).join("");
 }
 
 /** Maps one matcher attachment to one durable Figma contract/evidence directory. */
@@ -177,17 +218,22 @@ export function deriveContract(
   score: FrameliaScoreAttachment | undefined,
   index: number,
   total: number,
+  keyOptions: EvidenceKeyOptions = {},
 ): DerivedContract {
   // id stays flat ("login.desktop.page") since contractSchema's id field forbids "/".
   const scopeKind = score?.scope?.kind ?? "page";
+  const variant = score?.contractId ? evidenceVariantSuffix(test, keyOptions) : "";
   const baseId = score?.contractId
-    ? `${sanitizeContractId(score.contractId)}.${scopeKind}`
+    ? `${sanitizeContractId(score.contractId)}.${scopeKind}${variant}`
     : sanitizeTestId(test);
   const id = total === 1 ? baseId : `${baseId}-${index + 1}`;
   // Nests under the same feature folder `framelia contract create` uses, so CLI-authored
   // config and toMatchFigma evidence share one directory instead of two disconnected ones.
   const outDirSegments = score?.contractId
-    ? contractDirSegments(score.contractId, total === 1 ? scopeKind : `${scopeKind}-${index + 1}`)
+    ? contractDirSegments(
+        score.contractId,
+        total === 1 ? `${scopeKind}${variant}` : `${scopeKind}${variant}-${index + 1}`,
+      )
     : [id];
   const relativeOutDir = visualArtifactPath(...outDirSegments);
   const absoluteOutDir = path.join(evidenceRoot, relativeOutDir);
@@ -256,15 +302,12 @@ export function deriveContract(
   // Worth persisting for the dashboard (#41) even though it skips the schema-v4
   // VerificationArtifact/done-gate pipeline below (R9 still applies to that part).
   if (primary?.baselineKind === "web" && primary.baselinePromotedAt != null) {
-    const expectedPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-expected");
-    const actualAttachmentPath = attachmentPath(
-      result,
-      primary.attachmentBaseName ?? "",
-      "-actual",
-    );
-    const diffAttachmentPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-diff");
+    const baseName = primary.attachmentBaseName ?? "";
+    const expected = findEvidenceAttachment(result, baseName, "-expected");
+    const actual = findEvidenceAttachment(result, baseName, "-actual");
+    const diff = findEvidenceAttachment(result, baseName, "-diff");
     const imageEvidence: Pick<DashboardContractResult, "baseline" | "actual" | "diff"> = {
-      ...(expectedPath
+      ...(expected
         ? {
             baseline: {
               path: dashboardArtifactPath(id, WEB_BASELINE_ARTIFACT.image),
@@ -282,7 +325,7 @@ export function deriveContract(
             },
           }
         : {}),
-      ...(actualAttachmentPath
+      ...(actual
         ? {
             actual: {
               path: dashboardArtifactPath(id, RUN_ARTIFACT.actual),
@@ -292,19 +335,12 @@ export function deriveContract(
             },
           }
         : {}),
-      ...(diffAttachmentPath
-        ? { diff: { path: dashboardArtifactPath(id, RUN_ARTIFACT.diff) } }
-        : {}),
+      ...(diff ? { diff: { path: dashboardArtifactPath(id, RUN_ARTIFACT.diff) } } : {}),
     };
     return {
       id,
       dashboardResult: { ...dashboardResult, ...imageEvidence },
-      writePageBaselineEvidence: {
-        outDir: absoluteOutDir,
-        expectedPath,
-        actualPath: actualAttachmentPath,
-        diffPath: diffAttachmentPath,
-      },
+      writePageBaselineEvidence: { outDir: absoluteOutDir, expected, actual, diff },
     };
   }
 
@@ -320,15 +356,16 @@ export function deriveContract(
   // resolveFigmaCompareOptions) -- re-running resolveFigmaCompareOptions on the resolved
   // profile would hit its `explicit` branch and silently drop a forced clusterCheck default.
 
-  const expectedPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-expected");
-  const actualAttachmentPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-actual");
-  const diffAttachmentPath = attachmentPath(result, primary.attachmentBaseName ?? "", "-diff");
+  const baseName = primary.attachmentBaseName ?? "";
+  const expected = findEvidenceAttachment(result, baseName, "-expected");
+  const actual = findEvidenceAttachment(result, baseName, "-actual");
+  const diff = findEvidenceAttachment(result, baseName, "-diff");
 
   // Same virtual paths writeEvidence's copies land under and onTestEnd registers into the
   // live file map -- lets the dashboard render expected/actual/diff while the run is live,
   // not just after report export re-derives them from the durable visual-score.json.
   const imageEvidence: Pick<DashboardContractResult, "baseline" | "actual" | "diff"> = {
-    ...(expectedPath
+    ...(expected
       ? {
           baseline: {
             path: dashboardArtifactPath(id, FIGMA_BASELINE_ARTIFACT.image),
@@ -338,7 +375,7 @@ export function deriveContract(
           },
         }
       : {}),
-    ...(actualAttachmentPath
+    ...(actual
       ? {
           actual: {
             path: dashboardArtifactPath(id, RUN_ARTIFACT.actual),
@@ -348,7 +385,7 @@ export function deriveContract(
           },
         }
       : {}),
-    ...(diffAttachmentPath ? { diff: { path: dashboardArtifactPath(id, RUN_ARTIFACT.diff) } } : {}),
+    ...(diff ? { diff: { path: dashboardArtifactPath(id, RUN_ARTIFACT.diff) } } : {}),
   };
 
   return {
@@ -356,14 +393,34 @@ export function deriveContract(
     dashboardResult: { ...dashboardResult, ...imageEvidence },
     writeEvidence: {
       outDir: absoluteOutDir,
-      expectedPath,
-      actualPath: actualAttachmentPath,
-      diffPath: diffAttachmentPath,
+      expected,
+      actual,
+      diff,
       score: primary,
       baseline,
       targetUrl,
     },
   };
+}
+
+/**
+ * Writes one attachment's bytes to `outDir/destName` -- or, when this result has no such
+ * attachment, removes whatever an earlier run left there, so a stale diff (say) is never
+ * listed as this run's evidence.
+ */
+function replaceEvidenceFile(
+  outDir: string,
+  destName: string,
+  attachment: EvidenceAttachment | undefined,
+): string | undefined {
+  const destination = path.join(outDir, destName);
+  const bytes = readAttachmentBytes(attachment);
+  if (!bytes) {
+    fs.rmSync(destination, { force: true });
+    return undefined;
+  }
+  fs.writeFileSync(destination, bytes);
+  return destination;
 }
 
 /**
@@ -379,19 +436,28 @@ export function writeEvidence(
   maxMaskedAreaRatio: number | undefined,
 ): void {
   fs.mkdirSync(evidence.outDir, { recursive: true });
-  const copy = (source: string | undefined, destName: string): string | undefined => {
-    if (!source) return undefined;
-    const destination = path.join(evidence.outDir, destName);
-    fs.copyFileSync(source, destination);
-    return destination;
-  };
-  const baselinePath = copy(evidence.expectedPath, FIGMA_BASELINE_ARTIFACT.image);
-  const actualPath = copy(evidence.actualPath, RUN_ARTIFACT.actual);
-  const diffPath = copy(evidence.diffPath, RUN_ARTIFACT.diff);
+  const baselinePath = replaceEvidenceFile(
+    evidence.outDir,
+    FIGMA_BASELINE_ARTIFACT.image,
+    evidence.expected,
+  );
+  const actualPath = replaceEvidenceFile(evidence.outDir, RUN_ARTIFACT.actual, evidence.actual);
+  const diffPath = replaceEvidenceFile(evidence.outDir, RUN_ARTIFACT.diff, evidence.diff);
   // diffPath is legitimately absent when compare() exits early (unreadable PNG, size-gap
   // failure) -- exactly the failing runs where evidence matters most, so only baseline/actual
-  // (always attached, pass or fail) are required to proceed.
-  if (!baselinePath || !actualPath) return;
+  // (always attached, pass or fail) are required to proceed. Without them, no score this
+  // run could write would be valid, so an earlier run's score files must not linger either.
+  if (!baselinePath || !actualPath) {
+    for (const name of [
+      FIGMA_BASELINE_ARTIFACT.meta,
+      RUN_ARTIFACT.score,
+      RUN_ARTIFACT.runMeta,
+      RUN_ARTIFACT.punchList,
+    ]) {
+      fs.rmSync(path.join(evidence.outDir, name), { force: true });
+    }
+    return;
+  }
 
   const score = evidence.score;
   const capturedAt = new Date();
@@ -528,13 +594,9 @@ export function writePageBaselineEvidence(
   evidence: NonNullable<DerivedContract["writePageBaselineEvidence"]>,
 ): void {
   fs.mkdirSync(evidence.outDir, { recursive: true });
-  const copy = (source: string | undefined, destName: string): void => {
-    if (!source) return;
-    fs.copyFileSync(source, path.join(evidence.outDir, destName));
-  };
-  copy(evidence.expectedPath, WEB_BASELINE_ARTIFACT.image);
-  copy(evidence.actualPath, RUN_ARTIFACT.actual);
-  copy(evidence.diffPath, RUN_ARTIFACT.diff);
+  replaceEvidenceFile(evidence.outDir, WEB_BASELINE_ARTIFACT.image, evidence.expected);
+  replaceEvidenceFile(evidence.outDir, RUN_ARTIFACT.actual, evidence.actual);
+  replaceEvidenceFile(evidence.outDir, RUN_ARTIFACT.diff, evidence.diff);
 }
 
 export interface TestEndProjection {
@@ -593,10 +655,11 @@ export function finalizeTestEnd(
   evidenceRoot: string,
   result: TestResult,
   maxMaskedAreaRatio: number | undefined,
+  keyOptions: EvidenceKeyOptions = {},
 ): TestEndProjection {
   const scores = readScoreAttachments(result);
   const derivedContracts = (scores.length ? scores : [undefined]).map((score, index, all) =>
-    deriveContract(test, evidenceRoot, result, score, index, all.length),
+    deriveContract(test, evidenceRoot, result, score, index, all.length, keyOptions),
   );
 
   const files: Array<[string, string]> = [];

@@ -26,6 +26,8 @@ describe("route map: root routes are reachable", () => {
     "baseline",
     "capture",
     "compare",
+    "runs",
+    "completion",
   ])("`%s` resolves to a route (not 'unknown command')", async (route) => {
     const fakeProcess = createFakeProcess();
     await run([route, "--help"], { process: fakeProcess, loadProjectEnv: false });
@@ -60,6 +62,8 @@ describe("route map: nested routes", () => {
     ["contract", "create"],
     ["contract", "suggest-masks"],
     ["baseline", "promote"],
+    ["completion", "install"],
+    ["completion", "uninstall"],
   ])("`%s %s` resolves to a route (not 'unknown command')", async (route, subroute) => {
     const fakeProcess = createFakeProcess();
     await run([route, subroute, "--help"], { process: fakeProcess, loadProjectEnv: false });
@@ -119,6 +123,8 @@ describe("route map: --help and --version", () => {
       "baseline",
       "capture",
       "compare",
+      "runs",
+      "completion",
     ]) {
       expect(stdout).toContain(route);
     }
@@ -171,6 +177,8 @@ describe("route map: short aliases", () => {
     ["compare"],
     ["runs", "list"],
     ["runs", "prune"],
+    ["completion", "install"],
+    ["completion", "uninstall"],
   ];
 
   it("gives every short alias one meaning across the whole CLI", async () => {

@@ -1,12 +1,20 @@
-import type { PNG } from "pngjs";
-
 export interface AreaGapResult {
   areaGapPercent: number;
   baselineSize: { width: number; height: number };
   actualSize: { width: number; height: number };
 }
 
-export function areaGap(baseline: PNG, actual: PNG): AreaGapResult {
+interface Size {
+  width: number;
+  height: number;
+}
+
+/**
+ * Per-axis relative size gap (the larger of the width and height gaps, in percent).
+ * Takes plain sizes (a PNG satisfies this structurally) so compare() and the
+ * selected-run gate judge a score's size gap with the exact same formula.
+ */
+export function areaGap(baseline: Size, actual: Size): AreaGapResult {
   const gw = baseline.width;
   const gh = baseline.height;
   const aw = actual.width;

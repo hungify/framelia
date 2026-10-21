@@ -37,6 +37,8 @@ export const TRANSPORT_STATUS_FORMAT_VERSION = 1;
 export const CASE_PLAN_FORMAT_VERSION = 2;
 export const RUN_PLAN_FORMAT_VERSION = 2;
 export const RUN_FORMAT_VERSION = 2;
+export const RUN_PLAN_FRAGMENT_FORMAT_VERSION = 1;
+export const SHARD_COMPLETION_FORMAT_VERSION = 1;
 export const ATTEMPT_FORMAT_VERSION = 2;
 export const COMMAND_OUTCOME_FORMAT_VERSION = 1;
 export const ATTEMPT_SCORE_FORMAT_VERSION = 1;
@@ -1019,6 +1021,87 @@ export const runRecordSchema = z
     }
   });
 
+/** One shard of a sharded direct run: Playwright's own one-based `--shard=current/total`. */
+export const runShardSchema = z
+  .object({
+    current: z.number().int().positive(),
+    total: z.number().int().positive(),
+  })
+  .strict()
+  .refine((shard) => shard.current <= shard.total, {
+    message: "shard current must not exceed shard total",
+    path: ["current"],
+  });
+
+const runnerResultStatusSchema = z.enum(["passed", "failed", "timedout", "interrupted"]);
+
+/**
+ * The case plans one shard of a sharded direct run contributes to the run's shared plan. No
+ * shard sees the full plan; the frozen `RunPlan` is composed from every shard's fragment once
+ * all of them completed. A shard with no applicable contract case still publishes an empty
+ * fragment, so the run can tell it apart from a shard that never ran.
+ */
+export const runPlanFragmentSchema = z
+  .object({
+    formatVersion: formatVersionSchema(
+      RUN_PLAN_FRAGMENT_FORMAT_VERSION,
+      "framelia.run-plan-fragment",
+    ),
+    kind: z.literal("framelia.run-plan-fragment"),
+    runId: nonEmptyTrimmed,
+    shard: runShardSchema,
+    policyDigest: sha256DigestSchema,
+    retryAcceptance: z.enum(["require-first-attempt", "allow-passed-after-retry"]),
+    createdAt: z.iso.datetime(),
+    casePlans: z.array(casePlanSchema),
+  })
+  .strict()
+  .superRefine((fragment, context) => {
+    const caseIds = new Set<string>();
+    fragment.casePlans.forEach((casePlan, index) => {
+      if (caseIds.has(casePlan.caseId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["casePlans", index, "caseId"],
+          message: `duplicate case in plan fragment: ${casePlan.caseId}`,
+        });
+      }
+      caseIds.add(casePlan.caseId);
+      if (
+        casePlan.runId !== fragment.runId ||
+        casePlan.policyDigest !== fragment.policyDigest ||
+        casePlan.retryAcceptance !== fragment.retryAcceptance
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["casePlans", index],
+          message: `case plan ${casePlan.caseId} does not match the fragment's run, policy or retry acceptance`,
+        });
+      }
+    });
+  });
+
+/** Published by a shard once its own attempts settled; carries what finalization needs. */
+export const shardCompletionSchema = z
+  .object({
+    formatVersion: formatVersionSchema(
+      SHARD_COMPLETION_FORMAT_VERSION,
+      "framelia.shard-completion",
+    ),
+    kind: z.literal("framelia.shard-completion"),
+    runId: nonEmptyTrimmed,
+    shard: runShardSchema,
+    /** Canonical digest of the shard's own published plan fragment. */
+    planFragmentDigest: sha256DigestSchema,
+    /** The shard's Playwright `FullResult.status`. */
+    resultStatus: runnerResultStatusSchema,
+    globalErrors: z.array(nonEmptyTrimmed),
+    /** Publication failures the shard hit (e.g. an attempt it could not publish). */
+    diagnostics: z.array(diagnosticSchema),
+    completedAt: z.iso.datetime(),
+  })
+  .strict();
+
 export const projectedEvidenceSchema = z
   .object({
     availability: z.enum(["available", "missing", "invalid", "not-recorded"]),
@@ -1159,6 +1242,9 @@ export type SignedAuthoritativeRunRequirements = z.infer<
 >;
 export type AttemptRecord = z.infer<typeof attemptRecordSchema>;
 export type RunRecord = z.infer<typeof runRecordSchema>;
+export type RunShard = z.infer<typeof runShardSchema>;
+export type RunPlanFragment = z.infer<typeof runPlanFragmentSchema>;
+export type ShardCompletion = z.infer<typeof shardCompletionSchema>;
 export type CommandOutcome = z.infer<typeof commandOutcomeSchema>;
 export type ProjectedEvidence = z.infer<typeof projectedEvidenceSchema>;
 export type ProjectedAttempt = z.infer<typeof projectedAttemptSchema>;

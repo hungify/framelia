@@ -23,6 +23,8 @@ export {
   toProjectRelative,
 } from "./layout.ts";
 export type { CaseIdentity } from "./layout.ts";
+export { listRuns } from "./list.ts";
+export type { InvalidRunEntry, RunListing, RunSummary } from "./list.ts";
 export { buildCasePlanForCollectedCase } from "./planner.ts";
 export type { CollectedCasePlanContext } from "./planner.ts";
 export { reconcileCasePlan } from "./reconcile.ts";

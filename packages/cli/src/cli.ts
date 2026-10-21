@@ -21,6 +21,7 @@ import { contractRoutes } from "./commands/contract.ts";
 import { dashboardCommand, openCommand, reportCommand } from "./commands/dashboard.ts";
 import { doneGateCommand } from "./commands/done-gate.ts";
 import { initCommand } from "./commands/init.ts";
+import { runsRoutes } from "./commands/runs.ts";
 import { schemaCommand } from "./commands/schema.ts";
 import { statusCommand } from "./commands/status.ts";
 import { buildContext } from "./context.ts";
@@ -49,13 +50,25 @@ const rootRoutes = buildRouteMap({
     baseline: baselineRoutes,
     capture: captureCommand,
     compare: compareCommand,
+    runs: runsRoutes,
   },
   defaultCommand: "dashboard",
   aliases: { "fetch-gold": "capture", diff: "compare" },
   docs: {
     brief: "CLI-first visual verification for Figma-to-web and web-to-web workflows.",
-    fullDescription:
-      "CLI-first visual verification for Figma-to-web and web-to-web workflows.\n\nExample:\n  framelia contract create",
+    fullDescription: [
+      "CLI-first visual verification for Figma-to-web and web-to-web workflows.",
+      "",
+      "Finite commands print one JSON outcome on stdout and exit 0 (passed), 1 (visual",
+      "mismatch) or 2 (usage/operational error); its `next` field names the follow-up.",
+      "With no arguments, framelia lists durable runs (`framelia runs list`).",
+      "",
+      "Examples:",
+      "  framelia init",
+      "  framelia contract create",
+      "  framelia check --all",
+      "  framelia open --run <run-id>",
+    ].join("\n"),
   },
 });
 
@@ -91,6 +104,11 @@ const app = buildApplication(
  */
 const ROUTES_WITHOUT_PROJECT_ENV = new Set(["done-gate"]);
 
+const HELP_FLAGS = new Set(["--help", "-h", "--help-all", "--version", "-V"]);
+
+/** Bare `framelia` lists durable runs: the one useful, side-effect-free starting point. */
+const BARE_INVOCATION = ["runs", "list"];
+
 function explicitProjectRoot(argv: readonly string[]): string | undefined {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]!;
@@ -101,7 +119,7 @@ function explicitProjectRoot(argv: readonly string[]): string | undefined {
 }
 
 export async function run(
-  argv: string[] = process.argv.slice(2),
+  rawArgv: string[] = process.argv.slice(2),
   options: {
     process?: CliRuntime;
     loadProjectEnv?: boolean;
@@ -109,6 +127,7 @@ export async function run(
     overrides?: EnvironmentOverrides;
   } = {},
 ): Promise<void> {
+  const argv = rawArgv.length === 0 ? BARE_INVOCATION : rawArgv;
   const context = buildContext({
     process: options.process,
     version: PACKAGE_VERSION,
@@ -121,9 +140,7 @@ export async function run(
   if (
     options.loadProjectEnv !== false &&
     !ROUTES_WITHOUT_PROJECT_ENV.has(argv[0] ?? "") &&
-    !argv.includes("--help") &&
-    !argv.includes("--version") &&
-    !argv.includes("-V")
+    !argv.some((argument) => HELP_FLAGS.has(argument))
   ) {
     let root: string | undefined;
     try {

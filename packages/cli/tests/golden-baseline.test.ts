@@ -189,8 +189,12 @@ describe("golden baseline: auth URL validation happens before config is loaded",
   it("rejects a non-http(s) URL with a specific message, exit 2", () => {
     const result = run(["auth", "--url", "not-a-url"]);
     expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("Auth URL must use http:// or https://.\n");
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      kind: "framelia.auth-outcome",
+      exitCode: 2,
+      diagnostics: [{ message: "Auth URL must use http:// or https://." }],
+    });
   });
 });
 

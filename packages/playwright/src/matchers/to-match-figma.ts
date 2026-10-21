@@ -212,9 +212,13 @@ export async function runToMatchFigma(
         : [];
 
     const extraIssues = [...styleIssues, ...attributionIssues];
-    const outcomeWithStyle = extraIssues.length
-      ? { ...outcome, topIssues: [...outcome.topIssues, ...extraIssues] }
-      : outcome;
+    // Baseline warnings (e.g. a cached fallback that skipped the style gate) ride along on
+    // the score so the reporter and dashboard surface them instead of dropping them here.
+    const outcomeWithStyle = {
+      ...outcome,
+      topIssues: [...outcome.topIssues, ...extraIssues],
+      warnings: [...baselineOutcome.baseline.warnings, ...outcome.warnings],
+    };
 
     await attachDiffTriplet(context.attach, baseName, {
       expected: baselineOutcome.baseline.evidence.path,

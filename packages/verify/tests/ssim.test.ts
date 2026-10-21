@@ -11,6 +11,12 @@ describe("ssimCompare", () => {
     expect(result).toBe(1);
   });
 
+  it("never exceeds 1 from floating-point error on identical images", () => {
+    // ssim.js scores this identical pair 1.0000000000000002, which the score schema rejects.
+    const png = makeSolidPng(100, 80, [20, 80, 40, 255]);
+    expect(ssimCompare(png, png)).toBe(1);
+  });
+
   it("returns less than 1 for different images", () => {
     const baseline = makeSolidPng(32, 32, [255, 255, 255, 255]);
     const actual = makeSolidPng(32, 32, [0, 0, 0, 255]);

@@ -37,6 +37,12 @@ export function ssimCompare(
   actual: PNG,
   maskBitmap: Uint8Array | null = null,
 ): number {
+  // ssim.js can land a hair outside [0, 1] from floating-point error (identical images
+  // score 1.0000000000000002), which the score schema rejects at publication time.
+  return Math.min(1, Math.max(0, rawSsim(baseline, actual, maskBitmap)));
+}
+
+function rawSsim(baseline: PNG, actual: PNG, maskBitmap: Uint8Array | null): number {
   if (baseline.width === 0 || baseline.height === 0) return 1;
   // Downsampling happens here, not inside ssim.js (maxSize: Infinity disables its own),
   // so the mask is shrunk with exactly the same block mapping as the pixels and the

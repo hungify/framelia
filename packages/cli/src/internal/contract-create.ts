@@ -23,7 +23,7 @@ import {
 import { listContractBindings } from "./contract-list.ts";
 import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
-import type { PlaywrightTransportDependencies } from "./playwright-collection.ts";
+import type { PlaywrightTransportDependencies } from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
 import type { PromptAdapter } from "./prompts.ts";
 

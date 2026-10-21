@@ -13,7 +13,7 @@ import { reconcileBinding, type BindingReconciliation } from "./binding-reconcil
 import {
   collectPlaywrightBindings,
   type PlaywrightTransportDependencies,
-} from "./playwright-collection.ts";
+} from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
 
 const CONTRACT_LIST_OUTCOME_FORMAT_VERSION = 1 as const;

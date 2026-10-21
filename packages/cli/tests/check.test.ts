@@ -6,7 +6,8 @@ import type { CollectedCase } from "@framelia/contracts/workflow";
 import type { ContractProjectCase } from "@framelia/verify/project-policy";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildTestList, runCheck, selectMatrix } from "../src/internal/check.ts";
+import { runCheck, selectMatrix } from "../src/internal/check.ts";
+import { buildTestList } from "../src/internal/playwright-transport.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
 
 const DIGEST = `sha256:${"a".repeat(64)}` as const;

@@ -30,6 +30,8 @@ export const SIGNED_AUTHORITATIVE_REQUIREMENTS_FORMAT_VERSION = 1 as const;
 export const COLLECTION_FORMAT_VERSION = 2;
 export const COLLECTED_CASE_FORMAT_VERSION = 1;
 export const RUN_CONTEXT_FORMAT_VERSION = 1;
+/** Names the private run-context file the CLI hands to the Playwright reporter. */
+export const RUN_CONTEXT_ENV = "FRAMELIA_RUN_CONTEXT";
 export const TRANSPORT_STATUS_FORMAT_VERSION = 1;
 export const CASE_PLAN_FORMAT_VERSION = 2;
 export const RUN_PLAN_FORMAT_VERSION = 2;

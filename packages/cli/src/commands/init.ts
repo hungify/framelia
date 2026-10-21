@@ -7,16 +7,10 @@ import { emitResult } from "../output.ts";
 
 export const initCommand = buildCommand({
   loader: async () => {
-    // Stricli's loader is the intentional lazy boundary; keep prompt dependencies off startup.
-    const [{ projectInitCommand }, { createClackPrompts }] = await Promise.all([
-      import("../internal/project-init.ts"),
-      import("../internal/clack-prompts.ts"),
-    ]);
+    // Stricli's loader is the intentional lazy boundary; prompts load through this.adapters.
+    const { projectInitCommand } = await import("../internal/project-init.ts");
     return async function (this: CliContext, flags: ProjectInitOptions) {
-      emitResult(
-        this,
-        await projectInitCommand(flags, createClackPrompts(this.process), this.process),
-      );
+      emitResult(this, await projectInitCommand(flags, this));
     };
   },
   parameters: {

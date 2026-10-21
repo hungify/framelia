@@ -25,6 +25,7 @@ import {
   FIXTURE_JOB_IDENTITY,
   FIXTURE_SERVED_ORIGIN,
 } from "./selected-run-fixture.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 function validAuthorityNow(): Date {
   return new Date("2026-09-21T12:02:00.000Z");
@@ -341,7 +342,7 @@ describe("signed done-gate authority boundary", () => {
           requirements: signed.requirements,
           projectRoot: root,
         },
-        runtime(root, keyEnv(signed.publicKey)),
+        testEnvironment(runtime(root, keyEnv(signed.publicKey))),
       );
       expect(result.exitCode).toBe(0);
       expect(result.body).toMatchObject({
@@ -392,8 +393,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         { ...options, requirements: anotherRun.requirements },
-        runtime(root, keyEnv(anotherRun.publicKey)),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(anotherRun.publicKey)),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -402,8 +406,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey)),
-        () => new Date("2026-09-21T11:59:59.000Z"),
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey)),
+          {},
+          { now: () => new Date("2026-09-21T11:59:59.000Z") },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -416,8 +423,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         { ...options, requirements: longWindow.requirements },
-        runtime(root, keyEnv(longWindow.publicKey)),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(longWindow.publicKey)),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -426,8 +436,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey)),
-        () => new Date("2026-09-21T12:05:00.000Z"),
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey)),
+          {},
+          { now: () => new Date("2026-09-21T12:05:00.000Z") },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -436,8 +449,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey, { [PROTECTED_JOB_IDENTITY_ENV]: "other-job" })),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey, { [PROTECTED_JOB_IDENTITY_ENV]: "other-job" })),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -446,8 +462,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey, { [AUTHORITY_AUDIENCE_ENV]: "other-audience" })),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey, { [AUTHORITY_AUDIENCE_ENV]: "other-audience" })),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -468,7 +487,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(signed.publicKey)),
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
     );
     expect(result).toMatchObject({
       exitCode: 2,
@@ -484,7 +503,7 @@ describe("signed done-gate authority boundary", () => {
     const trusted = signedRequirements(root, fixture.requirements);
     const unsignedResult = await doneGateCommand(
       { run: "run-selected", requirements: unsigned, projectRoot: root },
-      runtime(root, keyEnv(trusted.publicKey)),
+      testEnvironment(runtime(root, keyEnv(trusted.publicKey))),
     );
     expect(unsignedResult).toMatchObject({
       exitCode: 2,
@@ -498,7 +517,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: trusted.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(wrong.publicKey)),
+      testEnvironment(runtime(root, keyEnv(wrong.publicKey))),
     );
     expect(wrongKeyResult).toMatchObject({
       exitCode: 2,
@@ -512,7 +531,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: inside.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(inside.publicKey)),
+      testEnvironment(runtime(root, keyEnv(inside.publicKey))),
     );
     expect(insideResult).toMatchObject({
       exitCode: 2,
@@ -530,7 +549,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root),
+      testEnvironment(runtime(root)),
     );
     expect(missingKey).toMatchObject({
       exitCode: 2,
@@ -545,7 +564,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(signed.publicKey)),
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
     );
     expect(partial).toMatchObject({
       exitCode: 2,
@@ -583,7 +602,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(signed.publicKey)),
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
     );
 
     expect(result).toMatchObject({

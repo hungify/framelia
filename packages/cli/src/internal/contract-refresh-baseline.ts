@@ -1,24 +1,13 @@
 import * as path from "node:path";
 
-import { authoredContractSchema, type Diagnostic } from "@framelia/contracts/workflow";
-import {
-  AppError,
-  assertRawFileState,
-  canonicalJsonDigest,
-  publishBaselineSnapshot,
-  readPinnedBaseline,
-  readRawFileState,
-  stageFigmaBaseline,
-  withAuthoringLock,
-  writeAuthoredContract,
-  type CanonicalJsonValue,
-  type FetchBaselineFn,
-} from "@framelia/verify";
-import { inspectAuthoredContracts } from "@framelia/verify/project-policy";
+import type { Diagnostic } from "@framelia/contracts/workflow";
+import { readPinnedBaseline } from "@framelia/verify";
 
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
+import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
+import { failureDiagnostic, frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
 
 const REFRESH_OUTCOME_FORMAT_VERSION = 1 as const;
@@ -28,8 +17,8 @@ export interface ContractRefreshBaselineOptions {
   readonly contract: string | undefined;
 }
 
-export interface ContractRefreshBaselineDependencies {
-  readonly fetchBaseline?: FetchBaselineFn;
+/** Test seam: runs after the snapshot is published and before the pointer is written. */
+export interface ContractRefreshBaselineSeams {
   readonly afterSnapshotPublished?: () => void;
 }
 
@@ -61,13 +50,7 @@ function failure(error: unknown): CliResult<ContractRefreshBaselineOutcome> {
       command: "contract refresh-baseline",
       executionState: "error",
       exitCode: 2,
-      diagnostics: [
-        {
-          code: error instanceof AppError ? error.code : "BASELINE_REFRESH_FAILED",
-          stage: "refresh-baseline",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      ],
+      diagnostics: [failureDiagnostic(error, "BASELINE_REFRESH_FAILED", "refresh-baseline")],
     },
   };
 }
@@ -75,61 +58,32 @@ function failure(error: unknown): CliResult<ContractRefreshBaselineOutcome> {
 /** Refresh is pointer-last: every failure leaves the previously pinned snapshot usable. */
 export async function contractRefreshBaselineCommand(
   options: ContractRefreshBaselineOptions,
-  runtime: CliRuntime,
-  dependencies: ContractRefreshBaselineDependencies = {},
+  env: CommandEnvironment,
+  seams: ContractRefreshBaselineSeams = {},
 ): Promise<CliResult<ContractRefreshBaselineOutcome>> {
   try {
     const contractId = options.contract;
     if (!contractId) {
       throw new Error("refresh-baseline requires --contract <exact-id>.");
     }
-    const project = openProject(options.projectRoot, runtime);
-    const policy = await project.loadConfig();
-    const configBefore = policy.configPath ? readRawFileState(policy.configPath) : undefined;
-    const inspection = await inspectAuthoredContracts(policy);
-    if (inspection.invalid[0]) {
-      throw new AppError(inspection.invalid[0].code, inspection.invalid[0].message);
-    }
-    const discovered = inspection.contracts.find((entry) => entry.contract.id === contractId);
+    const runtime = env.process;
+    const policy = await openProject(options.projectRoot, runtime).loadConfig();
+    const pinning = await openContractPinning(policy);
+    const discovered = pinning.contracts.find((entry) => entry.contract.id === contractId);
     if (!discovered) {
       throw new Error(`Unknown exact contract id ${JSON.stringify(contractId)}.`);
     }
-    const contractPath = path.resolve(policy.root, discovered.file);
-    const before = readRawFileState(contractPath);
     const previous = await readPinnedBaseline(policy.root, discovered.contract);
-    const staged = await stageFigmaBaseline({
+    const { contract: replacement, digest } = await pinning.pin({
+      contractPath: path.resolve(policy.root, discovered.file),
+      existing: discovered,
+      draft: { ...discovered.contract, revision: discovered.contract.revision + 1 },
       source: previous.snapshot.source,
-      viewport: discovered.contract.viewport,
-      scope: discovered.contract.scope,
       token: optionalFigmaToken(runtime),
-      ...(dependencies.fetchBaseline ? { fetchBaseline: dependencies.fetchBaseline } : {}),
-    });
-    const replacement = authoredContractSchema.parse({
-      ...discovered.contract,
-      revision: discovered.contract.revision + 1,
-      baseline: { snapshotDigest: staged.snapshotDigest },
-    });
-    const digest = canonicalJsonDigest(replacement as CanonicalJsonValue);
-
-    await withAuthoringLock(policy.root, async () => {
-      assertRawFileState(contractPath, before);
-      if (policy.configPath && configBefore) {
-        assertRawFileState(policy.configPath, configBefore);
-      }
-      const latest = await inspectAuthoredContracts(policy);
-      if (latest.invalid[0]) {
-        throw new AppError(latest.invalid[0].code, latest.invalid[0].message);
-      }
-      const owner = latest.contracts.find((entry) => entry.contract.id === contractId);
-      if (owner?.file !== discovered.file || owner.digest !== discovered.digest) {
-        throw new AppError(
-          "AUTHORING_CONFLICT",
-          `Contract ${contractId} changed while baseline acquisition was in progress.`,
-        );
-      }
-      await publishBaselineSnapshot(policy.root, replacement, staged);
-      dependencies.afterSnapshotPublished?.();
-      writeAuthoredContract(contractPath, replacement);
+      fetchBaseline: (await env.adapters.figma()).fetchBaseline,
+      ...(seams.afterSnapshotPublished
+        ? { afterSnapshotPublished: seams.afterSnapshotPublished }
+        : {}),
     });
 
     return {
@@ -150,15 +104,7 @@ export async function contractRefreshBaselineCommand(
           snapshotDigest: replacement.baseline.snapshotDigest,
         },
         diagnostics: [],
-        next: {
-          command: "framelia",
-          argv: [
-            "check",
-            "--contract",
-            replacement.id,
-            ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-          ],
-        },
+        next: frameliaNext(["check", "--contract", replacement.id], options.projectRoot),
       },
     };
   } catch (error) {

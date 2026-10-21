@@ -6,8 +6,10 @@ import type { CollectedCase } from "@framelia/contracts/workflow";
 import type { ContractProjectCase } from "@framelia/verify/project-policy";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildTestList, runCheck, selectMatrix } from "../src/internal/check.ts";
+import { runCheck, selectMatrix } from "../src/internal/check.ts";
+import { buildTestList } from "../src/internal/playwright-transport.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 const DIGEST = `sha256:${"a".repeat(64)}` as const;
 const roots: string[] = [];
@@ -74,7 +76,7 @@ describe("check selection", () => {
     const all = selectMatrix(
       matrix,
       required,
-      { contract: [], all: true, project: [], runtime: runtime("/project") },
+      { contract: [], all: true, project: [] },
       authored,
       projects,
     );
@@ -87,7 +89,6 @@ describe("check selection", () => {
       {
         contract: ["optional.visual"],
         project: [],
-        runtime: runtime("/project"),
       },
       authored,
       projects,
@@ -100,7 +101,7 @@ describe("check selection", () => {
     const selected = selectMatrix(
       matrix,
       required,
-      { contract: [], all: true, project: ["firefox"], runtime: runtime("/project") },
+      { contract: [], all: true, project: ["firefox"] },
       authored,
       projects,
     );
@@ -118,15 +119,9 @@ describe("check selection", () => {
       /Duplicate contract id/,
     ],
   ] as const)("rejects invalid selector input %#", (request, expected) => {
-    expect(() =>
-      selectMatrix(
-        matrix,
-        required,
-        { ...request, runtime: runtime("/project") },
-        authored,
-        projects,
-      ),
-    ).toThrow(expected);
+    expect(() => selectMatrix(matrix, required, { ...request }, authored, projects)).toThrow(
+      expected,
+    );
   });
 });
 
@@ -170,11 +165,10 @@ describe("nested-cwd policy resolution", () => {
       'export default { playwright: { config: "playwright.config.ts", projects: ["chromium"] }, contracts: ["contracts/*.json"] };\n',
     );
 
-    const outcome = await runCheck({
-      contract: [],
-      project: [],
-      runtime: runtime(path.join(root, "apps", "nested")),
-    });
+    const outcome = await runCheck(
+      { contract: [], project: [] },
+      testEnvironment(runtime(path.join(root, "apps", "nested"))),
+    );
 
     expect(outcome.diagnostics[0]?.message).toMatch(/requires --all/);
     expect(outcome.diagnostics[0]?.message).not.toMatch(/framelia\.config not found/);

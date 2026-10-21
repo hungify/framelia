@@ -12,7 +12,7 @@ export const compareCommand = buildCommand({
   loader: async () => {
     const { compareCommand: runCompareCommand } = await import("../internal/compare.ts");
     return function (this: CliContext, flags: CompareOptions) {
-      emitResult(this, runCompareCommand(flags, this.process));
+      emitResult(this, runCompareCommand(flags, this));
     };
   },
   parameters: {

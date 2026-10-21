@@ -5,10 +5,10 @@ import { DEFAULT_AUTH_STATE_PATH } from "@framelia/contracts";
 import { writeFileAtomic } from "@framelia/verify";
 
 import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "../config.ts";
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
+import { frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
-import type { PromptAdapter } from "./prompts.ts";
 
 const INIT_OUTCOME_FORMAT_VERSION = 1 as const;
 const AUTH_GITIGNORE = "*\n!.gitignore\n";
@@ -207,9 +207,10 @@ export interface ProjectInitOutcome {
 
 export async function projectInitCommand(
   options: ProjectInitOptions,
-  prompts: PromptAdapter,
-  runtime: CliRuntime,
+  env: CommandEnvironment,
 ): Promise<CliResult<ProjectInitOutcome>> {
+  const runtime = env.process;
+  const prompts = await env.adapters.prompts(runtime);
   prompts.intro("Initialize Framelia");
   try {
     const project = openProject(options.projectRoot, runtime);
@@ -235,24 +236,10 @@ export async function projectInitCommand(
         ...(plan.reporterInstructions ? { instructions: plan.reporterInstructions } : {}),
       },
       diagnostics: [],
-      next:
-        plan.reporterRegistration === "manual"
-          ? {
-              command: "framelia",
-              argv: [
-                "init",
-                "--dry-run",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            }
-          : {
-              command: "framelia",
-              argv: [
-                "contract",
-                "create",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            },
+      next: frameliaNext(
+        plan.reporterRegistration === "manual" ? ["init", "--dry-run"] : ["contract", "create"],
+        options.projectRoot,
+      ),
     };
     prompts.note(
       changes.map((change) => `${change.action}: ${change.path}`).join("\n"),

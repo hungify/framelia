@@ -9,7 +9,7 @@ export const doneGateCommand = buildCommand({
   loader: async () => {
     const { doneGateCommand: runDoneGateCommand } = await import("../internal/done-gate.ts");
     return async function (this: CliContext, flags: DoneGateOptions) {
-      emitResult(this, await runDoneGateCommand(flags, this.process));
+      emitResult(this, await runDoneGateCommand(flags, this));
     };
   },
   parameters: {

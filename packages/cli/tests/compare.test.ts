@@ -26,7 +26,7 @@ describe("compareCommand", () => {
         outDir: undefined,
         profile: "component/strict",
       },
-      fakeRuntime({ cwd: () => "/from/runtime" }),
+      { process: fakeRuntime({ cwd: () => "/from/runtime" }) },
     );
     expect(result.body.pass).toBe(false);
     const message = result.body.topIssues[0]?.message ?? "";
@@ -38,7 +38,7 @@ describe("compareCommand", () => {
     (profile) => {
       const result = compareCommand(
         { baseline: "a.png", actual: "b.png", outDir: undefined, profile },
-        fakeRuntime(),
+        { process: fakeRuntime() },
       );
       expect(result.body.pass).toBe(false);
     },

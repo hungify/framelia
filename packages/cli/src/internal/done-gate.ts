@@ -16,8 +16,8 @@ import {
   PROTECTED_JOB_IDENTITY_ENV,
   TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV,
 } from "../cli-constants.ts";
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { openProject } from "./project.ts";
 import { readRunProjection, type RunProjection } from "./run-projection.ts";
 
@@ -97,9 +97,9 @@ function decodeSignature(value: string): Buffer {
 
 export async function doneGateCommand(
   options: DoneGateOptions,
-  runtime: CliRuntime,
-  now: () => Date = () => new Date(),
+  env: Pick<CommandEnvironment, "process" | "now">,
 ): Promise<DoneGateResult> {
+  const runtime = env.process;
   const parsed = doneGateOptionsSchema.safeParse(options);
   if (!parsed.success) {
     return incomplete("DONE_GATE_OPTIONS_INVALID", parsed.error.message);
@@ -189,7 +189,7 @@ export async function doneGateCommand(
       `Signed requirements name run "${payload.runId}", not requested run "${parsed.data.run}".`,
     );
   }
-  const currentTime = now().getTime();
+  const currentTime = env.now().getTime();
   const issuedAt = Date.parse(payload.issuedAt);
   const expiresAt = Date.parse(payload.expiresAt);
   if (expiresAt - issuedAt > MAX_SIGNED_REQUIREMENTS_VALIDITY_MS) {

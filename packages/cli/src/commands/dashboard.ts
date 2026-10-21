@@ -36,7 +36,7 @@ export const dashboardCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: DashboardOptions) {
-      return dashboardDevserverCommand({ ...flags, command: "dashboard" }, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "dashboard" }, this);
     };
   },
   parameters: {
@@ -60,7 +60,7 @@ export const openCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: OpenDashboardOptions) {
-      return dashboardDevserverCommand({ ...flags, command: "open" }, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "open" }, this);
     };
   },
   parameters: {
@@ -84,7 +84,7 @@ export const reportCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; report projection is startup-heavy.
     const { reportCommand: runReportCommand } = await import("../internal/dashboard-report.ts");
     return async function (this: CliContext, flags: ReportOptions) {
-      emitResult(this, await runReportCommand(flags, this.process));
+      emitResult(this, await runReportCommand(flags, this));
     };
   },
   parameters: {

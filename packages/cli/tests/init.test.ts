@@ -12,6 +12,7 @@ import {
 } from "../src/internal/project-init.ts";
 import { nonInteractivePrompts } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 const roots: string[] = [];
 
@@ -45,8 +46,7 @@ describe("project initialization workflow", () => {
     const root = temporaryProject();
     const result = await projectInitCommand(
       { projectRoot: root, dryRun: true, force: undefined },
-      nonInteractivePrompts,
-      runtime(root),
+      testEnvironment(runtime(root), { prompts: nonInteractivePrompts }),
     );
 
     expect(result).toMatchObject({
@@ -75,8 +75,7 @@ describe("project initialization workflow", () => {
 
     const result = await projectInitCommand(
       { projectRoot: root, dryRun: false, force: undefined },
-      nonInteractivePrompts,
-      runtime(root),
+      testEnvironment(runtime(root), { prompts: nonInteractivePrompts }),
     );
 
     expect(result.exitCode).toBe(0);
@@ -102,8 +101,7 @@ describe("project initialization workflow", () => {
 
     const result = await projectInitCommand(
       { projectRoot: root, dryRun: false, force: undefined },
-      nonInteractivePrompts,
-      runtime(root),
+      testEnvironment(runtime(root), { prompts: nonInteractivePrompts }),
     );
 
     expect(result).toMatchObject({
@@ -154,8 +152,7 @@ describe("project initialization workflow", () => {
     fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
     const result = await projectInitCommand(
       { projectRoot: root, dryRun: false, force: true },
-      nonInteractivePrompts,
-      runtime(root),
+      testEnvironment(runtime(root), { prompts: nonInteractivePrompts }),
     );
     expect(result).toMatchObject({
       exitCode: 2,

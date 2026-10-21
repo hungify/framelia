@@ -1,15 +1,23 @@
 <script setup lang="ts">
 import type { DashboardContractResult, DashboardRun, DashboardVerdict } from "@framelia/contracts";
+import { nextTick, ref, watch } from "vue";
 
-import type { ContractStatusFilter, ContractTreeItem } from "../lib/contract-tree";
+import {
+  flattenContractTree,
+  stepContract,
+  type ContractStatusFilter,
+  type ContractTreeItem,
+} from "../lib/contract-tree";
 import { formatRatio } from "../lib/format";
 import StatusBadge from "./StatusBadge.vue";
 
-defineProps<{
+const props = defineProps<{
   run: DashboardRun;
   contractsCount: number;
   contractTree: ContractTreeItem[];
   selectedTreeItem?: ContractTreeItem;
+  /** The selected contract exists but the current filter hides it from the tree. */
+  selectionFiltered?: boolean;
 }>();
 
 const query = defineModel<string>("query", { required: true });
@@ -20,14 +28,60 @@ const emit = defineEmits<{
 }>();
 
 const statusOptions: Array<{ label: string; value: ContractStatusFilter }> = [
-  { label: "Masked pass", value: "masked-pass" },
   { label: "All", value: "all" },
   { label: "Passed", value: "passed" },
+  { label: "Masked pass", value: "masked-pass" },
   { label: "Failed", value: "failed" },
   { label: "Blocked", value: "blocked" },
   { label: "Running", value: "running" },
   { label: "Queued", value: "queued" },
 ];
+
+const statusLabel: Record<DashboardVerdict, string> = {
+  queued: "Queued",
+  running: "Running",
+  passed: "Passed",
+  "masked-pass": "Masked pass",
+  failed: "Failed",
+  blocked: "Blocked",
+};
+
+const treeEl = ref<HTMLElement | null>(null);
+let focusSelectedOnChange = false;
+
+/**
+ * ↑/↓ inside the tree move the selection (not just focus) through contracts in display
+ * order, skipping feature headers, then put focus on the newly selected row. Captured
+ * before the tree's own roving focus so the two never fight.
+ */
+function onTreeArrow(event: KeyboardEvent) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const current =
+    props.selectedTreeItem?.kind === "contract" ? props.selectedTreeItem.contract.id : undefined;
+  const next = stepContract(
+    flattenContractTree(props.contractTree),
+    current,
+    event.key === "ArrowDown" ? 1 : -1,
+  );
+  if (!next) return;
+  event.preventDefault();
+  event.stopPropagation();
+  focusSelectedOnChange = true;
+  emit("select", next);
+}
+
+// The route -- and so the tree's selected row -- updates asynchronously after a select.
+watch(
+  () => props.selectedTreeItem?.id,
+  () => {
+    if (!focusSelectedOnChange) return;
+    focusSelectedOnChange = false;
+    void nextTick(() =>
+      treeEl.value?.querySelector<HTMLElement>('[role="treeitem"][data-selected]')?.focus(),
+    );
+  },
+);
 
 const dotColor: Record<DashboardVerdict, string> = {
   queued: "bg-muted",
@@ -116,7 +170,18 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
         aria-label="Filter by status"
       />
     </div>
-    <div class="min-h-0 overflow-y-auto border-t border-line-soft px-1.5 py-2">
+    <div
+      ref="treeEl"
+      class="min-h-0 overflow-y-auto border-t border-line-soft px-1.5 py-2"
+      @keydown.capture="onTreeArrow"
+    >
+      <p
+        v-if="selectionFiltered"
+        class="mx-1.5 mb-1.5 text-muted text-xs"
+        data-testid="selection-filtered"
+      >
+        The selected contract is hidden by the current filter.
+      </p>
       <UTree
         :items="contractTree"
         :model-value="selectedTreeItem"
@@ -141,7 +206,14 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
             aria-hidden="true"
             >{{ expanded ? "▾" : "▸" }}</span
           >
-          <span v-else class="w-1.5 h-1.5 mx-0.75 rounded-full" :class="dotColor[item.status]" />
+          <span
+            v-else
+            class="w-1.5 h-1.5 mx-0.75 rounded-full"
+            :class="dotColor[item.status]"
+            role="img"
+            :aria-label="statusLabel[item.status]"
+            :title="statusLabel[item.status]"
+          />
         </template>
         <template #item-label="{ item }">
           <span class="min-w-0 flex-1 overflow-hidden">
@@ -158,7 +230,13 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
         </template>
         <template #item-trailing="{ item }">
           <span v-if="item.kind === 'feature'" class="flex items-center gap-1.5">
-            <span class="w-1.5 h-1.5 rounded-full" :class="dotColor[item.status]" />
+            <span
+              class="w-1.5 h-1.5 rounded-full"
+              :class="dotColor[item.status]"
+              role="img"
+              :aria-label="`${statusLabel[item.status]} (worst in group)`"
+              :title="statusLabel[item.status]"
+            />
             <span class="min-w-1ch text-muted text-xs tabular-nums">{{ item.leafCount }}</span>
           </span>
           <span
@@ -169,7 +247,8 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
         </template>
       </UTree>
       <div v-if="run.summary.total === 0" class="px-5 py-7.5 text-muted text-center text-xs">
-        No verifications yet — run <code>framelia verify</code> to produce one.
+        No verifications yet — run <code>framelia check --all</code> (or
+        <code>npx playwright test</code> with the Framelia reporter) to produce one.
       </div>
       <div v-else-if="contractsCount === 0" class="px-5 py-7.5 text-muted text-center text-xs">
         No contracts match current filter.
@@ -178,7 +257,7 @@ function onTreeSelect(event: { preventDefault: () => void }, item: ContractTreeI
     <footer
       class="border-t border-line px-2.5 py-2.5 bg-panel-deep"
       aria-label="Verification summary"
-      title="Alt + ← / → to move selection"
+      title="Alt + ← / → (anywhere) or ↑ / ↓ (in the list) to move selection"
     >
       <div class="flex items-center justify-between gap-2 mb-2">
         <span class="text-xs font-semibold">Visual tests</span>

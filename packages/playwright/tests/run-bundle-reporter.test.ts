@@ -880,6 +880,39 @@ describe("FrameliaReporter selected-run publication", () => {
     await reporter.onEnd({ status: "passed" } as unknown as FullResult);
   });
 
+  it("serves a newly published attempt after the dashboard already projected the run", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-live-refresh",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    const dashboardUrl = await reporter.dashboardUrl();
+    const attempts = async (): Promise<number> => {
+      const run = await (await fetch(`${dashboardUrl}/api/run`)).json();
+      return run.contracts[0].attempts.length;
+    };
+    expect(await attempts()).toBe(0);
+
+    reporter.onTestEnd(
+      test,
+      fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+    );
+    await expect.poll(attempts).toBe(1);
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+  });
+
   it("publishes a real capture score that the selected reader and authoritative gate accept", async () => {
     const root = initializedProjectRoot();
     const workDir = tempDir("framelia-real-capture-");

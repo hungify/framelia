@@ -39,6 +39,54 @@ attempt publication/finalization. No database, hosted service, account, or cloud
 | `framelia open --run <id>`                     | No                            | Yes    | Selected-run dashboard    | Existing run bundle                |
 | `framelia report --run <id>`                   | No                            | No     | Portable static dashboard | Relocatable selected-run report    |
 | `framelia done-gate --run <id>`                | No                            | No     | No                        | Trusted authoritative run verdict  |
+| `framelia runs finalize --run <id>`            | No                            | No     | No                        | Sharded run composed and finalized |
+
+### Sharded CI runs
+
+`npx playwright test --shard=N/M` with the Framelia Reporter records every shard into one run when
+all shards share `FRAMELIA_RUN_ID`. Each shard contributes an immutable plan fragment and its
+attempts; the run's plan is composed and the run finalized once every shard completed. Shards that
+share a machine finalize the run themselves. With one runner per shard, collect the shards' run
+directories and finalize in one job:
+
+```yaml
+env:
+  FRAMELIA_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  visual:
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npx playwright install --with-deps chromium
+      - run: npx playwright test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: framelia-shard-${{ matrix.shard }}
+          path: .framelia/runs/
+          include-hidden-files: true
+
+  finalize:
+    needs: visual
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: framelia-shard-*
+          path: .framelia/runs/
+          merge-multiple: true
+      - run: npx framelia runs finalize --run "$FRAMELIA_RUN_ID"
+```
+
+See [`packages/cli/README.md`](packages/cli/README.md#sharded-playwright-runs) for the outcome and
+failure modes, and [ADR 0001](docs/adr/0001-sharded-runs-share-one-plan.md) for the design.
 
 ## Workspace
 

@@ -177,6 +177,7 @@ describe("route map: short aliases", () => {
     ["compare"],
     ["runs", "list"],
     ["runs", "prune"],
+    ["runs", "finalize"],
     ["completion", "install"],
     ["completion", "uninstall"],
   ];

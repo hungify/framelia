@@ -369,9 +369,44 @@ run status and each global error message go into the final run record. An interr
 timed-out run, or one whose selected cases have no accepted attempt, is sealed `incomplete`,
 never `finalized`.
 
-`framelia check` is the supported path for authoritative runs. A sharded direct run
-(`--shard=N/M`) only sees its own shard, so each shard records its own bundle with runId
-`<run-id>-shard-<N>-of-<M>`. Shard bundles are never merged into one run.
+`framelia check` is the supported path for authoritative runs.
 
 Web-to-web matcher results remain runtime/dashboard evidence. Contract and done-gate artifacts are
 Figma-baselined after schema-v4 pivot.
+
+### Sharded runs
+
+Every shard of a sharded direct run (`npx playwright test --shard=N/M`) records into one shared
+run when all shards get the same run ID: set `FRAMELIA_RUN_ID` (or the reporter's `runId`
+option) to one value per CI run, for example `${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}`. A run is
+immutable, so a re-run needs a new ID.
+
+A shard only sees its own tests, so no shard knows the whole plan. Each shard publishes its case
+plans as an immutable plan fragment, publishes its attempts as usual, and on exit records a
+completion marker with its Playwright result status and global errors. The last shard to complete
+composes the run's frozen plan from every fragment and finalizes the run once. The run status uses
+the worst shard result: an interrupted or timed-out shard leaves the run `incomplete`. Until then
+the run is in progress: `framelia runs list` shows which shards it is waiting for, and `open`,
+`report` and `done-gate` refuse it with `RUN_BUNDLE_SHARDS_PENDING`.
+
+```text
+.framelia/runs/<slug(run-id)>/
+├── shards/<N>-of-<M>/plan/fragment.json         # shard N's case plans
+├── shards/<N>-of-<M>/completion/completion.json # shard N's result status and global errors
+├── cases/<slug(case-id)>/attempts/...           # attempts, as for any run
+├── plan/                                         # composed once every shard completed
+└── run.json                                      # written once, when the run is finalized
+```
+
+Shards that share one machine (and one project root) finalize the run themselves. When each shard
+runs on its own CI runner, collect every shard's `.framelia/runs/<slug(run-id)>` directory into one
+checkout of the same commit and run `framelia runs finalize --run <run-id>` there. Shard files are
+keyed by shard and attempts by case, so the directories merge without collisions. The command
+exits `2` and lists the missing shards until every shard is present. See the
+[CLI CI example](../cli/README.md#ci-example).
+
+Shards must agree on the shard total, the project policy and the retry policy, and must not plan
+the same case. Finalization rejects a conflict (`RUN_BUNDLE_SHARD_CONFLICT`) and a plan fragment
+that changed after its shard completed. A sharded run without a shared run ID falls back to one
+bundle per shard, with runId `<generated-id>-shard-<N>-of-<M>`, and the reporter warns how to set
+`FRAMELIA_RUN_ID`. `framelia check` is not sharded.

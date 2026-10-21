@@ -8,7 +8,7 @@ import {
   type AuthoritativeRunRequirements,
 } from "@framelia/contracts/workflow";
 import { canonicalJson, type CanonicalJsonValue } from "@framelia/verify";
-import { evaluateAuthoritativeRun } from "@framelia/verify/run-bundle";
+import { evaluateAuthoritativeRun, publishPlanFragment, runDir } from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -662,6 +662,43 @@ describe("done-gate outcome diagnostics and follow-ups", () => {
     expect(body.diagnostics[0]?.message).not.toContain(root);
     expect(result.body).toMatchObject({
       next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
+    });
+  });
+
+  it("treats a sharded run that is not composed yet as incomplete", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root);
+    const signed = signedRequirements(root, fixture.requirements);
+    fs.rmSync(runDir(root, "run-selected"), { recursive: true });
+    await publishPlanFragment(root, {
+      formatVersion: 1,
+      kind: "framelia.run-plan-fragment",
+      runId: "run-selected",
+      shard: { current: 1, total: 2 },
+      policyDigest: fixture.casePlan.policyDigest,
+      retryAcceptance: fixture.casePlan.retryAcceptance,
+      createdAt: "2026-09-15T00:00:00.000Z",
+      casePlans: [fixture.casePlan],
+    });
+
+    const result = await doneGateCommand(
+      { run: "run-selected", requirements: signed.requirements, projectRoot: root },
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
+    );
+
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        executionState: "incomplete",
+        visualVerdict: "not-evaluated",
+        diagnostics: [
+          {
+            code: "RUN_BUNDLE_SHARDS_PENDING",
+            message: expect.stringContaining("framelia runs finalize --run run-selected"),
+          },
+        ],
+        next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
+      },
     });
   });
 });

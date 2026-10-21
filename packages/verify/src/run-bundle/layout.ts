@@ -15,7 +15,14 @@ import { sha256Hex } from "../hash.ts";
  *   cases/<caseSlug>/attempts/<attemptSlug>/
  *     attempt.json                 <- AttemptRecord
  *     expected.png / actual.png / diff.png / score.json (whichever evidence was captured)
+ *   shards/<current>-of-<total>/   <- sharded direct runs only (see sharded-run.ts)
+ *     plan/fragment.json           <- RunPlanFragment; published once by that shard's onBegin
+ *     completion/completion.json   <- ShardCompletion; published once by that shard's onEnd
  * ```
+ *
+ * A sharded run has no `plan/` or `run.json` until every shard completed: the run's plan is
+ * then composed from the fragments and the run finalized once. Shard files are keyed by shard
+ * and attempts by case, so per-shard copies of one run directory merge without collisions.
  *
  * Every path recorded *inside* a JSON record (case-plan/attempt evidence pointers) is
  * project-root-relative (see @framelia/contracts's `projectRelativePathSchema`), matching
@@ -47,6 +54,9 @@ export const RUN_RECORD_FILE_NAME = "run.json";
 export const CASES_DIR_NAME = "cases";
 export const ATTEMPTS_DIR_NAME = "attempts";
 export const ATTEMPT_RECORD_FILE_NAME = "attempt.json";
+export const SHARDS_DIR_NAME = "shards";
+export const PLAN_FRAGMENT_FILE_NAME = "fragment.json";
+export const SHARD_COMPLETION_FILE_NAME = "completion.json";
 
 /** Evidence file names within one attempt's own directory. */
 export const ATTEMPT_EVIDENCE_FILE = {
@@ -90,6 +100,55 @@ export function attemptsDir(root: string, runId: string, caseId: string): string
 
 export function attemptDir(root: string, runId: string, caseId: string, attemptId: string): string {
   return path.join(attemptsDir(root, runId, caseId), slug(attemptId));
+}
+
+export function shardsDir(root: string, runId: string): string {
+  return path.join(runDir(root, runId), SHARDS_DIR_NAME);
+}
+
+/** One shard's own directory name: Playwright's one-based `--shard=current/total`. */
+export function shardDirName(shard: { current: number; total: number }): string {
+  return `${shard.current}-of-${shard.total}`;
+}
+
+export function shardDir(
+  root: string,
+  runId: string,
+  shard: { current: number; total: number },
+): string {
+  return path.join(shardsDir(root, runId), shardDirName(shard));
+}
+
+export function planFragmentDir(
+  root: string,
+  runId: string,
+  shard: { current: number; total: number },
+): string {
+  return path.join(shardDir(root, runId, shard), PLAN_DIR_NAME);
+}
+
+export function planFragmentPath(
+  root: string,
+  runId: string,
+  shard: { current: number; total: number },
+): string {
+  return path.join(planFragmentDir(root, runId, shard), PLAN_FRAGMENT_FILE_NAME);
+}
+
+export function shardCompletionDir(
+  root: string,
+  runId: string,
+  shard: { current: number; total: number },
+): string {
+  return path.join(shardDir(root, runId, shard), "completion");
+}
+
+export function shardCompletionPath(
+  root: string,
+  runId: string,
+  shard: { current: number; total: number },
+): string {
+  return path.join(shardCompletionDir(root, runId, shard), SHARD_COMPLETION_FILE_NAME);
 }
 
 /** Portable, forward-slash, project-root-relative path for a file already inside the bundle. */

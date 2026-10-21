@@ -1,16 +1,17 @@
 import type { CollectionManifest, Diagnostic } from "@framelia/contracts/workflow";
-import { AppError, portableErrorMessage } from "@framelia/verify";
+import { portableErrorMessage } from "@framelia/verify";
 import {
   inspectAuthoredContracts,
   resolveContractProjectMatrix,
+  type ContractProjectCase,
+  type ResolvedProjectPolicy,
 } from "@framelia/verify/project-policy";
 
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
-import {
-  collectPlaywrightBindings,
-  type PlaywrightTransportDependencies,
-} from "./playwright-collection.ts";
+import { reconcileBinding, type BindingReconciliation } from "./binding-reconciliation.ts";
+import { failureDiagnostic, frameliaNext } from "./outcome.ts";
+import { collectPlaywrightBindings } from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
 
 const CONTRACT_LIST_OUTCOME_FORMAT_VERSION = 1 as const;
@@ -45,82 +46,139 @@ function issue(code: string, stage: string, message: string): Diagnostic {
   return { code, stage, message };
 }
 
-export async function contractListCommand(
-  options: ContractListOptions,
-  runtime: CliRuntime,
-  dependencies: PlaywrightTransportDependencies = {},
-): Promise<CliResult<ContractListOutcome>> {
+export interface ContractBindings {
+  readonly entries: ContractListEntry[];
+  readonly diagnostics: Diagnostic[];
+}
+
+function bindingEntry(
+  expected: ContractProjectCase,
+  binding: BindingReconciliation,
+): ContractListEntry {
+  const base = {
+    contractId: expected.contractId,
+    contractPath: expected.contractFile,
+    project: expected.project,
+    required: expected.required,
+  };
+  const label = `${expected.contractId}/${JSON.stringify(expected.project)}`;
+  switch (binding.status) {
+    case "executable":
+      return { ...base, status: "executable", diagnostics: [] };
+    case "project-missing":
+    case "unbound":
+      return {
+        ...base,
+        status: "unbound",
+        diagnostics: [
+          issue(
+            "CONTRACT_UNBOUND",
+            "binding",
+            `No defineFigmaTests binding collected for ${label}.`,
+          ),
+        ],
+      };
+    case "duplicate":
+      return {
+        ...base,
+        status: "invalid",
+        diagnostics: [
+          issue(
+            "DUPLICATE_CONTRACT_BINDING",
+            "binding",
+            `Collected duplicate bindings for ${label} in at least one repeat slot; exactly one per slot is required.`,
+          ),
+        ],
+      };
+    case "stale":
+      return {
+        ...base,
+        status: "invalid",
+        diagnostics: [
+          issue(
+            "STALE_CONTRACT_BINDING",
+            "binding",
+            `Collected binding identity or repeat slots for ${label} do not match ${expected.contractFile}.`,
+          ),
+        ],
+      };
+  }
+}
+
+/**
+ * Inspects every authored contract and classifies each contract/project case against one
+ * shared Playwright collection. Collection or policy problems become diagnostics, never throws.
+ */
+export async function listContractBindings(
+  policy: ResolvedProjectPolicy,
+  env: Pick<CommandEnvironment, "process" | "adapters">,
+): Promise<ContractBindings> {
+  const inspection = await inspectAuthoredContracts(policy);
+  const entries: ContractListEntry[] = inspection.invalid.map((entry) => ({
+    ...(entry.contractId ? { contractId: entry.contractId } : {}),
+    contractPath: entry.file,
+    status: "invalid",
+    diagnostics: [issue(entry.code, "discovery", entry.message)],
+  }));
+  const diagnostics: Diagnostic[] = [];
+
+  if (!policy.playwright || !policy.policyDigest) {
+    const message =
+      "framelia.config must declare playwright.config and exact visual project names before bindings can be collected.";
+    diagnostics.push(issue("PROJECT_POLICY_INCOMPLETE", "configuration", message));
+    for (const discovered of inspection.contracts) {
+      entries.push({
+        contractId: discovered.contract.id,
+        contractPath: discovered.file,
+        status: "invalid",
+        required: discovered.contract.required,
+        diagnostics: [issue("PROJECT_POLICY_INCOMPLETE", "configuration", message)],
+      });
+    }
+    return { entries, diagnostics };
+  }
+
+  const validCases: ContractProjectCase[] = [];
+  for (const discovered of inspection.contracts) {
+    try {
+      validCases.push(...resolveContractProjectMatrix(policy, [discovered]).allCases);
+    } catch (error) {
+      entries.push({
+        contractId: discovered.contract.id,
+        contractPath: discovered.file,
+        status: "invalid",
+        required: discovered.contract.required,
+        diagnostics: [
+          failureDiagnostic(
+            error,
+            "CONTRACT_MATRIX_INVALID",
+            "configuration",
+            portableErrorMessage(error, policy.root),
+          ),
+        ],
+      });
+    }
+  }
+
+  let manifest: CollectionManifest | undefined;
   try {
-    const project = openProject(options.projectRoot, runtime);
-    const policy = await project.loadConfig();
-    const inspection = await inspectAuthoredContracts(policy);
-    const entries: ContractListEntry[] = inspection.invalid.map((entry) => ({
-      ...(entry.contractId ? { contractId: entry.contractId } : {}),
-      contractPath: entry.file,
-      status: "invalid",
-      diagnostics: [issue(entry.code, "discovery", entry.message)],
-    }));
-    const diagnostics: Diagnostic[] = [];
+    manifest = await collectPlaywrightBindings({
+      policy,
+      selectedProjects: policy.playwright.projects,
+      runtime: env.process,
+      dependencies: await env.adapters.playwright(),
+    });
+  } catch (error) {
+    diagnostics.push(
+      issue("COLLECTION_BLOCKED", "collection", portableErrorMessage(error, policy.root)),
+    );
+  }
 
-    if (!policy.playwright || !policy.policyDigest) {
-      const message =
-        "framelia.config must declare playwright.config and exact visual project names before bindings can be collected.";
-      diagnostics.push(issue("PROJECT_POLICY_INCOMPLETE", "configuration", message));
-      for (const discovered of inspection.contracts) {
-        entries.push({
-          contractId: discovered.contract.id,
-          contractPath: discovered.file,
-          status: "invalid",
-          required: discovered.contract.required,
-          diagnostics: [issue("PROJECT_POLICY_INCOMPLETE", "configuration", message)],
-        });
-      }
-    } else {
-      const validCases: Array<{
-        contractId: string;
-        contractFile: string;
-        contractDigest: string;
-        project: string;
-        required: boolean;
-      }> = [];
-      for (const discovered of inspection.contracts) {
-        try {
-          const matrix = resolveContractProjectMatrix(policy, [discovered]);
-          validCases.push(...matrix.allCases);
-        } catch (error) {
-          entries.push({
-            contractId: discovered.contract.id,
-            contractPath: discovered.file,
-            status: "invalid",
-            required: discovered.contract.required,
-            diagnostics: [
-              issue(
-                error instanceof AppError ? error.code : "CONTRACT_MATRIX_INVALID",
-                "configuration",
-                portableErrorMessage(error, policy.root),
-              ),
-            ],
-          });
-        }
-      }
-
-      let manifest: CollectionManifest | undefined;
-      try {
-        manifest = await collectPlaywrightBindings({
-          policy,
-          selectedProjects: policy.playwright.projects,
-          runtime,
-          dependencies,
-        });
-      } catch (error) {
-        diagnostics.push(
-          issue("COLLECTION_BLOCKED", "collection", portableErrorMessage(error, policy.root)),
-        );
-      }
-
-      for (const expected of validCases) {
-        if (!manifest) {
-          entries.push({
+  for (const expected of validCases) {
+    entries.push(
+      manifest
+        ? bindingEntry(expected, reconcileBinding(manifest, expected))
+        : {
             contractId: expected.contractId,
             contractPath: expected.contractFile,
             project: expected.project,
@@ -133,78 +191,19 @@ export async function contractListCommand(
                 "The authored contract/project case is configured, but executable binding collection did not complete.",
               ),
             ],
-          });
-          continue;
-        }
-        const candidates = manifest.visualCases.filter(
-          (collected) =>
-            collected.binding.contractId === expected.contractId &&
-            collected.project === expected.project,
-        );
-        const collectedProject = manifest.projects.find((entry) => entry.name === expected.project);
-        const exact = candidates.filter(
-          (collected) =>
-            collected.binding.contractFile === expected.contractFile &&
-            collected.binding.contractDigest === expected.contractDigest,
-        );
-        const expectedRepeats = collectedProject?.repeatEach ?? 1;
-        const repeatCounts = new Map<number, number>();
-        for (const candidate of exact) {
-          repeatCounts.set(
-            candidate.repeatIndex,
-            (repeatCounts.get(candidate.repeatIndex) ?? 0) + 1,
-          );
-        }
-        const completeRepeatSet =
-          exact.length === expectedRepeats &&
-          Array.from({ length: expectedRepeats }, (_, repeatIndex) => repeatIndex).every(
-            (repeatIndex) => repeatCounts.get(repeatIndex) === 1,
-          );
-        if (candidates.length === 0) {
-          entries.push({
-            contractId: expected.contractId,
-            contractPath: expected.contractFile,
-            project: expected.project,
-            status: "unbound",
-            required: expected.required,
-            diagnostics: [
-              issue(
-                "CONTRACT_UNBOUND",
-                "binding",
-                `No defineFigmaTests binding collected for ${expected.contractId}/${JSON.stringify(expected.project)}.`,
-              ),
-            ],
-          });
-        } else if (!completeRepeatSet || exact.length !== candidates.length) {
-          const duplicate = [...repeatCounts.values()].some((count) => count > 1);
-          entries.push({
-            contractId: expected.contractId,
-            contractPath: expected.contractFile,
-            project: expected.project,
-            status: "invalid",
-            required: expected.required,
-            diagnostics: [
-              issue(
-                duplicate ? "DUPLICATE_CONTRACT_BINDING" : "STALE_CONTRACT_BINDING",
-                "binding",
-                duplicate
-                  ? `Collected duplicate bindings for ${expected.contractId}/${JSON.stringify(expected.project)} in at least one repeat slot; exactly one per slot is required.`
-                  : `Collected binding identity or repeat slots for ${expected.contractId}/${JSON.stringify(expected.project)} do not match ${expected.contractFile}.`,
-              ),
-            ],
-          });
-        } else {
-          entries.push({
-            contractId: expected.contractId,
-            contractPath: expected.contractFile,
-            project: expected.project,
-            status: "executable",
-            required: expected.required,
-            diagnostics: [],
-          });
-        }
-      }
-    }
+          },
+    );
+  }
+  return { entries, diagnostics };
+}
+
+export async function contractListCommand(
+  options: ContractListOptions,
+  env: Pick<CommandEnvironment, "process" | "adapters">,
+): Promise<CliResult<ContractListOutcome>> {
+  try {
+    const policy = await openProject(options.projectRoot, env.process).loadConfig();
+    const { entries, diagnostics } = await listContractBindings(policy, env);
 
     entries.sort((left, right) =>
       `${left.contractId ?? ""}\0${left.project ?? ""}\0${left.contractPath}`.localeCompare(
@@ -226,14 +225,7 @@ export async function contractListCommand(
         contracts: entries,
         diagnostics,
         next: entries.some((entry) => entry.status === "unbound")
-          ? {
-              command: "framelia",
-              argv: [
-                "contract",
-                "list",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            }
+          ? frameliaNext(["contract", "list"], options.projectRoot)
           : undefined,
       },
     };
@@ -248,13 +240,7 @@ export async function contractListCommand(
         executionState: "error",
         exitCode: 2,
         contracts: [],
-        diagnostics: [
-          issue(
-            error instanceof AppError ? error.code : "CONTRACT_LIST_FAILED",
-            "list",
-            error instanceof Error ? error.message : String(error),
-          ),
-        ],
+        diagnostics: [failureDiagnostic(error, "CONTRACT_LIST_FAILED", "list")],
       },
     };
   }

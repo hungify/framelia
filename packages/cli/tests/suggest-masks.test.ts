@@ -1,16 +1,15 @@
 import type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "@framelia/verify/cli";
 import { describe, expect, it, vi } from "vitest";
 
-import { UsageError } from "../src/exit.ts";
-import {
-  suggestMasksCommand,
-  type SuggestMasksDependencies,
-} from "../src/internal/contract-suggest-masks.ts";
+import type { CommandEnvironment } from "../src/environment.ts";
+import { EXIT_USAGE_ERROR, UsageError } from "../src/exit.ts";
+import { suggestMasksCommand } from "../src/internal/contract-suggest-masks.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 function depsWith(
   suggestMasksForUrl: (options: SuggestMasksForUrlOptions) => Promise<SuggestMasksForUrlOutcome>,
-): SuggestMasksDependencies {
-  return { suggestMasksForUrl };
+): CommandEnvironment {
+  return testEnvironment(process, { browser: { suggestMasksForUrl } });
 }
 
 describe("suggestMasksCommand", () => {
@@ -149,6 +148,7 @@ describe("suggestMasksCommand", () => {
     );
 
     expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(result.body).toMatchObject({ error: "CAPTURE_NAVIGATION_FAILED" });
   });
 

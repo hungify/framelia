@@ -15,12 +15,10 @@ interface CheckFlags {
 export const checkCommand = buildCommand({
   loader: async () => {
     return async function (this: CliContext, flags: CheckFlags) {
-      const outcome = await runCheck({
-        ...flags,
-        contract: flags.contract ?? [],
-        project: flags.project ?? [],
-        runtime: this.process,
-      });
+      const outcome = await runCheck(
+        { ...flags, contract: flags.contract ?? [], project: flags.project ?? [] },
+        this,
+      );
       emitResult(this, { ok: outcome.exitCode === 0, exitCode: outcome.exitCode, body: outcome });
     };
   },

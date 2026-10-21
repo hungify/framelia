@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import {
+  RUN_CONTEXT_ENV,
   casePlanSchema,
   collectionManifestSchema,
   runContextSchema,
@@ -26,7 +27,7 @@ import type { TestInfo } from "@playwright/test";
 
 import { computeProjectRuntimeDigest } from "./collection.ts";
 
-export const RUN_CONTEXT_ENV = "FRAMELIA_RUN_CONTEXT";
+export { RUN_CONTEXT_ENV };
 const WRITER_VERSION = "@framelia/playwright@0.0.5";
 
 function readJson(filePath: string, label: string): unknown {

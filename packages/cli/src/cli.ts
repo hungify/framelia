@@ -24,6 +24,7 @@ import { initCommand } from "./commands/init.ts";
 import { schemaCommand } from "./commands/schema.ts";
 import { statusCommand } from "./commands/status.ts";
 import { buildContext } from "./context.ts";
+import type { CliAdapters } from "./environment.ts";
 import { determineExitCode, normalizeStricliExitCode } from "./exit.ts";
 import type { CliRuntime } from "./runtime-types.ts";
 
@@ -84,6 +85,12 @@ const app = buildApplication(
   },
 );
 
+/**
+ * Routes that must never see the project's .env: done-gate's trust inputs (signing key path,
+ * job identity, audience) have to come from the protected job runtime, not the project.
+ */
+const ROUTES_WITHOUT_PROJECT_ENV = new Set(["done-gate"]);
+
 function explicitProjectRoot(argv: readonly string[]): string | undefined {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]!;
@@ -95,15 +102,19 @@ function explicitProjectRoot(argv: readonly string[]): string | undefined {
 
 export async function run(
   argv: string[] = process.argv.slice(2),
-  options: { process?: CliRuntime; loadProjectEnv?: boolean } = {},
+  options: { process?: CliRuntime; loadProjectEnv?: boolean; adapters?: Partial<CliAdapters> } = {},
 ): Promise<void> {
-  const context = buildContext({ process: options.process, version: PACKAGE_VERSION });
+  const context = buildContext({
+    process: options.process,
+    version: PACKAGE_VERSION,
+    ...(options.adapters ? { adapters: options.adapters } : {}),
+  });
   // Resolve the selected application root before reading any environment file. Loading
   // cwd first would let an unrelated parent/sibling .env permanently win over an
   // explicit --project-root because process environment has highest precedence.
   if (
     options.loadProjectEnv !== false &&
-    argv[0] !== "done-gate" &&
+    !ROUTES_WITHOUT_PROJECT_ENV.has(argv[0] ?? "") &&
     !argv.includes("--help") &&
     !argv.includes("--version") &&
     !argv.includes("-V")

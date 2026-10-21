@@ -7,10 +7,11 @@ import { z } from "zod";
 
 import { selectedDashboardSource } from "../dashboard/report.ts";
 import { resolveDashboardUrls, type NetworkUrl } from "../dashboard/urls.ts";
+import type { CommandEnvironment } from "../environment.ts";
 import { usageErrorFromZodError } from "../exit.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { createDashboardOutput, type DashboardOutput } from "./dashboard-output.ts";
-import { productionDashboardHost, type DashboardHost } from "./dashboard-runtime.ts";
+import type { DashboardHost } from "./dashboard-runtime.ts";
 import { openProject } from "./project.ts";
 import { readRunProjection } from "./run-projection.ts";
 
@@ -211,11 +212,13 @@ async function loadDashboardSource(
 
 export async function dashboardDevserverCommand(
   options: DashboardDevserverOptions,
-  runtime: CliRuntime,
-  host: DashboardHost = productionDashboardHost,
-  output: DashboardOutput = createDashboardOutput(runtime),
+  env: CommandEnvironment,
+  seams: { readonly output?: DashboardOutput } = {},
 ): Promise<void> {
   requirePositivePort(options.port);
+  const runtime = env.process;
+  const host = await env.adapters.dashboard();
+  const output = seams.output ?? createDashboardOutput(runtime);
   const { source, root } = await loadDashboardSource(options, runtime);
   const projection = readRunProjection(root, options.run);
   await serveDashboard(source, options, host, output, (address) => {

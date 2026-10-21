@@ -15,18 +15,10 @@ import { emitResult } from "../output.ts";
 
 const createCommand = buildCommand({
   loader: async () => {
-    // Stricli's loader is the intentional lazy boundary; keep prompt/browser dependencies off startup.
-    const [{ contractCreateCommand }, { createClackPrompts }] = await Promise.all([
-      import("../internal/contract-create.ts"),
-      import("../internal/clack-prompts.ts"),
-    ]);
+    // Stricli's loader is the intentional lazy boundary; prompts and Figma load through this.adapters.
+    const { contractCreateCommand } = await import("../internal/contract-create.ts");
     return async function (this: CliContext, flags: ContractCreateOptions) {
-      const result = await contractCreateCommand(
-        flags,
-        createClackPrompts(this.process),
-        this.process,
-      );
-      emitResult(this, result);
+      emitResult(this, await contractCreateCommand(flags, this));
     };
   },
   parameters: {
@@ -188,7 +180,7 @@ const listCommand = buildCommand({
   loader: async () => {
     const { contractListCommand } = await import("../internal/contract-list.ts");
     return async function (this: CliContext, flags: ContractListOptions) {
-      emitResult(this, await contractListCommand(flags, this.process));
+      emitResult(this, await contractListCommand(flags, this));
     };
   },
   parameters: {
@@ -203,7 +195,7 @@ const refreshBaselineCommand = buildCommand({
     const { contractRefreshBaselineCommand } =
       await import("../internal/contract-refresh-baseline.ts");
     return async function (this: CliContext, flags: ContractRefreshBaselineOptions) {
-      emitResult(this, await contractRefreshBaselineCommand(flags, this.process));
+      emitResult(this, await contractRefreshBaselineCommand(flags, this));
     };
   },
   parameters: {
@@ -228,7 +220,7 @@ const suggestMasksCommand = buildCommand({
     const { suggestMasksCommand: runSuggestMasksCommand } =
       await import("../internal/contract-suggest-masks.ts");
     return async function (this: CliContext, flags: SuggestMasksOptions) {
-      emitResult(this, await runSuggestMasksCommand(flags));
+      emitResult(this, await runSuggestMasksCommand(flags, this));
     };
   },
   parameters: {

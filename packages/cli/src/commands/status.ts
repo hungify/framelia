@@ -9,7 +9,7 @@ export const statusCommand = buildCommand({
   loader: async () => {
     const { statusCommand: runStatusCommand } = await import("../internal/status.ts");
     return function (this: CliContext, flags: StatusOptions) {
-      emitResult(this, runStatusCommand(flags, this.process, this.version));
+      emitResult(this, runStatusCommand(flags, this));
     };
   },
   parameters: {

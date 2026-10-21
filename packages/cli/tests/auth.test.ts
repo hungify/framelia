@@ -5,13 +5,16 @@ import * as path from "node:path";
 import type { RecordStorageStateOptions, RecordStorageStateResult } from "@framelia/verify/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { BrowserAdapter } from "../src/environment.ts";
 import { UsageError } from "../src/exit.ts";
-import type { AuthDependencies } from "../src/internal/auth.ts";
 import { authCommand } from "../src/internal/auth.ts";
 import type { PromptAdapter } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
-function fakeDeps(overrides: Partial<AuthDependencies> = {}): AuthDependencies {
+function fakeDeps(
+  overrides: Partial<Pick<BrowserAdapter, "recordStorageState">> = {},
+): Pick<BrowserAdapter, "recordStorageState"> {
   return {
     recordStorageState: vi.fn<
       (options: RecordStorageStateOptions) => Promise<RecordStorageStateResult>
@@ -78,9 +81,7 @@ describe("authCommand: URL validation", () => {
     await expect(
       authCommand(
         { url: "not-a-url", projectRoot: undefined, yes: undefined },
-        prompts,
-        fakeRuntime(),
-        fakeDeps(),
+        testEnvironment(fakeRuntime(), { prompts: prompts, browser: fakeDeps() }),
       ),
     ).rejects.toThrow(new UsageError("Auth URL must use http:// or https://."));
     expect(prompts.intro).not.toHaveBeenCalled();
@@ -91,9 +92,7 @@ describe("authCommand: URL validation", () => {
     await expect(
       authCommand(
         { url: "http://example.test/login", projectRoot: undefined, yes: undefined },
-        prompts,
-        fakeRuntime(),
-        fakeDeps(),
+        testEnvironment(fakeRuntime(), { prompts: prompts, browser: fakeDeps() }),
       ),
     ).rejects.toThrow(/must use https:\/\//);
     expect(prompts.intro).not.toHaveBeenCalled();
@@ -109,9 +108,10 @@ describe("authCommand: config precondition", () => {
     await expect(
       authCommand(
         { url: "http://localhost/login", projectRoot, yes: undefined },
-        fakePrompts(),
-        fakeRuntime({ cwd: () => projectRoot }),
-        fakeDeps(),
+        testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+          prompts: fakePrompts(),
+          browser: fakeDeps(),
+        }),
       ),
     ).rejects.toThrow(
       new UsageError(
@@ -129,9 +129,10 @@ describe("authCommand: replacement confirmation", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: undefined },
-      prompts,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: prompts,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(prompts.confirm).toHaveBeenCalledWith(
@@ -147,9 +148,10 @@ describe("authCommand: replacement confirmation", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: true },
-      prompts,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: prompts,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(prompts.confirm).not.toHaveBeenCalledWith(
@@ -164,9 +166,10 @@ describe("authCommand: replacement confirmation", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: undefined },
-      prompts,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: prompts,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(prompts.confirm).not.toHaveBeenCalledWith(
@@ -185,9 +188,10 @@ describe("authCommand: replacement confirmation", () => {
     await expect(
       authCommand(
         { url: "http://localhost/login", projectRoot, yes: undefined },
-        prompts,
-        fakeRuntime({ cwd: () => projectRoot }),
-        fakeDeps(),
+        testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+          prompts: prompts,
+          browser: fakeDeps(),
+        }),
       ),
     ).rejects.toThrow(new UsageError("Auth capture cancelled."));
   });
@@ -200,9 +204,10 @@ describe("authCommand: login completion", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: true },
-      prompts,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: prompts,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(prompts.confirm).toHaveBeenCalledWith(
@@ -220,9 +225,10 @@ describe("authCommand: login completion", () => {
     await expect(
       authCommand(
         { url: "http://localhost/login", projectRoot, yes: true },
-        prompts,
-        fakeRuntime({ cwd: () => projectRoot }),
-        fakeDeps(),
+        testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+          prompts: prompts,
+          browser: fakeDeps(),
+        }),
       ),
     ).rejects.toThrow(new UsageError("Auth capture cancelled."));
   });
@@ -235,9 +241,10 @@ describe("authCommand: saved storage-state output", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: true },
-      prompts,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: prompts,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(prompts.note).toHaveBeenCalledWith(

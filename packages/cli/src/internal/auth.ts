@@ -1,9 +1,7 @@
 import * as fs from "node:fs";
 
-import { recordStorageState, type RecordStorageStateResult } from "@framelia/verify/cli";
-
+import type { CommandEnvironment } from "../environment.ts";
 import { UsageError } from "../exit.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { assertTargetUrl } from "./browser-input.ts";
 import { openProject } from "./project.ts";
 import { PROMPT_CANCELLED, type PromptAdapter } from "./prompts.ts";
@@ -26,22 +24,8 @@ async function requireConfirmation(
   }
 }
 
-export interface AuthDependencies {
-  readonly recordStorageState: (options: {
-    url: string;
-    outputPath: string;
-    waitForUser: () => Promise<void>;
-  }) => Promise<RecordStorageStateResult>;
-}
-
-const defaultDependencies: AuthDependencies = { recordStorageState };
-
-export async function authCommand(
-  options: AuthOptions,
-  prompts: PromptAdapter,
-  runtime: CliRuntime,
-  deps: AuthDependencies = defaultDependencies,
-): Promise<void> {
+export async function authCommand(options: AuthOptions, env: CommandEnvironment): Promise<void> {
+  const runtime = env.process;
   assertTargetUrl(options.url, "Auth URL", { carriesBrowserStorageState: true });
   const assumeYes = options.yes ?? false;
   const config = await openProject(options.projectRoot, runtime).loadConfig();
@@ -51,6 +35,7 @@ export async function authCommand(
     );
   }
 
+  const prompts = await env.adapters.prompts(runtime);
   prompts.intro("Record Playwright login state");
   if (fs.existsSync(config.resolvedStorageStatePath)) {
     await requireConfirmation(
@@ -60,7 +45,8 @@ export async function authCommand(
     );
   }
 
-  const result = await deps.recordStorageState({
+  const browser = await env.adapters.browser();
+  const result = await browser.recordStorageState({
     url: options.url,
     outputPath: config.resolvedStorageStatePath,
     waitForUser: () =>

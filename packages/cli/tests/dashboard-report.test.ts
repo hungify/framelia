@@ -95,9 +95,11 @@ describe("selected run dashboard report", () => {
       stdout: { write: () => true },
       stderr: { write: () => true },
     } as never;
-    const result = await reportCommand({ projectRoot: root, run: "run-command", output }, runtime, {
-      clientRoot: await clientFixture(),
-    });
+    const result = await reportCommand(
+      { projectRoot: root, run: "run-command", output },
+      { process: runtime },
+      { clientRoot: await clientFixture() },
+    );
     expect(result.body).toMatchObject({
       kind: "framelia.report-outcome",
       command: "report",
@@ -121,7 +123,7 @@ describe("selected run dashboard report", () => {
 
     const missing = await reportCommand(
       { projectRoot: root, run: undefined, output: undefined },
-      runtime,
+      { process: runtime },
     );
     expect(missing).toMatchObject({
       exitCode: 2,

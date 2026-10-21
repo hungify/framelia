@@ -2,8 +2,8 @@ import * as path from "node:path";
 
 import { compare, type CompareOutcome, type ProfileName } from "@framelia/verify";
 
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 
 export interface CompareOptions {
   readonly baseline: string;
@@ -14,20 +14,22 @@ export interface CompareOptions {
 
 export type CompareResult = CliResult<CompareOutcome>;
 
-export interface CompareDependencies {
+/** Test seam: the in-process comparator. */
+export interface CompareSeams {
   readonly compare: typeof compare;
 }
 
-const defaultDependencies: CompareDependencies = { compare };
+const defaultSeams: CompareSeams = { compare };
 
 export function compareCommand(
   options: CompareOptions,
-  runtime: CliRuntime,
-  deps: CompareDependencies = defaultDependencies,
+  env: Pick<CommandEnvironment, "process">,
+  seams: CompareSeams = defaultSeams,
 ): CompareResult {
+  const runtime = env.process;
   const baselinePath = path.resolve(runtime.cwd(), options.baseline);
   const actualPath = path.resolve(runtime.cwd(), options.actual);
   const outDir = path.resolve(runtime.cwd(), options.outDir ?? path.dirname(options.actual));
-  const outcome = deps.compare(baselinePath, actualPath, outDir, { profile: options.profile });
+  const outcome = seams.compare(baselinePath, actualPath, outDir, { profile: options.profile });
   return { ok: outcome.pass, body: outcome };
 }

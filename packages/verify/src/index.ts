@@ -28,6 +28,7 @@ export { fetchBaseline, baselineMetaPath, readBaselineMeta } from "./baseline/fi
 export type {
   FetchBaselineOptions,
   FetchBaselineOutcome,
+  FetchRetryOptions,
   BaselineMeta,
 } from "./baseline/figma-fetch.ts";
 export { readPinnedBaseline } from "./pinned-baseline.ts";

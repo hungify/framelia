@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { DEFAULT_IMAGE_SCALE, fetchBaseline, type FetchBaselineOutcome } from "@framelia/verify";
 import { z } from "zod";
 
-import { usageErrorFromZodError } from "../exit.ts";
+import { EXIT_OK, EXIT_USAGE_ERROR, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { requireFigmaToken } from "./figma-token.ts";
@@ -51,5 +51,7 @@ export async function captureCommand(
     canvasFill: parsed.data.canvasFill,
     token,
   });
-  return { ok: outcome.ok && outcome.fetched, body: outcome };
+  const fetched = outcome.ok && outcome.fetched;
+  // A capture that never produced a baseline is an environment failure, not a visual verdict.
+  return { ok: fetched, exitCode: fetched ? EXIT_OK : EXIT_USAGE_ERROR, body: outcome };
 }

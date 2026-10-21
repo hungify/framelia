@@ -4,7 +4,7 @@ import { CONTRACT_ID_PATTERN, visualArtifactPath } from "@framelia/contracts";
 import { captureAndPromotePageBaseline } from "@framelia/verify/cli";
 import { z } from "zod";
 
-import { usageErrorFromZodError } from "../exit.ts";
+import { EXIT_USAGE_ERROR, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { targetUrlMessage, viewportPairMessage } from "./browser-input.ts";
@@ -90,7 +90,11 @@ export async function baselinePromoteCommand(
   });
 
   if (!result.ok) {
-    return { ok: false, body: { key: options.key, error: result.error, message: result.message } };
+    return {
+      ok: false,
+      exitCode: EXIT_USAGE_ERROR,
+      body: { key: options.key, error: result.error, message: result.message },
+    };
   }
   return {
     ok: true,

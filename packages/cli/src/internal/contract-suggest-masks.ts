@@ -1,7 +1,7 @@
 import { suggestMasksForUrl } from "@framelia/verify/cli";
 import { z } from "zod";
 
-import { usageErrorFromZodError } from "../exit.ts";
+import { EXIT_USAGE_ERROR, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
 import { targetUrlMessage, viewportPairMessage } from "./browser-input.ts";
 
@@ -54,7 +54,11 @@ export async function suggestMasksCommand(
   });
 
   if (!result.ok) {
-    return { ok: false, body: { error: result.error, message: result.message } };
+    return {
+      ok: false,
+      exitCode: EXIT_USAGE_ERROR,
+      body: { error: result.error, message: result.message },
+    };
   }
   return {
     ok: true,

@@ -1,6 +1,7 @@
+import type { FetchBaselineOutcome } from "@framelia/verify";
 import { describe, expect, it, vi } from "vitest";
 
-import { UsageError } from "../src/exit.ts";
+import { EXIT_USAGE_ERROR, UsageError } from "../src/exit.ts";
 import { captureCommand } from "../src/internal/capture.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
 
@@ -33,5 +34,17 @@ describe("captureCommand", () => {
         fakeRuntime({ env: {} }),
       ),
     ).rejects.toBeInstanceOf(UsageError);
+  });
+
+  it.each<FetchBaselineOutcome>([
+    { ok: false, fetched: false, errorClass: "auth", message: "403" },
+    { ok: true, fetched: false, errorClass: "retryable", message: "429", warnings: [] },
+  ])("exits 2, not the visual-mismatch 1, when no baseline was fetched", async (outcome) => {
+    const result = await captureCommand(
+      { fileKey: "abc", nodeId: "1:1", out: "out.png", scale: undefined, canvasFill: undefined },
+      fakeRuntime({ env: { FIGMA_ACCESS_TOKEN: "test-token" } }),
+      { fetchBaseline: async () => outcome },
+    );
+    expect(result).toMatchObject({ ok: false, exitCode: EXIT_USAGE_ERROR, body: outcome });
   });
 });

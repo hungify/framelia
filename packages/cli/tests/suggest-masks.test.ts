@@ -1,7 +1,7 @@
 import type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "@framelia/verify/cli";
 import { describe, expect, it, vi } from "vitest";
 
-import { UsageError } from "../src/exit.ts";
+import { EXIT_USAGE_ERROR, UsageError } from "../src/exit.ts";
 import {
   suggestMasksCommand,
   type SuggestMasksDependencies,
@@ -149,6 +149,7 @@ describe("suggestMasksCommand", () => {
     );
 
     expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(result.body).toMatchObject({ error: "CAPTURE_NAVIGATION_FAILED" });
   });
 

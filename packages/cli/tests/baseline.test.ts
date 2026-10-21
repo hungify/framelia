@@ -1,7 +1,7 @@
 import type { captureAndPromotePageBaseline } from "@framelia/verify/cli";
 import { describe, expect, it, vi } from "vitest";
 
-import { UsageError } from "../src/exit.ts";
+import { EXIT_USAGE_ERROR, UsageError } from "../src/exit.ts";
 import {
   baselinePromoteCommand,
   type BaselinePromoteOptions,
@@ -129,6 +129,18 @@ describe("baselinePromoteCommand: validation", () => {
       { captureAndPromote: okCapture },
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("exits 2, not the visual-mismatch 1, when capture fails", async () => {
+    const failedCapture = vi.fn<typeof captureAndPromotePageBaseline>().mockResolvedValue({
+      ok: false,
+      error: "CAPTURE_NAVIGATION_FAILED",
+      message: "navigation failed",
+    });
+    const result = await baselinePromoteCommand(baseOptions(), fakeRuntime(), {
+      captureAndPromote: failedCapture,
+    });
+    expect(result).toMatchObject({ ok: false, exitCode: EXIT_USAGE_ERROR });
   });
 });
 

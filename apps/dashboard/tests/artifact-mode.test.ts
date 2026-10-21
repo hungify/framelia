@@ -25,4 +25,14 @@ describe("artifactModeMeta", () => {
     expect(artifactModeMeta("live")).toEqual({ label: "Live", dotClass: "bg-green" });
     expect(artifactModeMeta("report").dotClass).toBe("bg-blue");
   });
+
+  it("only says Live while the event stream is open", () => {
+    expect(artifactModeMeta("live", "open").label).toBe("Live");
+    expect(artifactModeMeta("live", "reconnecting")).toEqual({
+      label: "Reconnecting…",
+      dotClass: "bg-amber",
+    });
+    expect(artifactModeMeta("live", "connecting").label).toBe("Connecting…");
+    expect(artifactModeMeta("archived", "reconnecting").label).toBe("Archived");
+  });
 });

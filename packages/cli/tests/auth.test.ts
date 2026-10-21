@@ -6,7 +6,6 @@ import type { RecordStorageStateOptions, RecordStorageStateResult } from "@frame
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "../src/environment.ts";
-import { UsageError } from "../src/exit.ts";
 import { authCommand } from "../src/internal/auth.ts";
 import type { PromptAdapter } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
@@ -58,7 +57,7 @@ function fakeRuntime(overrides: Partial<CliRuntime> = {}): CliRuntime {
 
 function fakePrompts(overrides: Partial<PromptAdapter> = {}): PromptAdapter {
   return {
-    interactive: false,
+    interactive: true,
     intro: vi.fn<PromptAdapter["intro"]>(),
     outro: vi.fn<PromptAdapter["outro"]>(),
     note: vi.fn<PromptAdapter["note"]>(),
@@ -83,7 +82,10 @@ describe("authCommand: URL validation", () => {
         { url: "not-a-url", projectRoot: undefined, yes: undefined },
         testEnvironment(fakeRuntime(), { prompts: prompts, browser: fakeDeps() }),
       ),
-    ).rejects.toThrow(new UsageError("Auth URL must use http:// or https://."));
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { diagnostics: [{ message: "Auth URL must use http:// or https://." }] },
+    });
     expect(prompts.intro).not.toHaveBeenCalled();
   });
 
@@ -94,13 +96,16 @@ describe("authCommand: URL validation", () => {
         { url: "http://example.test/login", projectRoot: undefined, yes: undefined },
         testEnvironment(fakeRuntime(), { prompts: prompts, browser: fakeDeps() }),
       ),
-    ).rejects.toThrow(/must use https:\/\//);
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { diagnostics: [{ message: expect.stringMatching(/must use https:\/\//) }] },
+    });
     expect(prompts.intro).not.toHaveBeenCalled();
   });
 });
 
 describe("authCommand: config precondition", () => {
-  it("throws UsageError when storageStatePath is not configured", async () => {
+  it("reports an exit-2 outcome when storageStatePath is not configured", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-auth-noconfig-"));
     projectRoots.push(projectRoot);
     fs.writeFileSync(path.join(projectRoot, "framelia.config.ts"), "export default {};\n");
@@ -113,11 +118,17 @@ describe("authCommand: config precondition", () => {
           browser: fakeDeps(),
         }),
       ),
-    ).rejects.toThrow(
-      new UsageError(
-        "storageStatePath is not configured. Uncomment it in framelia.config.ts before running framelia auth.",
-      ),
-    );
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: {
+        diagnostics: [
+          {
+            message:
+              "storageStatePath is not configured. Uncomment it in framelia.config.ts before running framelia auth.",
+          },
+        ],
+      },
+    });
   });
 });
 
@@ -178,7 +189,7 @@ describe("authCommand: replacement confirmation", () => {
     );
   });
 
-  it("throws UsageError('Auth capture cancelled.') when replacement is declined", async () => {
+  it("reports 'Auth capture cancelled.' when replacement is declined", async () => {
     const projectRoot = tempProjectWithConfig("state.json");
     fs.writeFileSync(path.join(projectRoot, "state.json"), "{}");
     const prompts = fakePrompts({
@@ -193,7 +204,10 @@ describe("authCommand: replacement confirmation", () => {
           browser: fakeDeps(),
         }),
       ),
-    ).rejects.toThrow(new UsageError("Auth capture cancelled."));
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { diagnostics: [{ message: "Auth capture cancelled." }] },
+    });
   });
 });
 
@@ -216,7 +230,7 @@ describe("authCommand: login completion", () => {
     );
   });
 
-  it("throws UsageError('Auth capture cancelled.') when login completion is declined", async () => {
+  it("reports 'Auth capture cancelled.' when login completion is declined", async () => {
     const projectRoot = tempProjectWithConfig("state.json");
     const prompts = fakePrompts({
       confirm: vi.fn<PromptAdapter["confirm"]>(async () => false),
@@ -230,7 +244,10 @@ describe("authCommand: login completion", () => {
           browser: fakeDeps(),
         }),
       ),
-    ).rejects.toThrow(new UsageError("Auth capture cancelled."));
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { diagnostics: [{ message: "Auth capture cancelled." }] },
+    });
   });
 });
 
@@ -258,5 +275,60 @@ describe("authCommand: saved storage-state output", () => {
     expect(prompts.outro).toHaveBeenCalledWith(
       "Use target.auth=storageState for protected screens.",
     );
+  });
+});
+
+describe("authCommand: structured outcome", () => {
+  it("fails fast with a usage outcome when no person can confirm the login", async () => {
+    const projectRoot = tempProjectWithConfig("state.json");
+    const deps = fakeDeps();
+    const result = await authCommand(
+      { url: "http://localhost/login", projectRoot, yes: true },
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: fakePrompts({ interactive: false }),
+        browser: deps,
+      }),
+    );
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        kind: "framelia.auth-outcome",
+        diagnostics: [{ code: "INTERACTIVE_TERMINAL_REQUIRED" }],
+      },
+    });
+    expect(deps.recordStorageState).not.toHaveBeenCalled();
+  });
+
+  it("returns a JSON outcome naming the saved path without query secrets", async () => {
+    const projectRoot = tempProjectWithConfig("nested/state.json");
+    const result = await authCommand(
+      { url: "http://localhost/login", projectRoot, yes: true },
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: fakePrompts(),
+        browser: fakeDeps({
+          recordStorageState: async (options) => {
+            await options.waitForUser();
+            return {
+              outputPath: options.outputPath,
+              finalUrl: "http://localhost/home?code=s3cret",
+            };
+          },
+        }),
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      exitCode: 0,
+      body: {
+        formatVersion: 1,
+        kind: "framelia.auth-outcome",
+        command: "auth",
+        executionState: "completed",
+        exitCode: 0,
+        storageStatePath: "nested/state.json",
+        finalUrl: "http://localhost/home",
+        diagnostics: [],
+      },
+    });
   });
 });

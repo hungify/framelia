@@ -4,12 +4,18 @@ import type { ZodError } from "zod";
 
 export { EXIT_OK, EXIT_USAGE_ERROR, EXIT_VISUAL_FAIL, JSON_INDENT_SPACES };
 
+/**
+ * An operational failure that exits `2`. `code`, when present, is the stable diagnostic code
+ * a structured outcome reports instead of the command's generic fallback.
+ */
 export class UsageError extends Error {
   readonly exitCode = EXIT_USAGE_ERROR;
+  readonly code: string | undefined;
 
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(message: string, options?: ErrorOptions & { readonly code?: string }) {
     super(message, options);
     this.name = "UsageError";
+    this.code = options?.code;
   }
 }
 

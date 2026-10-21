@@ -396,6 +396,7 @@ describe("FrameliaReporter coordinator transport lifecycle", () => {
       annotations: [],
       location: { file: setupSpec, line: 1, column: 0 },
       repeatEachIndex: 0,
+      outcome: () => "unexpected",
       parent: {
         type: "file",
         title: path.basename(setupSpec),
@@ -477,7 +478,10 @@ describe("FrameliaReporter coordinator transport lifecycle", () => {
       /no longer matches its frozen binding/,
     );
     expect(readTransportStatus(context)).not.toHaveProperty("execution");
+    // Two failed attempts (a retry) collapse into one setup-failure label.
     reporter.onTestEnd(setupTest, fakeAttemptResult({ status: "failed" }));
+    reporter.onTestEnd(setupTest, fakeAttemptResult({ status: "failed", retry: 1 }));
+    reporter.onError({ message: `worker crashed at ${path.join(root, "global-setup.ts")}` });
 
     await reporter.onEnd({ status: "failed" } as FullResult);
 
@@ -488,8 +492,106 @@ describe("FrameliaReporter coordinator transport lifecycle", () => {
         resultStatus: "failed",
         setupFailures: [":unnamed setup"],
         teardownFailures: [],
-        globalErrors: [],
+        globalErrors: ["worker crashed at <project-root>/global-setup.ts"],
       },
+    });
+  });
+
+  it("does not report a setup test that passed on retry (flaky) as a setup failure", async () => {
+    const root = initializedProjectRoot();
+    const binding = pinContract(root, { id: "login.desktop" });
+    const test = fakeContractTest({
+      id: "login visual",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const visualProject = test.parent.project()! as FullProject & { dependencies: string[] };
+    visualProject.dependencies = ["setup"];
+    const setupSpec = path.join(root, "auth.setup.ts");
+    fs.writeFileSync(setupSpec, "// setup fixture\n");
+    const setupProject = {
+      name: "setup",
+      use: { viewport: null },
+      testDir: root,
+      dependencies: [],
+      repeatEach: 1,
+      retries: 1,
+    } as unknown as FullProject;
+    const setupTest = {
+      id: "auth setup",
+      title: "auth setup",
+      tags: [],
+      annotations: [],
+      location: { file: setupSpec, line: 1, column: 0 },
+      repeatEachIndex: 0,
+      outcome: () => "flaky",
+      parent: {
+        type: "file",
+        title: path.basename(setupSpec),
+        project: () => setupProject,
+      } as unknown as Suite,
+    } as unknown as TestCase;
+    const transportSuite = fakeSuite([test, setupTest]);
+    const policy = await resolveProjectPolicy({ cwd: root, projectRoot: root });
+    const runId = "execute-flaky-setup";
+    const built = await buildCasePlanForTest(test, {
+      projectRoot: root,
+      runId,
+      policy,
+      source: {},
+    });
+    const transportDirectory = path.join(root, "transport");
+    const context: RunContext = {
+      formatVersion: RUN_CONTEXT_FORMAT_VERSION,
+      kind: "framelia.run-context",
+      mode: "execute",
+      projectRoot: root,
+      runId,
+      policyDigest: policy.policyDigest!,
+      selectedProjects: ["chromium"],
+      manifestPath: path.join(transportDirectory, "manifest.json"),
+      statusPath: path.join(transportDirectory, "status.json"),
+      planPath: runPlanPath(root, runId),
+      casePlansPath: casePlansDir(root, runId),
+    };
+    const collection = buildTransportCollection(transportSuite, context);
+    const planned = { caseId: built.caseId, casePlanDigest: canonicalJsonDigest(built.casePlan) };
+    const matrixEntry = {
+      contractId: binding.contractId,
+      contractFile: binding.contractFile,
+      contractDigest: binding.contractDigest,
+      project: "chromium",
+      required: true,
+    };
+    freezeRunPlan(
+      root,
+      {
+        formatVersion: RUN_PLAN_FORMAT_VERSION,
+        kind: "framelia.run-plan",
+        runId,
+        policyDigest: policy.policyDigest!,
+        executionGraphDigest: computeExecutionGraphDigest(collection.manifest),
+        selection: { mode: "all", contracts: [binding.contractId] },
+        availableMatrix: [matrixEntry],
+        requiredMatrix: [matrixEntry],
+        availableCases: [planned],
+        requiredCases: [planned],
+        retryAcceptance: policy.retryAcceptance,
+        selectedCases: [planned],
+      },
+      [built.casePlan],
+    );
+    installRunContext(context);
+    const reporter = new FrameliaReporter();
+
+    reporter.onBegin(fakeConfig(root), transportSuite);
+    reporter.onTestEnd(setupTest, fakeAttemptResult({ status: "failed" }));
+    reporter.onTestEnd(setupTest, fakeAttemptResult({ status: "passed", retry: 1 }));
+    await reporter.onEnd({ status: "passed" } as FullResult);
+
+    expect(readTransportStatus(context)).toMatchObject({
+      execution: { setupFailures: [], teardownFailures: [] },
     });
   });
 
@@ -673,7 +775,10 @@ describe("FrameliaReporter selected-run publication", () => {
     reporter.onBegin(fakeConfig(root), fakeSuite([test]));
     reporter.onTestEnd(test, result);
     reporter.onTestEnd(test, result);
-    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+    // The Playwright run itself fails -- never a green run with a sealed "error" bundle.
+    await expect(reporter.onEnd({ status: "passed" } as unknown as FullResult)).resolves.toEqual({
+      status: "failed",
+    });
 
     const selected = readSelectedRun(root, "run-publication-failure");
     expect(selected.record).toMatchObject({
@@ -722,7 +827,7 @@ describe("FrameliaReporter selected-run publication", () => {
     });
   });
 
-  it("projects exactly the selected run when annotated and low-level tests are mixed", async () => {
+  it("shows low-level matcher results alongside the selected run in a mixed suite", async () => {
     const root = initializedProjectRoot();
     const imageDir = tempDir("framelia-run-bundle-images-");
     const binding = pinContract(root, { id: "login.desktop" });
@@ -758,18 +863,53 @@ describe("FrameliaReporter selected-run publication", () => {
     );
     const dashboardUrl = await reporter.dashboardUrl();
     const run = await (await fetch(`${dashboardUrl}/api/run`)).json();
-    expect(run.contracts).toHaveLength(1);
+    expect(run.contracts).toHaveLength(2);
     expect(run.contracts[0]).toMatchObject({
       contractId: "login.desktop",
       sourceRunId: "run-mixed",
     });
+    // The low-level result stays a live dashboard row; it never joins run coverage.
+    expect(run.contracts[1]).toMatchObject({ id: "low-level", status: "passed" });
+    expect(run.summary).toMatchObject({ total: 2, passed: 2 });
     expect(run.coverage).toMatchObject({
       selectionMode: "subset",
       required: 0,
       selected: 1,
       selectedCaseIds: ["login.desktop@chromium#0"],
     });
-    expect(JSON.stringify(run)).not.toContain("low-level");
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+  });
+
+  it("serves a newly published attempt after the dashboard already projected the run", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-live-refresh",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+    const dashboardUrl = await reporter.dashboardUrl();
+    const attempts = async (): Promise<number> => {
+      const run = await (await fetch(`${dashboardUrl}/api/run`)).json();
+      return run.contracts[0].attempts.length;
+    };
+    expect(await attempts()).toBe(0);
+
+    reporter.onTestEnd(
+      test,
+      fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+    );
+    await expect.poll(attempts).toBe(1);
     await reporter.onEnd({ status: "passed" } as unknown as FullResult);
   });
 
@@ -991,6 +1131,166 @@ describe("FrameliaReporter selected-run publication", () => {
     const bundle = readRunBundle(root, "run-interrupted");
     const [attempt] = [...bundle.attempts.values()];
     expect(attempt).toMatchObject({ executionState: "incomplete", visualVerdict: "not-evaluated" });
+    expect(bundle.record.status).toBe("incomplete");
+    expect(bundle.record.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "execution-interrupted" }),
+    );
+  });
+
+  it("seals an interrupted run with unrun cases as incomplete, never finalized", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const ran = pinContract(root, { id: "login.desktop" });
+    const unrun = pinContract(root, { id: "signup.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-interrupted-unrun",
+    });
+    const specFile = path.join(root, "login.spec.ts");
+    const ranTest = fakeContractTest({ id: "ran", binding: ran, specFile, root });
+    const unrunTest = fakeContractTest({ id: "unrun", binding: unrun, specFile, root });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([ranTest, unrunTest]));
+    reporter.onTestEnd(
+      ranTest,
+      fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+    );
+    reporter.onError({ message: "Test run was interrupted by SIGINT" });
+    await reporter.onEnd({ status: "interrupted" } as unknown as FullResult);
+
+    const bundle = readRunBundle(root, "run-interrupted-unrun");
+    expect(bundle.record.status).not.toBe("finalized");
+    expect(bundle.record.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "selected-attempt-missing",
+          message: expect.stringContaining("signup.desktop@chromium#0"),
+        }),
+        expect.objectContaining({
+          code: "execution-global-error",
+          message: "Test run was interrupted by SIGINT",
+        }),
+      ]),
+    );
+  });
+
+  it("fails the run with a clear error when annotated tests exist but no framelia.config is found", async () => {
+    const root = tempDir("framelia-run-bundle-uninitialized-");
+    fs.writeFileSync(path.join(root, "login.spec.ts"), "// fixture spec file\n");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-uninitialized",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args.join(" "));
+    try {
+      reporter.onBegin(fakeConfig(root), fakeSuite([test]));
+      reporter.onTestEnd(test, fakeAttemptResult({ status: "passed" }));
+      await expect(reporter.onEnd({ status: "passed" } as unknown as FullResult)).resolves.toEqual({
+        status: "failed",
+      });
+    } finally {
+      console.error = originalError;
+    }
+    expect(errors.join("\n")).toMatch(/no framelia\.config\.\* was found/);
+    expect(fs.existsSync(path.join(root, ".framelia", "runs"))).toBe(false);
+  });
+
+  it("plans only the projects a contract applies to", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const contractPath = path.join(root, binding.contractFile);
+    const contract = JSON.parse(fs.readFileSync(contractPath, "utf8"));
+    fs.writeFileSync(contractPath, JSON.stringify({ ...contract, projects: ["desktop"] }));
+    const restricted: ContractBinding = {
+      ...binding,
+      contractDigest: canonicalJsonDigest(
+        authoredContractSchema.parse({ ...contract, projects: ["desktop"] }),
+      ),
+    };
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-project-filter",
+    });
+    const specFile = path.join(root, "login.spec.ts");
+    const desktop = fakeContractTest({
+      id: "desktop",
+      binding: restricted,
+      specFile,
+      root,
+      projectName: "desktop",
+    });
+    const mobile = fakeContractTest({
+      id: "mobile",
+      binding: restricted,
+      specFile,
+      root,
+      projectName: "mobile",
+    });
+
+    reporter.onBegin(fakeConfig(root), fakeSuite([desktop, mobile]));
+    reporter.onTestEnd(
+      desktop,
+      fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+    );
+    reporter.onTestEnd(mobile, fakeAttemptResult({ status: "skipped" }));
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+
+    const bundle = readRunBundle(root, "run-project-filter");
+    expect(bundle.plan.selectedCases.map((entry) => entry.caseId)).toEqual([
+      "login.desktop@desktop#0",
+    ]);
+    expect(bundle.record.status).toBe("finalized");
+  });
+
+  it("records a sharded direct run as a per-shard bundle", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const binding = pinContract(root, { id: "login.desktop" });
+    const reporter = new FrameliaReporter({
+      projectRoot: root,
+      clientRoot: clientRootFixture(),
+      port: 0,
+      runId: "run-sharded",
+    });
+    const test = fakeContractTest({
+      id: "t1",
+      binding,
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      reporter.onBegin(
+        { rootDir: root, shard: { current: 2, total: 3 } } as unknown as FullConfig,
+        fakeSuite([test]),
+      );
+      reporter.onTestEnd(
+        test,
+        fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+      );
+      await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(readRunBundle(root, "run-sharded-shard-2-of-3").record.status).toBe("finalized");
   });
 
   it("still freezes and finalizes the run bundle even when the dashboard itself fails to start", async () => {

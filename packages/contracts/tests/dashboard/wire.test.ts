@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { assembleContractResult } from "../../src/dashboard/projections.ts";
-import { dashboardEventSchema, dashboardRunSchema } from "../../src/dashboard/wire.ts";
+import {
+  dashboardEventSchema,
+  dashboardRunSchema,
+  parseDashboardRun,
+} from "../../src/dashboard/wire.ts";
 
 describe("dashboardEventSchema", () => {
   const validEvent = {
@@ -68,6 +72,28 @@ describe("dashboardRunSchema", () => {
     expect(dashboardRunSchema.safeParse(validRun).success).toBe(true);
   });
 
+  it("parseDashboardRun reports schemaVersion skew before shape issues", () => {
+    const result = parseDashboardRun({ ...validRun, schemaVersion: 3, contracts: "changed" });
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Dashboard run was written by format v3, but this reader supports v2 — upgrade framelia to read it.",
+    });
+  });
+
+  it("parseDashboardRun surfaces readable path: message validation details", () => {
+    const result = parseDashboardRun({
+      ...validRun,
+      contracts: [{ ...validRun.contracts[0], status: "exploded" }],
+    });
+    expect(result.success).toBe(false);
+    expect(!result.success && result.error).toMatch(/^contracts\[0\]\.status: /);
+  });
+
+  it("parseDashboardRun accepts a valid run", () => {
+    expect(parseDashboardRun(validRun).success).toBe(true);
+  });
+
   it("accepts queued contracts before a finish timestamp exists", () => {
     const queued = {
       ...validRun,
@@ -86,6 +112,17 @@ describe("dashboardRunSchema", () => {
       contracts: [{ ...validRun.contracts[0], someFutureField: 42 }],
     };
     expect(dashboardRunSchema.safeParse(withExtra).success).toBe(true);
+  });
+
+  it("accepts an optional toMatchPageBaseline baselineKey, but not an empty one (#101)", () => {
+    const withKey = (baselineKey: string) => ({
+      ...validRun,
+      contracts: [{ ...validRun.contracts[0], baselineKind: "page", baselineKey }],
+    });
+    expect(dashboardRunSchema.parse(withKey("home.desktop")).contracts[0]?.baselineKey).toBe(
+      "home.desktop",
+    );
+    expect(dashboardRunSchema.safeParse(withKey("")).success).toBe(false);
   });
 
   it("rejects a run with a wrong schemaVersion literal", () => {

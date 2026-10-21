@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { PassThrough } from "node:stream";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { resolveDashboardUrls } from "../src/dashboard/urls.ts";
-import { UsageError } from "../src/exit.ts";
 import { dashboardDevserverCommand } from "../src/internal/dashboard-devserver.ts";
 import { createDashboardOutput, type DashboardOutput } from "../src/internal/dashboard-output.ts";
 import type { DashboardHost } from "../src/internal/dashboard-runtime.ts";
@@ -65,8 +65,8 @@ describe("dashboard URL derivation", () => {
   });
 });
 
-function fakeRuntime() {
-  return createFakeProcess();
+function fakeRuntime(isTTY = false, env: NodeJS.ProcessEnv = {}) {
+  return { ...createFakeProcess(env), stdin: Object.assign(new PassThrough(), { isTTY }) };
 }
 
 interface Deferred<T> {
@@ -107,8 +107,8 @@ function createFakeHost(options: FakeHostOptions = {}) {
       close: closeSpy,
     };
   });
-  const listenForInputSpy = vi.fn<DashboardHost["listenForInput"]>((listener) => {
-    if (!(options.isTTY ?? false)) return undefined;
+  const runtime = fakeRuntime(options.isTTY ?? false);
+  const listenForInputSpy = vi.fn<DashboardHost["listenForInput"]>((_input, listener) => {
     lineListener = listener;
     return () => {
       listenerClosed += 1;
@@ -129,6 +129,7 @@ function createFakeHost(options: FakeHostOptions = {}) {
   };
   return {
     host,
+    runtime,
     startServerSpy,
     listenForInputSpy,
     closeSpies,
@@ -157,18 +158,80 @@ const baseDashboardOptions = {
   noOpen: true,
 };
 
-describe("dashboard: port validation", () => {
+describe("dashboard: failures before readiness are one structured JSON outcome", () => {
   it("rejects a non-positive port before starting any server", async () => {
-    const { host, startServerSpy } = createFakeHost();
-    const output = createFakeOutput();
-    await expect(
-      dashboardDevserverCommand(
-        { ...baseDashboardOptions, projectRoot: tmp, port: -1 },
-        testEnvironment(fakeRuntime(), { dashboard: host }),
-        { output: output },
-      ),
-    ).rejects.toBeInstanceOf(UsageError);
+    const { host, runtime, startServerSpy } = createFakeHost();
+    await dashboardDevserverCommand(
+      { ...baseDashboardOptions, projectRoot: tmp, port: -1 },
+      testEnvironment(runtime, { dashboard: host }),
+      { output: createFakeOutput() },
+    );
     expect(startServerSpy).not.toHaveBeenCalled();
+    expect(runtime.exitCode).toBe(2);
+    expect(JSON.parse(runtime.stdoutText())).toMatchObject({
+      kind: "framelia.open-outcome",
+      command: "dashboard",
+      executionState: "error",
+      exitCode: 2,
+    });
+  });
+
+  it("points a missing --run at `runs list` instead of failing on stderr", async () => {
+    const { host, runtime } = createFakeHost();
+    await dashboardDevserverCommand(
+      { ...baseDashboardOptions, projectRoot: tmp, run: undefined, command: "open" },
+      testEnvironment(runtime, { dashboard: host }),
+      { output: createFakeOutput() },
+    );
+    expect(runtime.exitCode).toBe(2);
+    expect(runtime.stderrText()).toBe("");
+    expect(JSON.parse(runtime.stdoutText())).toMatchObject({
+      command: "open",
+      diagnostics: [{ code: "RUN_SELECTION_MISSING" }],
+      next: { command: "framelia", argv: ["runs", "list", "--project-root", tmp] },
+    });
+  });
+
+  it("reports an unknown run and a port already in use as JSON with exit 2", async () => {
+    const unknown = createFakeHost();
+    await dashboardDevserverCommand(
+      { ...baseDashboardOptions, projectRoot: tmp, run: "no-such-run" },
+      testEnvironment(unknown.runtime, { dashboard: unknown.host }),
+      { output: createFakeOutput() },
+    );
+    expect(unknown.runtime.exitCode).toBe(2);
+    expect(JSON.parse(unknown.runtime.stdoutText())).toMatchObject({
+      diagnostics: [{ code: "RUN_BUNDLE_MISSING" }],
+    });
+
+    const busy = createFakeHost();
+    busy.startServerSpy.mockRejectedValueOnce(
+      Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" }),
+    );
+    await dashboardDevserverCommand(
+      { ...baseDashboardOptions, projectRoot: tmp },
+      testEnvironment(busy.runtime, { dashboard: busy.host }),
+      { output: createFakeOutput() },
+    );
+    expect(busy.runtime.exitCode).toBe(2);
+    expect(JSON.parse(busy.runtime.stdoutText())).toMatchObject({
+      diagnostics: [{ code: "DASHBOARD_FAILED", message: "listen EADDRINUSE" }],
+    });
+  });
+});
+
+describe("dashboard: CI", () => {
+  it("never opens a browser or reads shortcuts when CI is set", async () => {
+    const { host, triggerShutdown, listenForInputSpy } = createFakeHost();
+    const runtime = fakeRuntime(true, { CI: "true" });
+    triggerShutdown();
+    await dashboardDevserverCommand(
+      { ...baseDashboardOptions, projectRoot: tmp, noOpen: false },
+      testEnvironment(runtime, { dashboard: host }),
+      { output: createFakeOutput() },
+    );
+    expect(host.openBrowser).not.toHaveBeenCalled();
+    expect(listenForInputSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -191,12 +254,12 @@ describe("dashboard output: stream targeting", () => {
 
 describe("dashboard: lifecycle", () => {
   it("starts a server, shows the ready banner, and shuts down gracefully on an external shutdown signal", async () => {
-    const { host, triggerShutdown, closeSpies } = createFakeHost();
+    const { host, runtime, triggerShutdown, closeSpies } = createFakeHost();
     const output = createFakeOutput();
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      testEnvironment(fakeRuntime(), { dashboard: host }),
+      testEnvironment(runtime, { dashboard: host }),
       { output: output },
     );
     expect(output.ready).toHaveBeenCalledTimes(1);
@@ -205,12 +268,12 @@ describe("dashboard: lifecycle", () => {
   });
 
   it("uses the listener's structured port in displayed URLs", async () => {
-    const { host, triggerShutdown } = createFakeHost({ serverPort: 80 });
+    const { host, runtime, triggerShutdown } = createFakeHost({ serverPort: 80 });
     const output = createFakeOutput();
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp, port: 80 },
-      testEnvironment(fakeRuntime(), { dashboard: host }),
+      testEnvironment(runtime, { dashboard: host }),
       { output: output },
     );
     expect(output.ready).toHaveBeenCalledWith(
@@ -219,19 +282,19 @@ describe("dashboard: lifecycle", () => {
   });
 
   it("does not show shortcut controls when terminal input is unavailable", async () => {
-    const { host, triggerShutdown } = createFakeHost({ isTTY: false });
+    const { host, runtime, triggerShutdown } = createFakeHost({ isTTY: false });
     const output = createFakeOutput();
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      testEnvironment(fakeRuntime(), { dashboard: host }),
+      testEnvironment(runtime, { dashboard: host }),
       { output: output },
     );
     expect(output.shortcutHint).not.toHaveBeenCalled();
   });
 
   it("swallows a browser-open failure instead of crashing the dashboard (documented improvement)", async () => {
-    const { host, triggerShutdown } = createFakeHost({
+    const { host, runtime, triggerShutdown } = createFakeHost({
       isTTY: false,
       openBrowser: () => Promise.reject(new Error("no display available")),
     });
@@ -239,20 +302,22 @@ describe("dashboard: lifecycle", () => {
     await expect(
       dashboardDevserverCommand(
         { ...baseDashboardOptions, projectRoot: tmp, noOpen: false },
-        testEnvironment(fakeRuntime(), { dashboard: host }),
+        testEnvironment(runtime, { dashboard: host }),
         { output: createFakeOutput() },
       ),
     ).resolves.toBeUndefined();
   });
 
   it("'r' restarts the server (closes the old one, starts a new one) without ending the command", async () => {
-    const { host, startServerSpy, closeSpies, emitLine, triggerShutdown } = createFakeHost({
-      isTTY: true,
-    });
+    const { host, runtime, startServerSpy, closeSpies, emitLine, triggerShutdown } = createFakeHost(
+      {
+        isTTY: true,
+      },
+    );
     const output = createFakeOutput();
     const done = dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      testEnvironment(fakeRuntime(), { dashboard: host }),
+      testEnvironment(runtime, { dashboard: host }),
       { output: output },
     );
     await vi.waitFor(() => expect(startServerSpy).toHaveBeenCalledTimes(1));
@@ -266,10 +331,10 @@ describe("dashboard: lifecycle", () => {
   });
 
   it("'q' quits gracefully -- closes the server exactly once and resolves without an external shutdown", async () => {
-    const { host, closeSpies, emitLine } = createFakeHost({ isTTY: true });
+    const { host, runtime, closeSpies, emitLine } = createFakeHost({ isTTY: true });
     const done = dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      testEnvironment(fakeRuntime(), { dashboard: host }),
+      testEnvironment(runtime, { dashboard: host }),
       { output: createFakeOutput() },
     );
     await vi.waitFor(() => expect(host.startServer).toHaveBeenCalledTimes(1));
@@ -280,22 +345,22 @@ describe("dashboard: lifecycle", () => {
   });
 
   it("closes the terminal input listener on shutdown", async () => {
-    const { host, triggerShutdown, listenerClosedCount } = createFakeHost({ isTTY: true });
+    const { host, runtime, triggerShutdown, listenerClosedCount } = createFakeHost({ isTTY: true });
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      testEnvironment(fakeRuntime(), { dashboard: host }),
+      testEnvironment(runtime, { dashboard: host }),
       { output: createFakeOutput() },
     );
     expect(listenerClosedCount()).toBe(1);
   });
 
   it("'h' lists all shortcuts (not itself one of them) without ending the command", async () => {
-    const { host, emitLine, triggerShutdown } = createFakeHost({ isTTY: true });
+    const { host, runtime, emitLine, triggerShutdown } = createFakeHost({ isTTY: true });
     const output = createFakeOutput();
     const done = dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      testEnvironment(fakeRuntime(), { dashboard: host }),
+      testEnvironment(runtime, { dashboard: host }),
       { output: output },
     );
     await vi.waitFor(() => expect(host.startServer).toHaveBeenCalledTimes(1));

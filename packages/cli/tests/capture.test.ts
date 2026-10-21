@@ -1,7 +1,7 @@
 import type { FetchBaselineOutcome } from "@framelia/verify";
 import { describe, expect, it, vi } from "vitest";
 
-import { EXIT_USAGE_ERROR, UsageError } from "../src/exit.ts";
+import { EXIT_USAGE_ERROR } from "../src/exit.ts";
 import { captureCommand } from "../src/internal/capture.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
 import { testEnvironment } from "./test-environment.ts";
@@ -19,22 +19,37 @@ function fakeRuntime(overrides: Partial<CliRuntime> = {}): CliRuntime {
 }
 
 describe("captureCommand", () => {
-  it("throws a UsageError, not a generic Error, when --scale is not positive", async () => {
+  it("returns a structured exit-2 outcome, not stderr, when --scale is not positive", async () => {
     await expect(
       captureCommand(
         { fileKey: "abc", nodeId: "1:1", out: "out.png", scale: -1, canvasFill: undefined },
         testEnvironment(fakeRuntime({ env: { FIGMA_ACCESS_TOKEN: "test-token" } })),
       ),
-    ).rejects.toBeInstanceOf(UsageError);
+    ).resolves.toMatchObject({
+      exitCode: EXIT_USAGE_ERROR,
+      body: {
+        kind: "framelia.capture-outcome",
+        exitCode: 2,
+        diagnostics: [{ code: "INVALID_INPUT" }],
+      },
+    });
   });
 
-  it("throws a UsageError, not a generic Error, when FIGMA_ACCESS_TOKEN is not set", async () => {
+  it("explains a missing FIGMA_ACCESS_TOKEN and points at status", async () => {
     await expect(
       captureCommand(
         { fileKey: "abc", nodeId: "1:1", out: "out.png", scale: undefined, canvasFill: undefined },
         testEnvironment(fakeRuntime({ env: {} })),
       ),
-    ).rejects.toBeInstanceOf(UsageError);
+    ).resolves.toMatchObject({
+      exitCode: EXIT_USAGE_ERROR,
+      body: {
+        diagnostics: [
+          { code: "FIGMA_TOKEN_MISSING", message: expect.stringContaining("FIGMA_ACCESS_TOKEN") },
+        ],
+        next: { command: "framelia", argv: ["status"] },
+      },
+    });
   });
 
   it.each<FetchBaselineOutcome>([

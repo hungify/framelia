@@ -19,6 +19,26 @@ npm install --save-dev framelia
 npx framelia status --project-root "$PWD"
 ```
 
+### Shell completion
+
+Bash completion for commands, subcommands, flags and enum values comes from
+[`@stricli/auto-complete`](https://bloomberg.github.io/stricli/packages/auto-complete). It needs
+`framelia` installed where your shell finds it (for example `npm install --global framelia`), because
+bash runs the package's second executable, `__framelia_bash_complete`, on every <kbd>Tab</kbd>.
+
+```bash
+framelia completion install     # adds a marked block to ~/.bashrc; re-running replaces it
+source ~/.bashrc                # or open a new shell
+framelia completion uninstall   # removes exactly that block
+```
+
+Both commands print one `framelia.completion-outcome` JSON object: `profilePath` is the edited
+file and `changed: false` means it already matched. They exit `2` with
+`COMPLETION_SHELL_NOT_DETECTED` when `$SHELL` is not bash and `COMPLETION_PROFILE_MISSING` when
+`~/.bashrc` does not exist; they never read the project's `.env`. The completion executable only
+reads the route tree: it never loads `.env`, runs a command, or launches a browser. Only bash is
+supported, because `@stricli/auto-complete` does not install zsh or fish completion yet.
+
 ## Commands
 
 | Command                              | Purpose                                                                                |
@@ -31,15 +51,19 @@ npx framelia status --project-root "$PWD"
 | `framelia contract refresh-baseline` | Explicitly reacquire and atomically repin one exact contract.                          |
 | `framelia contract suggest-masks`    | Scan a live page and propose mask selectors without modifying a contract.              |
 | `framelia baseline promote`          | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                |
-| `framelia status`                    | Show CLI version, project root, and Figma token availability.                          |
+| `framelia status`                    | Validate the project config and report Playwright and Figma token readiness.           |
 | `framelia schema`                    | Print the live JSON Schema for an authored contract or signed requirements envelope.   |
-| `framelia` (no arguments)            | Open the dashboard for one explicit durable run.                                       |
+| `framelia runs list`                 | List durable runs, newest first, with status and case counts.                          |
+| `framelia runs prune`                | Remove old runs (`--keep`, `--older-than`, `--dry-run`); never in-progress ones.       |
+| `framelia` (no arguments)            | Same as `framelia runs list`; its `next` opens the newest run.                         |
 | `framelia dashboard`                 | Serve one selected durable run; requires `--run`.                                      |
 | `framelia open`                      | Alias for opening one selected durable run without rerunning.                          |
 | `framelia report`                    | Export one selected run as a relocatable static dashboard.                             |
 | `framelia done-gate`                 | Evaluate one selected run against protected signed requirements.                       |
 | `framelia capture`                   | Fetch one Figma PNG for diagnosis (`fetch-gold` alias).                                |
 | `framelia compare`                   | Compare two existing PNG files without source provenance gates.                        |
+| `framelia completion install`        | Add bash completion for `framelia` to `~/.bashrc` (idempotent).                        |
+| `framelia completion uninstall`      | Remove the bash completion block `completion install` added.                           |
 
 `verify`, `doctor`, and `discover` — plus the navigation action DSL underneath them — are retired.
 Visual capture remains in `@framelia/playwright`; `check` only coordinates collection, immutable
@@ -65,8 +89,16 @@ Initialization is idempotent and never rewrites an existing Framelia or Playwrig
 configuration, even with the compatibility `--force` flag. With no Playwright config it creates a
 minimal unnamed-project config containing the list and Framelia reporters. When a Playwright
 config already exists, the JSON outcome marks reporter registration `manual`, preserves the file
-byte-for-byte, and gives an exact verify/add recipe. It does not change `package.json`, package
-manager files, module format, scripts, projects, fixtures, `webServer`, browsers, or dependencies.
+byte-for-byte, and gives an exact verify/add recipe; the new `framelia.config.ts` points its
+`playwright` block at that file with the project names it can read from it (`[""]` when it
+declares no `projects`, otherwise a `TODO` to fill in). It also adds `.gitignore` files that keep
+`.framelia/auth/` and `.framelia/runs/` out of version control. It does not change
+`package.json`, package manager files, module format, scripts, projects, fixtures, `webServer`,
+browsers, or dependencies.
+
+`framelia status` then loads and validates the config and reports readiness checks (config,
+`playwright` block, the project's own `@playwright/test/cli`, `FIGMA_ACCESS_TOKEN`); a failed
+check exits `2` with a `next` command.
 
 The generated Framelia policy discovers one authored object per file:
 
@@ -240,6 +272,15 @@ Runner success/failure is reconciled against each case's latest complete retry, 
 `require-first-attempt`, a first mismatch followed by a passing retry therefore remains a completed
 visual mismatch (exit `1`), not an infrastructure error.
 
+`Ctrl+C` forwards `SIGINT` so Playwright shuts down gracefully, including its `webServer`. A
+second `Ctrl+C` sends `SIGTERM` and only `SIGKILL`s Playwright if it has not exited after a grace
+period; while no Playwright child is running (planning or finalization) it exits immediately.
+On Windows, where signals cannot be forwarded, the console already delivers `Ctrl+C` to
+Playwright and a second press terminates it.
+
+The run ID is available to CI as soon as the run starts: `--run-id-file <path>` writes it to a
+file, and inside GitHub Actions (`$GITHUB_OUTPUT` set) it is also the step output `run-id`.
+
 Standard output is one versioned JSON command outcome. Child and user-reporter output is forwarded
 byte-for-byte to standard error, so noisy reporters cannot corrupt JSON automation. The result
 contains exact coverage, every selected contract/project/repeat case, chosen attempt, retry
@@ -252,14 +293,19 @@ This JSON contract begins after successful CLI argument parsing. Unknown flags, 
 number values, duplicate options, and missing values for a flag are usage errors reported by
 Stricli on stderr. Required semantic fields for the new finite workflows are parser-optional
 intentionally, then validated together so noninteractive omission still returns one JSON result.
+Every finite command reports operational failures the same way: `formatVersion`, `kind`,
+`command`, `executionState: "error"`, `exitCode: 2`, `diagnostics` (each with a stable `code`),
+and, when a command can move it forward, `next`.
 
 ## Browsing and gating evidence
 
 Run your Playwright suite with `@framelia/playwright`'s Reporter registered (see
 [`@framelia/playwright`](../playwright/README.md)). It publishes immutable selected-run evidence
-under `.framelia/runs/<run-id>/`.
+under `.framelia/runs/` (see [Evidence layout](#evidence-layout)); every outcome's `bundlePath`
+names the exact directory. `framelia runs list` shows the available run IDs.
 
 ```bash
+npx framelia runs list --project-root "$PWD"
 npx framelia open --project-root "$PWD" --run <run-id>
 npx framelia dashboard --project-root "$PWD" --run <run-id>
 npx framelia report --project-root "$PWD" --run <run-id> --output ./framelia-report
@@ -267,9 +313,12 @@ npx framelia report --project-root "$PWD" --run <run-id> --output ./framelia-rep
 
 `open` and `dashboard` are long-running readers: after the server is actually listening they emit
 exactly one `framelia.open-ready` JSON record on stdout containing the selected run, bundle path,
-and addresses. Operational URL/progress logs remain on stderr. `report` is finite and emits the
-same deep selected-run projection as `check`/`done-gate`, plus its portable report path. It never
-chooses a latest run implicitly.
+and addresses. A failure before that (missing `--run`, unknown run, port in use) emits one
+`framelia.open-outcome` error record instead and exits `2`. Operational URL/progress logs remain
+on stderr. No browser is opened when `--no-open` is passed or `CI` is set. `report` is finite and
+emits the same deep selected-run projection as `check`/`done-gate`, plus its portable report path;
+it replaces a previous report only once the new one is complete. It never chooses a latest run
+implicitly.
 
 Static report output is relocatable and contains only project-portable run identities and copied
 evidence. Serve the exported directory over HTTP; browsers block report JSON loading through
@@ -315,17 +364,23 @@ npx framelia compare --baseline figma-gold.png --actual actual.png --out-dir ./d
 ```
 
 `capture` (alias `fetch-gold`) captures one Figma node render for inspection. `compare` diffs two existing PNGs
-directly with framelia's compare engine, without resolving a baseline or checking provenance.
+directly with framelia's compare engine, without resolving a baseline or checking provenance. It
+exits `1` only for a completed visual mismatch; a missing or unreadable PNG exits `2`.
 
 ## Evidence layout
 
+Run, case, and attempt IDs are free-form, so each directory name is `slug(id)`: a sanitized,
+readable prefix plus a 12-hex content hash (for example `run-abc-1f2e3d4c5b6a`). Use the
+`bundlePath` from an outcome or `framelia runs list` instead of building paths by hand.
+
 ```text
-.framelia/runs/<run-id>/
-├── plan.json
+.framelia/runs/<slug(run-id)>/
+├── plan/
+│   ├── plan.json
+│   └── case-plans/<slug(case-id)>.json
 ├── run.json
-└── cases/<case-id>/
-    ├── plan.json
-    └── attempts/<attempt-id>/
+└── cases/<slug(case-id)>/
+    └── attempts/<slug(attempt-id)>/
         ├── attempt.json
         ├── expected.png
         ├── actual.png
@@ -349,13 +404,17 @@ Exit `1` is a valid comparison result, not an infrastructure failure.
 
 ## CI example
 
+`check` needs no Figma credentials: it runs against reviewed pinned snapshots. It publishes the
+durable run ID as the step output `run-id` as soon as the run starts, so later steps can gate,
+report, or upload that exact run even when the check itself exits `1`.
+
 ```yaml
-- name: Run Playwright visual contracts
-  env:
-    FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
-  run: npx playwright test
+- name: Run visual contracts
+  id: visual
+  run: npx framelia check --all --project-root "$PWD"
 
 - name: Gate selected run
+  if: ${{ !cancelled() && steps.visual.outputs.run-id != '' }}
   env:
     FRAMELIA_TRUSTED_REQUIREMENTS_PUBLIC_KEY: /opt/framelia/trust/requirements-ed25519.pub.pem
     FRAMELIA_PROTECTED_JOB_IDENTITY: github:example/app:visual-gate
@@ -363,16 +422,19 @@ Exit `1` is a valid comparison result, not an infrastructure failure.
   run: |
     npx framelia done-gate \
       --project-root "$PWD" \
-      --run "$FRAMELIA_RUN_ID" \
+      --run "${{ steps.visual.outputs.run-id }}" \
       --requirements "$SIGNED_REQUIREMENTS_PATH"
 ```
 
-Upload `.framelia/runs/<run-id>/` and the output of `framelia report --run <run-id>` as CI
-artifacts when review evidence is needed.
+Outside GitHub Actions, use `npx framelia check --all --run-id-file run-id.txt` and read the ID
+from that file. Upload the run's `bundlePath` (under `.framelia/runs/`) and the output of
+`framelia report --run <run-id>` as CI artifacts when review evidence is needed; prune old local
+runs with `framelia runs prune --keep <n>`.
 
 ## Troubleshooting
 
 - Figma auth failure: run `framelia status`; confirm token access to the file.
+- Which run ID? `framelia runs list` (or bare `framelia`) lists runs newest first.
 - Chromium missing: run `npx playwright install chromium`.
 - Selector failure: use a deterministic unique selector such as `data-testid`.
 - Unstable result: check fonts, timers, random data, API responses, animations, browser, viewport
@@ -382,7 +444,8 @@ artifacts when review evidence is needed.
 ## Security and artifacts
 
 - Keep `FIGMA_ACCESS_TOKEN` in ignored environment files or CI secrets.
-- Treat Playwright storage state as a session credential; keep `.framelia/auth/` ignored and never upload it as an artifact.
+- Treat Playwright storage state as a session credential; keep `.framelia/auth/` ignored and never upload it as an artifact. `framelia auth` writes it owner-only (`0600`).
+
 - Never commit tokens or place them in contracts.
 - Treat web screenshots and Figma metadata as potentially sensitive.
 - Apply repository retention rules before sharing generated evidence.

@@ -1162,3 +1162,42 @@ describe("runToMatchFigma", () => {
     }
   });
 });
+
+describe("runToMatchFigma cached-baseline fallback", () => {
+  it("carries the baseline's style-gate-skipped warning onto the score attachment", async () => {
+    const { html, png } = solidPagePng();
+    const app = await server(html);
+    const context = await browser.newContext({ viewport: SIZE });
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-to-match-figma-"));
+    const attachJsonCalls: Array<{ name: string; data: unknown }> = [];
+    const matcherContext = {
+      timeoutMs: 15_000,
+      workDir,
+      attach: async () => undefined,
+      attachJson: async (name: string, data: unknown) => {
+        attachJsonCalls.push({ name, data });
+      },
+    };
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      stubFigmaFetch(png);
+      expect(
+        (await runToMatchFigma(page, NODE_ID, { fileKey: "file-key" }, matcherContext)).pass,
+      ).toBe(true);
+
+      // Figma now fails transiently on every request, so the cached baseline stands in.
+      globalThis.fetch = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
+      const result = await runToMatchFigma(page, NODE_ID, { fileKey: "file-key" }, matcherContext);
+
+      expect(result.pass).toBe(true);
+      const score = attachJsonCalls.at(-1)?.data as { warnings?: string[] } | undefined;
+      const warnings = score?.warnings ?? [];
+      expect(warnings.some((warning) => warning.startsWith("style-gate skipped"))).toBe(true);
+    } finally {
+      await context.close();
+      await app.close();
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});

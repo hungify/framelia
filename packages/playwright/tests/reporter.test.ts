@@ -371,6 +371,105 @@ describe("FrameliaReporter", () => {
       ).toBe(true);
   });
 
+  it("keys contractId evidence by project and repeat so they cannot overwrite each other", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const reporter = new FrameliaReporter({
+      projectRoot,
+      clientRoot: clientRootFixture(),
+      port: 0,
+    });
+    const inProject = (id: string, projectName: string, repeatEachIndex: number): TestCase =>
+      ({
+        ...fakeTest(id, id),
+        repeatEachIndex,
+        parent: { project: () => ({ name: projectName }) },
+      }) as unknown as TestCase;
+    const tests = [
+      inProject("desktop-0", "desktop", 0),
+      inProject("mobile-0", "mobile", 0),
+      inProject("mobile-1", "mobile", 1),
+    ];
+
+    reporter.onBegin(
+      { rootDir: projectRoot, projects: [{ name: "desktop" }, { name: "mobile" }] } as FullConfig,
+      fakeSuite(tests),
+    );
+    for (const test of tests) {
+      reporter.onTestEnd(
+        test,
+        passedResultWithImages(test.id, imageDir, { contractId: "login.desktop" }),
+      );
+    }
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+
+    const featureDir = path.join(projectRoot, ".framelia/visual-verifications/login");
+    expect(fs.readdirSync(featureDir).toSorted()).toEqual([
+      "desktop.page-desktop",
+      "desktop.page-mobile",
+      "desktop.page-mobile-r1",
+    ]);
+  });
+
+  it("keeps the plain contractId evidence directory for a single-project run", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const reporter = new FrameliaReporter({
+      projectRoot,
+      clientRoot: clientRootFixture(),
+      port: 0,
+    });
+    const test = {
+      ...fakeTest("only", "only"),
+      repeatEachIndex: 0,
+      parent: { project: () => ({ name: "chromium" }) },
+    } as unknown as TestCase;
+
+    reporter.onBegin(
+      { rootDir: projectRoot, projects: [{ name: "chromium" }] } as FullConfig,
+      fakeSuite([test]),
+    );
+    reporter.onTestEnd(
+      test,
+      passedResultWithImages("only", imageDir, { contractId: "login.desktop" }),
+    );
+    await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+
+    expect(
+      fs.existsSync(
+        path.join(projectRoot, ".framelia/visual-verifications/login/desktop.page/actual.png"),
+      ),
+    ).toBe(true);
+  });
+
+  it("removes a stale diff from an earlier run instead of listing it as evidence", async () => {
+    const projectRoot = tempDir("framelia-reporter-run-");
+    const imageDir = tempDir("framelia-reporter-images-");
+    const outDir = path.join(projectRoot, ".framelia/visual-verifications/test-a");
+    const runOnce = async (result: TestResult): Promise<void> => {
+      const reporter = new FrameliaReporter({
+        projectRoot,
+        clientRoot: clientRootFixture(),
+        port: 0,
+      });
+      const testA = fakeTest("test-a", "diff disappears");
+      reporter.onBegin(fakeConfig(projectRoot), fakeSuite([testA]));
+      reporter.onTestEnd(testA, result);
+      await reporter.onEnd({ status: "passed" } as unknown as FullResult);
+    };
+
+    await runOnce(passedResultWithImages("test-a", imageDir));
+    expect(fs.existsSync(path.join(outDir, "diff.png"))).toBe(true);
+
+    const withoutDiff = passedResultWithImages("test-a", imageDir);
+    withoutDiff.attachments = withoutDiff.attachments.filter(
+      (attachment) => attachment.name !== "test-a-diff",
+    );
+    await runOnce(withoutDiff);
+    expect(fs.existsSync(path.join(outDir, "diff.png"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "actual.png"))).toBe(true);
+  });
+
   it("merges topIssues from every matcher call into the live row instead of only the first", async () => {
     // The live dashboard collapses all of a test's matcher calls into one row (see
     // "persists every Figma matcher score attachment separately" below for the durable
@@ -454,6 +553,7 @@ describe("FrameliaReporter", () => {
         baselinePromotedBy: "alice@example.com",
         baselineVersion: 2,
         baselineRunId: "ci-run-42",
+        baselineKey: "home.desktop",
       }),
     );
     const url = await reporter.dashboardUrl();
@@ -461,6 +561,7 @@ describe("FrameliaReporter", () => {
     expect(run.contracts[0]).toMatchObject({
       id: "test-a",
       status: "passed",
+      baselineKey: "home.desktop",
       baseline: {
         provenance: "promoted",
         revision: "v2",

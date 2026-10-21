@@ -10,6 +10,8 @@ import {
 } from "@framelia/dashboard-server";
 import openBrowser from "open";
 
+import type { SignalSource } from "../environment.ts";
+
 const LOCALHOST_LOOKUP_TIMEOUT_MS = 1_000;
 
 export interface DashboardNetworkContext {
@@ -27,9 +29,13 @@ export interface DashboardHost {
   }) => Promise<DashboardServer>;
   readonly networkContext: () => Promise<DashboardNetworkContext>;
   readonly openBrowser: (url: string) => Promise<unknown>;
-  readonly listenForInput: (listener: (line: string) => void) => (() => void) | undefined;
+  /** Reads shortcut lines from `input`; the caller decides whether input is interactive. */
+  readonly listenForInput: (
+    input: NodeJS.ReadableStream,
+    listener: (line: string) => void,
+  ) => () => void;
   readonly now: () => number;
-  readonly waitForShutdown: () => Promise<void>;
+  readonly waitForShutdown: (signals: SignalSource) => Promise<void>;
 }
 
 async function localhostAddressIfDiffersFromDns(): Promise<string | undefined> {
@@ -56,12 +62,11 @@ export const productionDashboardHost: DashboardHost = {
     };
   },
   openBrowser: (url) => openBrowser(url),
-  listenForInput(listener) {
-    if (!process.stdin.isTTY || process.env.CI) return undefined;
-    const input = readline.createInterface({ input: process.stdin });
-    input.on("line", listener);
-    return () => input.close();
+  listenForInput(input, listener) {
+    const lines = readline.createInterface({ input });
+    lines.on("line", listener);
+    return () => lines.close();
   },
   now: () => performance.now(),
-  waitForShutdown: waitForDashboardShutdown,
+  waitForShutdown: (signals) => waitForDashboardShutdown(signals),
 };

@@ -123,6 +123,13 @@ describe("diffClusters", () => {
     expect(clusters).toContainEqual({ pixels: 1, bbox: { x0: 9, y0: 9, x1: 10, y1: 10 } });
   });
 
+  it("flood-fills one cluster far larger than the initial stack capacity", () => {
+    const png = makeSolidPng(300, 200, [255, 0, 0, 255]);
+    expect(diffClusters(png)).toEqual([
+      { pixels: 60_000, bbox: { x0: 0, y0: 0, x1: 300, y1: 200 } },
+    ]);
+  });
+
   it("agrees with largestRealDiffCluster on which cluster is largest", () => {
     const png = makeSolidPng(10, 10, [0, 0, 0, 255]);
     paintRealDiffPixel(png, 0, 0);

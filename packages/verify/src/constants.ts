@@ -53,6 +53,10 @@ export const HTTP_STATUS = {
 export const MIN_RETRY_AFTER_MS = MS_PER_SECOND;
 export const MAX_RETRY_AFTER_MS = 60 * MS_PER_SECOND;
 export const DEFAULT_RETRY_AFTER_MS = MS_PER_SECOND;
+/** Total attempts per Figma request (first try included) for 429/5xx/timeouts/network errors. */
+export const FIGMA_FETCH_MAX_ATTEMPTS = 3;
+/** First exponential-backoff step between Figma retries; doubles per retry, capped at MAX_RETRY_AFTER_MS. */
+export const FIGMA_FETCH_BASE_BACKOFF_MS = 500;
 
 export const DEFAULT_MAX_BASELINE_AGE_DAYS = 14;
 export const DEFAULT_MAX_SCORE_AGE_MS = 15 * MS_PER_MINUTE;
@@ -115,3 +119,5 @@ export const STYLE_GATE_SKIPPED_WARNING = "style-gate skipped: no computed style
 export const FONT_FALLBACK_WARNING = "font fallback: font policy warn allowed incomplete fonts";
 /** classifyDiagnostics() matches on this prefix so a style-gate skip always gates blocking. */
 export const STYLE_GATE_SKIPPED_PREFIX = "style-gate skipped";
+/** FigmaBaselineProvider's cached-baseline fallback has no fresh node document, hence no figmaStyle. */
+export const CACHED_BASELINE_STYLE_GATE_SKIPPED_WARNING = `${STYLE_GATE_SKIPPED_PREFIX}: cached Figma baseline fallback carries no Figma style snapshot.`;

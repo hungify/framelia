@@ -4,6 +4,7 @@ import {
   CONTRACT_FORMAT_VERSION,
   authoredContractSchema,
   type Diagnostic,
+  type NextOperation,
 } from "@framelia/contracts/workflow";
 import {
   assertProjectRelativePath,
@@ -13,11 +14,13 @@ import {
 import type { DiscoveredAuthoredContract } from "@framelia/verify/project-policy";
 
 import type { CommandEnvironment } from "../environment.ts";
+import type { CliRuntime } from "../runtime-types.ts";
+import { registrationRecipe } from "./binding-reconciliation.ts";
 import { collectContractAnswers, type ContractCreateOptions } from "./contract-interview.ts";
 import { listContractBindings } from "./contract-list.ts";
 import { openContractPinning } from "./contract-pinning.ts";
-import { optionalFigmaToken } from "./figma-token.ts";
-import { failureDiagnostic, frameliaNext } from "./outcome.ts";
+import { explainFigmaFailure, optionalFigmaToken } from "./figma-token.ts";
+import { failureDiagnostic, failureOutcome, frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
 
 export type { ContractCreateOptions } from "./contract-interview.ts";
@@ -45,7 +48,7 @@ export interface ContractCreateOutcome {
     status: "unbound" | "collection-blocked";
     recipe: string;
   };
-  readonly next?: { command: string; argv: string[] };
+  readonly next?: NextOperation;
 }
 
 export interface ContractCreateResult {
@@ -58,21 +61,20 @@ function portablePath(root: string, filePath: string): string {
   return path.relative(root, filePath).split(path.sep).join("/");
 }
 
-function failed(error: unknown): ContractCreateResult {
-  return {
-    ok: false,
-    exitCode: 2,
-    body: {
-      formatVersion: AUTHORING_OUTCOME_FORMAT_VERSION,
-      kind: "framelia.contract-create-outcome",
-      command: "contract create",
-      executionState: "error",
-      exitCode: 2,
-      authored: false,
-      runnable: false,
-      diagnostics: [failureDiagnostic(error, "CONTRACT_AUTHORING_FAILED", "authoring")],
-    },
-  };
+function failed(
+  error: unknown,
+  runtime: CliRuntime,
+  projectRoot: string | undefined,
+): ContractCreateResult {
+  const failure = failureOutcome({
+    kind: "framelia.contract-create-outcome",
+    command: "contract create",
+    error: explainFigmaFailure(error, runtime),
+    fallbackCode: "CONTRACT_AUTHORING_FAILED",
+    stage: "authoring",
+    projectRoot,
+  });
+  return { ...failure, body: { ...failure.body, authored: false, runnable: false } };
 }
 
 function selectTarget(
@@ -94,20 +96,6 @@ function selectTarget(
     return existingAbsolute;
   }
   return requestedAbsolute;
-}
-
-function registrationRecipe(contractPath: string): string {
-  return [
-    'import path from "node:path";',
-    'import { defineFigmaTests } from "@framelia/playwright";',
-    'import { test } from "@playwright/test";',
-    `defineFigmaTests(test, { contracts: path.join(process.cwd(), ${JSON.stringify(contractPath)}),`,
-    "  async prepare({ page }, { target }) {",
-    "    await page.goto(target.path);",
-    "    // Await this application's real scenario readiness before returning.",
-    "  },",
-    "});",
-  ].join("\n");
 }
 
 /** Resolves every input and acquires a complete snapshot before the first project write. */
@@ -244,6 +232,6 @@ export async function contractCreateCommand(
       },
     };
   } catch (error) {
-    return failed(error);
+    return failed(error, runtime, options.projectRoot);
   }
 }

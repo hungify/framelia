@@ -135,3 +135,48 @@ describe("selected run dashboard report", () => {
     });
   });
 });
+
+describe("report replacement", () => {
+  it("replaces a previous report only after the new one is complete", async () => {
+    const root = await temporaryRoot("framelia-report-swap-");
+    await createSelectedRun(root, { runId: "run-swap" });
+    const outputDirectory = path.join(root, "report");
+    const clientRoot = await clientFixture();
+    await exportDashboardReport({
+      projectRoot: root,
+      runId: "run-swap",
+      outputDirectory,
+      clientRoot,
+    });
+    const previousIndex = await fs.readFile(path.join(outputDirectory, "index.html"), "utf8");
+
+    await expect(
+      exportDashboardReport({
+        projectRoot: root,
+        runId: "run-swap",
+        outputDirectory,
+        clientRoot: path.join(root, "missing-client"),
+      }),
+    ).rejects.toThrow(/ENOENT/);
+    await expect(fs.readFile(path.join(outputDirectory, "index.html"), "utf8")).resolves.toBe(
+      previousIndex,
+    );
+    expect((await fs.readdir(root)).filter((name) => name.includes("framelia-staging"))).toEqual(
+      [],
+    );
+
+    await fs.writeFile(path.join(clientRoot, "index.html"), "<main>v2</main>");
+    await exportDashboardReport({
+      projectRoot: root,
+      runId: "run-swap",
+      outputDirectory,
+      clientRoot,
+    });
+    await expect(fs.readFile(path.join(outputDirectory, "index.html"), "utf8")).resolves.toBe(
+      "<main>v2</main>",
+    );
+    expect((await fs.readdir(root)).filter((name) => name.includes("framelia-staging"))).toEqual(
+      [],
+    );
+  });
+});

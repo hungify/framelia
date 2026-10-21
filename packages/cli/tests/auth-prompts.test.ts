@@ -6,7 +6,6 @@ import type { RecordStorageStateOptions, RecordStorageStateResult } from "@frame
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "../src/environment.ts";
-import { UsageError } from "../src/exit.ts";
 import { authCommand } from "../src/internal/auth.ts";
 import type { PromptAdapter } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
@@ -47,7 +46,7 @@ function recordingPrompts(confirmAnswers: boolean[]): {
   const calls: string[] = [];
   let confirmIndex = 0;
   const adapter: PromptAdapter = {
-    interactive: false,
+    interactive: true,
     intro: (message) => calls.push(`intro:${message}`),
     outro: (message) => calls.push(`outro:${message}`),
     note: (_message, title) => calls.push(`note:${title}`),
@@ -140,7 +139,10 @@ describe("auth prompt sequence", () => {
           browser: deps,
         }),
       ),
-    ).rejects.toThrow(new UsageError("Auth capture cancelled."));
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { diagnostics: [{ message: "Auth capture cancelled." }] },
+    });
 
     expect(calls).toEqual([
       "intro:Record Playwright login state",
@@ -161,7 +163,10 @@ describe("auth prompt sequence", () => {
           browser: fakeDeps(),
         }),
       ),
-    ).rejects.toThrow(new UsageError("Auth capture cancelled."));
+    ).resolves.toMatchObject({
+      exitCode: 2,
+      body: { diagnostics: [{ message: "Auth capture cancelled." }] },
+    });
 
     expect(calls).toEqual([
       "intro:Record Playwright login state",

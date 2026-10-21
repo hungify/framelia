@@ -60,3 +60,18 @@ export function reconcileBinding(
   }
   return { status: "executable", cases };
 }
+
+/** The exact `defineFigmaTests` registration that makes an authored contract executable. */
+export function registrationRecipe(contractPath: string): string {
+  return [
+    'import path from "node:path";',
+    'import { defineFigmaTests } from "@framelia/playwright";',
+    'import { test } from "@playwright/test";',
+    `defineFigmaTests(test, { contracts: path.join(process.cwd(), ${JSON.stringify(contractPath)}),`,
+    "  async prepare({ page }, { target }) {",
+    "    await page.goto(target.path);",
+    "    // Await this application's real scenario readiness before returning.",
+    "  },",
+    "});",
+  ].join("\n");
+}

@@ -90,7 +90,8 @@ describe("golden baseline: unrecognized top-level token falls through to the def
 describe("golden baseline: `--` argument termination", () => {
   it("an option consumes a literal `--` as its value when `--` appears where a value is expected", () => {
     const result = run(["status", "--project-root", "--"]);
-    expect(result.status).toBe(0);
+    // The literal `--` directory holds no config, so status reports it (exit 2) with JSON.
+    expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stdout) as { projectRoot: string };
     expect(parsed.projectRoot.endsWith(path.sep + "--")).toBe(true);
   });
@@ -123,10 +124,10 @@ describe("golden baseline: alias routes (fetch-gold / diff)", () => {
   });
 });
 
-describe("golden baseline: compare is result-producing (exit 0/1, never a usage error for a checked failure)", () => {
-  it("returns pass: false as JSON on stdout with exit 1 when files are missing/mismatched", () => {
+describe("golden baseline: compare is result-producing (JSON on stdout for every checked failure)", () => {
+  it("returns pass: false as JSON on stdout with exit 2 when input files are missing", () => {
     const result = run(["compare", "--baseline", "missing-a.png", "--actual", "missing-b.png"]);
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(2);
     expect(result.stderr).toBe("");
     const parsed = JSON.parse(result.stdout) as { pass: boolean };
     expect(parsed.pass).toBe(false);
@@ -134,8 +135,17 @@ describe("golden baseline: compare is result-producing (exit 0/1, never a usage 
 });
 
 describe("golden baseline: fast-failing required-flag routes", () => {
+  it("`open` without --run returns one JSON outcome pointing at `runs list`, exit 2", () => {
+    const result = run(["open"]);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      kind: "framelia.open-outcome",
+      diagnostics: [{ code: "RUN_SELECTION_MISSING" }],
+      next: { command: "framelia", argv: ["runs", "list"] },
+    });
+  });
+
   it.each([
-    ["open", ["open"], "Expected input for flag --run"],
     ["auth", ["auth"], "Expected input for flag --url"],
     [
       "contract suggest-masks",
@@ -180,8 +190,12 @@ describe("golden baseline: auth URL validation happens before config is loaded",
   it("rejects a non-http(s) URL with a specific message, exit 2", () => {
     const result = run(["auth", "--url", "not-a-url"]);
     expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("Auth URL must use http:// or https://.\n");
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      kind: "framelia.auth-outcome",
+      exitCode: 2,
+      diagnostics: [{ message: "Auth URL must use http:// or https://." }],
+    });
   });
 });
 

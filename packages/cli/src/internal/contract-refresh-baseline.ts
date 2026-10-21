@@ -1,10 +1,10 @@
 import * as path from "node:path";
 
 import type { Diagnostic } from "@framelia/contracts/workflow";
-import { readPinnedBaseline, type FetchBaselineFn } from "@framelia/verify";
+import { readPinnedBaseline } from "@framelia/verify";
 
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
 import { failureDiagnostic, frameliaNext } from "./outcome.ts";
@@ -17,8 +17,8 @@ export interface ContractRefreshBaselineOptions {
   readonly contract: string | undefined;
 }
 
-export interface ContractRefreshBaselineDependencies {
-  readonly fetchBaseline?: FetchBaselineFn;
+/** Test seam: runs after the snapshot is published and before the pointer is written. */
+export interface ContractRefreshBaselineSeams {
   readonly afterSnapshotPublished?: () => void;
 }
 
@@ -58,14 +58,15 @@ function failure(error: unknown): CliResult<ContractRefreshBaselineOutcome> {
 /** Refresh is pointer-last: every failure leaves the previously pinned snapshot usable. */
 export async function contractRefreshBaselineCommand(
   options: ContractRefreshBaselineOptions,
-  runtime: CliRuntime,
-  dependencies: ContractRefreshBaselineDependencies = {},
+  env: CommandEnvironment,
+  seams: ContractRefreshBaselineSeams = {},
 ): Promise<CliResult<ContractRefreshBaselineOutcome>> {
   try {
     const contractId = options.contract;
     if (!contractId) {
       throw new Error("refresh-baseline requires --contract <exact-id>.");
     }
+    const runtime = env.process;
     const policy = await openProject(options.projectRoot, runtime).loadConfig();
     const pinning = await openContractPinning(policy);
     const discovered = pinning.contracts.find((entry) => entry.contract.id === contractId);
@@ -79,9 +80,9 @@ export async function contractRefreshBaselineCommand(
       draft: { ...discovered.contract, revision: discovered.contract.revision + 1 },
       source: previous.snapshot.source,
       token: optionalFigmaToken(runtime),
-      ...(dependencies.fetchBaseline ? { fetchBaseline: dependencies.fetchBaseline } : {}),
-      ...(dependencies.afterSnapshotPublished
-        ? { afterSnapshotPublished: dependencies.afterSnapshotPublished }
+      fetchBaseline: (await env.adapters.figma()).fetchBaseline,
+      ...(seams.afterSnapshotPublished
+        ? { afterSnapshotPublished: seams.afterSnapshotPublished }
         : {}),
     });
 

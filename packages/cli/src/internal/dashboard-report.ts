@@ -1,8 +1,8 @@
 import * as path from "node:path";
 
 import { exportDashboardReport } from "../dashboard/report.ts";
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { failureDiagnostic, frameliaNext, runExitCode } from "./outcome.ts";
 import { openProject } from "./project.ts";
 import { nextForRun, readRunProjection, type RunProjection } from "./run-projection.ts";
@@ -39,15 +39,17 @@ function portableRelative(from: string, target: string): string {
   return path.relative(from, target).split(path.sep).join("/") || ".";
 }
 
-export interface ReportCommandDependencies {
+/** Test seam: where the bundled dashboard client is copied from. */
+export interface ReportCommandSeams {
   readonly clientRoot?: string;
 }
 
 export async function reportCommand(
   options: ReportOptions,
-  runtime: CliRuntime,
-  dependencies: ReportCommandDependencies = {},
+  env: Pick<CommandEnvironment, "process">,
+  seams: ReportCommandSeams = {},
 ): Promise<CliResult<ReportOutcome | ReportFailureOutcome>> {
+  const runtime = env.process;
   try {
     if (!options.run || !options.output) {
       throw new Error("report requires --run <id> and --output <directory>.");
@@ -58,7 +60,7 @@ export async function reportCommand(
       projectRoot: project.root,
       runId: options.run,
       outputDirectory: path.resolve(runtime.cwd(), options.output),
-      ...(dependencies.clientRoot ? { clientRoot: dependencies.clientRoot } : {}),
+      ...(seams.clientRoot ? { clientRoot: seams.clientRoot } : {}),
     });
     const exitCode = runExitCode(
       projection.executionState === "completed",

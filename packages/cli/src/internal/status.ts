@@ -1,5 +1,5 @@
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
 import { openProject } from "./project.ts";
 
@@ -19,13 +19,13 @@ export interface StatusBody {
 
 export function statusCommand(
   options: StatusOptions,
-  runtime: CliRuntime,
-  version: string,
+  env: Pick<CommandEnvironment, "process" | "version">,
 ): CliResult<StatusBody> {
+  const runtime = env.process;
   const body: StatusBody = {
     ok: true,
     name: "framelia",
-    version,
+    version: env.version,
     mode: "cli",
     baselineKinds: ["figma"],
     projectRoot: openProject(options.projectRoot, runtime).root,

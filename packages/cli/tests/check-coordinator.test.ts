@@ -17,8 +17,11 @@ import { fileHash } from "@framelia/verify/project-policy";
 import { finalizeRunRecord, readRunRecord } from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runCheck, type CheckDependencies } from "../src/internal/check.ts";
+import type { CommandEnvironment } from "../src/environment.ts";
+import { runCheck } from "../src/internal/check.ts";
+import type { PlaywrightTransportDependencies } from "../src/internal/playwright-transport.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 const roots: string[] = [];
 
@@ -174,7 +177,7 @@ function immediateChild(): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["-e", ""], { stdio: ["pipe", "pipe", "pipe"] });
 }
 
-const failedCollectionChild: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+const failedCollectionChild: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
   _executable,
   _argv,
   options,
@@ -195,14 +198,10 @@ describe("runCheck command-lifetime finalization", () => {
     const spawnPlaywright = failedCollectionChild;
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright },
+      }),
     );
 
     expect(outcome.exitCode).toBe(2);
@@ -218,14 +217,13 @@ describe("runCheck command-lifetime finalization", () => {
     const fixture = coordinatorProject();
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright: immediateChild,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: {
+          playwrightCli: "/unused/local/playwright-cli.js",
+          spawnPlaywright: immediateChild,
+        },
+      }),
     );
 
     expect(outcome.exitCode).toBe(2);
@@ -238,7 +236,7 @@ describe("runCheck command-lifetime finalization", () => {
   it("retains the reporter's blocked reason when execute manifest validation fails later", async () => {
     const fixture = coordinatorProject();
     const reporterReason = "Visual project setup failed before any selected test could run.";
-    const spawnPlaywright: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+    const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
       _executable,
       _argv,
       options,
@@ -265,14 +263,10 @@ describe("runCheck command-lifetime finalization", () => {
     };
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright },
+      }),
     );
 
     expect(outcome.exitCode).toBe(2);
@@ -298,7 +292,7 @@ describe("runCheck command-lifetime finalization", () => {
       finalizeCalls.push(runId);
       return finalizeRunRecord(root, runId, options);
     };
-    const spawnPlaywright: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+    const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
       _executable,
       _argv,
       options,
@@ -323,13 +317,13 @@ describe("runCheck command-lifetime finalization", () => {
     };
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: signals as unknown as NonNullable<CheckDependencies["signalProcess"]>,
-        finalizeRun,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(
+        runtime(fixture.root),
+        { playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright } },
+        { signals: signals as unknown as CommandEnvironment["signals"] },
+      ),
+      { finalizeRun },
     );
 
     expect(invocation).toBe(2);
@@ -356,7 +350,7 @@ describe("runCheck command-lifetime finalization", () => {
       finalizeCalls.push(runId);
       return finalizeRunRecord(root, runId, options);
     };
-    const spawnPlaywright: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+    const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
       _executable,
       _argv,
       options,
@@ -393,15 +387,11 @@ describe("runCheck command-lifetime finalization", () => {
     };
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-        finalizeRun,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright },
+      }),
+      { finalizeRun },
     );
 
     expect(finalizeCalls).toHaveLength(1);

@@ -5,13 +5,16 @@ import * as path from "node:path";
 import type { RecordStorageStateOptions, RecordStorageStateResult } from "@framelia/verify/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { BrowserAdapter } from "../src/environment.ts";
 import { UsageError } from "../src/exit.ts";
-import type { AuthDependencies } from "../src/internal/auth.ts";
 import { authCommand } from "../src/internal/auth.ts";
 import type { PromptAdapter } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
-function fakeDeps(overrides: Partial<AuthDependencies> = {}): AuthDependencies {
+function fakeDeps(
+  overrides: Partial<Pick<BrowserAdapter, "recordStorageState">> = {},
+): Pick<BrowserAdapter, "recordStorageState"> {
   return {
     recordStorageState: vi.fn<
       (options: RecordStorageStateOptions) => Promise<RecordStorageStateResult>
@@ -87,9 +90,10 @@ describe("auth prompt sequence", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: undefined },
-      adapter,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: adapter,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(calls).toEqual([
@@ -107,9 +111,10 @@ describe("auth prompt sequence", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: undefined },
-      adapter,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: adapter,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(calls).toEqual([
@@ -130,9 +135,10 @@ describe("auth prompt sequence", () => {
     await expect(
       authCommand(
         { url: "http://localhost/login", projectRoot, yes: undefined },
-        adapter,
-        fakeRuntime({ cwd: () => projectRoot }),
-        deps,
+        testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+          prompts: adapter,
+          browser: deps,
+        }),
       ),
     ).rejects.toThrow(new UsageError("Auth capture cancelled."));
 
@@ -150,9 +156,10 @@ describe("auth prompt sequence", () => {
     await expect(
       authCommand(
         { url: "http://localhost/login", projectRoot, yes: undefined },
-        adapter,
-        fakeRuntime({ cwd: () => projectRoot }),
-        fakeDeps(),
+        testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+          prompts: adapter,
+          browser: fakeDeps(),
+        }),
       ),
     ).rejects.toThrow(new UsageError("Auth capture cancelled."));
 
@@ -169,9 +176,10 @@ describe("auth prompt sequence", () => {
 
     await authCommand(
       { url: "http://localhost/login", projectRoot, yes: true },
-      adapter,
-      fakeRuntime({ cwd: () => projectRoot }),
-      fakeDeps(),
+      testEnvironment(fakeRuntime({ cwd: () => projectRoot }), {
+        prompts: adapter,
+        browser: fakeDeps(),
+      }),
     );
 
     expect(calls).toEqual([

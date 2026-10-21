@@ -9,32 +9,20 @@ import {
   assertProjectRelativePath,
   portableErrorMessage,
   readRawFileState,
-  type FetchBaselineFn,
 } from "@framelia/verify";
 import type { DiscoveredAuthoredContract } from "@framelia/verify/project-policy";
 
-import type { CliRuntime } from "../runtime-types.ts";
-import {
-  collectContractAnswers,
-  type ContractCreateOptions,
-  type ContractInterviewDependencies,
-} from "./contract-interview.ts";
+import type { CommandEnvironment } from "../environment.ts";
+import { collectContractAnswers, type ContractCreateOptions } from "./contract-interview.ts";
 import { listContractBindings } from "./contract-list.ts";
 import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
 import { failureDiagnostic, frameliaNext } from "./outcome.ts";
-import type { PlaywrightTransportDependencies } from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
-import type { PromptAdapter } from "./prompts.ts";
 
 export type { ContractCreateOptions } from "./contract-interview.ts";
 
 const AUTHORING_OUTCOME_FORMAT_VERSION = 1 as const;
-
-export interface ContractCreateDependencies
-  extends Partial<ContractInterviewDependencies>, PlaywrightTransportDependencies {
-  fetchBaseline?: FetchBaselineFn;
-}
 
 export interface ContractCreateOutcome {
   readonly formatVersion: typeof AUTHORING_OUTCOME_FORMAT_VERSION;
@@ -125,29 +113,18 @@ function registrationRecipe(contractPath: string): string {
 /** Resolves every input and acquires a complete snapshot before the first project write. */
 export async function contractCreateCommand(
   options: ContractCreateOptions,
-  prompts: PromptAdapter,
-  runtime: CliRuntime,
-  dependencies: ContractCreateDependencies = {},
+  env: CommandEnvironment,
 ): Promise<ContractCreateResult> {
+  const runtime = env.process;
+  const prompts = await env.adapters.prompts(runtime);
   prompts.intro("Create Framelia visual contract");
   try {
     const project = openProject(options.projectRoot, runtime);
     const policy = await project.loadConfig();
     const pinning = await openContractPinning(policy);
 
-    const interviewDependencies =
-      dependencies.resolveNodeSpec && dependencies.deriveExpectStyle
-        ? {
-            resolveNodeSpec: dependencies.resolveNodeSpec,
-            deriveExpectStyle: dependencies.deriveExpectStyle,
-          }
-        : undefined;
-    const interview = await collectContractAnswers(
-      options,
-      prompts,
-      runtime,
-      interviewDependencies,
-    );
+    const figma = await env.adapters.figma();
+    const interview = await collectContractAnswers(options, prompts, runtime, figma);
     if (interview.kind === "cancelled") {
       throw new Error("Contract authoring was cancelled.");
     }
@@ -190,12 +167,12 @@ export async function contractCreateCommand(
       draft: provisional,
       source: interview.answers.baseline,
       token: optionalFigmaToken(runtime),
-      ...(dependencies.fetchBaseline ? { fetchBaseline: dependencies.fetchBaseline } : {}),
+      fetchBaseline: figma.fetchBaseline,
     });
 
     const relativePath = portablePath(project.root, outputPath);
     // The contract is already authored; a binding-inspection failure only blocks `runnable`.
-    const bindings = await listContractBindings(policy, runtime, dependencies).then(
+    const bindings = await listContractBindings(policy, env).then(
       (listed) => listed.entries.filter((entry) => entry.contractId === contract.id),
       (error: unknown) => [
         {

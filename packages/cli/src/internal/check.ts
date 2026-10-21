@@ -29,7 +29,7 @@ import {
 } from "@framelia/verify/run-bundle";
 import { nanoid } from "nanoid";
 
-import type { CliRuntime } from "../runtime-types.ts";
+import type { CommandEnvironment } from "../environment.ts";
 import { reconcileBinding } from "./binding-reconciliation.ts";
 import { runExitCode } from "./outcome.ts";
 import {
@@ -38,7 +38,6 @@ import {
   executePlaywrightRun,
   type PlaywrightCancellation,
   type PlaywrightExecution,
-  type PlaywrightTransportDependencies,
 } from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
 import { nextForRun, readRunProjection } from "./run-projection.ts";
@@ -48,11 +47,10 @@ export interface CheckRequest {
   all?: boolean;
   project: readonly string[];
   projectRoot?: string;
-  runtime: CliRuntime;
 }
 
-export interface CheckDependencies extends PlaywrightTransportDependencies {
-  signalProcess?: Pick<NodeJS.Process, "on" | "removeListener">;
+/** Test seam: replaces run finalization to observe or fail it. */
+export interface CheckSeams {
   finalizeRun?: typeof finalizeRunRecord;
 }
 
@@ -196,15 +194,17 @@ function errorOutcome(
 /** Owns selection, collection transport, immutable planning, execution and sole finalization. */
 export async function runCheck(
   request: CheckRequest,
-  dependencies: CheckDependencies = {},
+  env: CommandEnvironment,
+  seams: CheckSeams = {},
 ): Promise<CommandOutcome> {
-  const cwd = path.resolve(request.runtime.cwd());
+  const runtime = env.process;
+  const cwd = path.resolve(runtime.cwd());
   let outcomeRoot = cwd;
   let runId: string | undefined;
   let bundlePath: string | undefined;
   let outcomeSelection: CommandOutcome["selection"];
   const cancellation: PlaywrightCancellation = { requested: false, forwarded: false };
-  const signalProcess = dependencies.signalProcess ?? process;
+  const signalProcess = env.signals;
   const handleSignal = (): void => {
     if (cancellation.requested) {
       cancellation.child?.kill("SIGKILL");
@@ -219,7 +219,7 @@ export async function runCheck(
   signalProcess.on("SIGINT", handleSignal);
   signalProcess.on("SIGTERM", handleSignal);
   try {
-    const policy = await openProject(request.projectRoot, request.runtime).loadConfig();
+    const policy = await openProject(request.projectRoot, runtime).loadConfig();
     outcomeRoot = policy.root;
     if (!policy.playwright || !policy.policyDigest) {
       throw new Error(
@@ -239,12 +239,13 @@ export async function runCheck(
       throw new Error("Check was cancelled before Playwright collection.");
 
     runId = nanoid();
+    const playwright = await env.adapters.playwright();
     const manifest = await collectPlaywrightBindings({
       policy,
       selectedProjects: selection.selectedProjects,
-      runtime: request.runtime,
+      runtime,
       runId,
-      dependencies,
+      dependencies: playwright,
       cancellation,
     });
     if (cancellation.requested) throw new Error("Check was cancelled after Playwright collection.");
@@ -316,12 +317,12 @@ export async function runCheck(
         selectedProjects: selection.selectedProjects,
         selectedCases: selectedCollected,
         executionGraphDigest: plan.executionGraphDigest,
-        runtime: request.runtime,
-        dependencies,
+        runtime,
+        dependencies: playwright,
         cancellation,
       });
     } finally {
-      await (dependencies.finalizeRun ?? finalizeRunRecord)(policy.root, runId, {
+      await (seams.finalizeRun ?? finalizeRunRecord)(policy.root, runId, {
         retryAcceptance: policy.retryAcceptance,
         diagnostics: [...execution.diagnostics],
         transport: {

@@ -1,11 +1,11 @@
 import * as path from "node:path";
 
-import { DEFAULT_IMAGE_SCALE, fetchBaseline, type FetchBaselineOutcome } from "@framelia/verify";
+import { DEFAULT_IMAGE_SCALE, type FetchBaselineOutcome } from "@framelia/verify";
 import { z } from "zod";
 
+import type { CommandEnvironment } from "../environment.ts";
 import { EXIT_OK, EXIT_USAGE_ERROR, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { requireFigmaToken } from "./figma-token.ts";
 
 const captureOptionsSchema = z.object({
@@ -26,24 +26,19 @@ export interface CaptureOptions {
 
 export type CaptureResult = CliResult<FetchBaselineOutcome>;
 
-export interface CaptureDependencies {
-  readonly fetchBaseline: typeof fetchBaseline;
-}
-
-const defaultDependencies: CaptureDependencies = { fetchBaseline };
-
 export async function captureCommand(
   options: CaptureOptions,
-  runtime: CliRuntime,
-  deps: CaptureDependencies = defaultDependencies,
+  env: CommandEnvironment,
 ): Promise<CaptureResult> {
+  const runtime = env.process;
   const parsed = captureOptionsSchema.safeParse(options);
   if (!parsed.success) throw usageErrorFromZodError(parsed.error);
 
   const token = requireFigmaToken(runtime);
 
   const outPath = path.resolve(runtime.cwd(), parsed.data.out);
-  const outcome = await deps.fetchBaseline({
+  const figma = await env.adapters.figma();
+  const outcome = await figma.fetchBaseline({
     fileKey: parsed.data.fileKey,
     nodeId: parsed.data.nodeId,
     outPath,

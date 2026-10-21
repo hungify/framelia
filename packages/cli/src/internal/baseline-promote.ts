@@ -1,12 +1,11 @@
 import * as path from "node:path";
 
 import { CONTRACT_ID_PATTERN, visualArtifactPath } from "@framelia/contracts";
-import { captureAndPromotePageBaseline } from "@framelia/verify/cli";
 import { z } from "zod";
 
+import type { CommandEnvironment } from "../environment.ts";
 import { EXIT_USAGE_ERROR, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { targetUrlMessage, viewportPairMessage } from "./browser-input.ts";
 import { openProject } from "./project.ts";
 
@@ -50,23 +49,15 @@ export interface BaselinePromoteOptions {
 
 export type BaselinePromoteResult = CliResult<unknown>;
 
-export interface BaselinePromoteDependencies {
-  readonly captureAndPromote: typeof captureAndPromotePageBaseline;
-}
-
-const defaultDependencies: BaselinePromoteDependencies = {
-  captureAndPromote: captureAndPromotePageBaseline,
-};
-
 function defaultPromotedBy(env: NodeJS.ProcessEnv): string {
   return env.FRAMELIA_PROMOTED_BY ?? env.GIT_AUTHOR_EMAIL ?? env.USER ?? env.USERNAME ?? "unknown";
 }
 
 export async function baselinePromoteCommand(
   options: BaselinePromoteOptions,
-  runtime: CliRuntime,
-  deps: BaselinePromoteDependencies = defaultDependencies,
+  env: CommandEnvironment,
 ): Promise<BaselinePromoteResult> {
+  const runtime = env.process;
   const parsed = baselinePromoteOptionsSchema.safeParse(options);
   if (!parsed.success) throw usageErrorFromZodError(parsed.error);
 
@@ -74,7 +65,8 @@ export async function baselinePromoteCommand(
   const outDir = project.resolve(visualArtifactPath(options.key));
   const promotedBy = options.promotedBy ?? defaultPromotedBy(runtime.env);
 
-  const result = await deps.captureAndPromote({
+  const browser = await env.adapters.browser();
+  const result = await browser.captureAndPromote({
     url: options.targetUrl,
     outDir,
     promotedBy,

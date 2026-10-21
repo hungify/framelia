@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { contractCreateCommand } from "../src/internal/contract-create.ts";
 import { openContractPinning, type ContractPinning } from "../src/internal/contract-pinning.ts";
 import { openProject } from "../src/internal/project.ts";
-import { nonInteractivePrompts } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 const PNG_10_BY_10 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAH0lEQVR4nOTJQQ0AAAwCMbLMv+VDARig3z6g7FSttgEAAP//iF8rAQAAAAZJREFUAwCphQMUUAhjNAAAAABJRU5ErkJggg==",
@@ -90,9 +90,7 @@ async function projectWithContract(): Promise<string> {
       regionWidth: undefined,
       regionHeight: undefined,
     },
-    nonInteractivePrompts,
-    runtime(root),
-    { fetchBaseline: fakeFetch() },
+    testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
   );
   expect(created.exitCode).toBe(0);
   return root;

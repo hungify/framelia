@@ -6,12 +6,9 @@ import type { AuthOptions } from "../internal/auth.ts";
 
 export const authCommand = buildCommand({
   loader: async () => {
-    const [{ authCommand: runAuthCommand }, { createClackPrompts }] = await Promise.all([
-      import("../internal/auth.ts"),
-      import("../internal/clack-prompts.ts"),
-    ]);
+    const { authCommand: runAuthCommand } = await import("../internal/auth.ts");
     return function (this: CliContext, flags: AuthOptions) {
-      return runAuthCommand(flags, createClackPrompts(this.process), this.process);
+      return runAuthCommand(flags, this);
     };
   },
   parameters: {

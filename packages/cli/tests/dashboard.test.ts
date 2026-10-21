@@ -11,6 +11,7 @@ import { createDashboardOutput, type DashboardOutput } from "../src/internal/das
 import type { DashboardHost } from "../src/internal/dashboard-runtime.ts";
 import { createFakeProcess } from "./fake-process.ts";
 import { createSelectedRun } from "./selected-run-fixture.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-dashboard-"));
 beforeAll(async () => {
@@ -163,9 +164,8 @@ describe("dashboard: port validation", () => {
     await expect(
       dashboardDevserverCommand(
         { ...baseDashboardOptions, projectRoot: tmp, port: -1 },
-        fakeRuntime(),
-        host,
-        output,
+        testEnvironment(fakeRuntime(), { dashboard: host }),
+        { output: output },
       ),
     ).rejects.toBeInstanceOf(UsageError);
     expect(startServerSpy).not.toHaveBeenCalled();
@@ -196,9 +196,8 @@ describe("dashboard: lifecycle", () => {
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      fakeRuntime(),
-      host,
-      output,
+      testEnvironment(fakeRuntime(), { dashboard: host }),
+      { output: output },
     );
     expect(output.ready).toHaveBeenCalledTimes(1);
     expect(closeSpies).toHaveLength(1);
@@ -211,9 +210,8 @@ describe("dashboard: lifecycle", () => {
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp, port: 80 },
-      fakeRuntime(),
-      host,
-      output,
+      testEnvironment(fakeRuntime(), { dashboard: host }),
+      { output: output },
     );
     expect(output.ready).toHaveBeenCalledWith(
       expect.objectContaining({ localUrls: ["http://localhost:80/"] }),
@@ -226,9 +224,8 @@ describe("dashboard: lifecycle", () => {
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      fakeRuntime(),
-      host,
-      output,
+      testEnvironment(fakeRuntime(), { dashboard: host }),
+      { output: output },
     );
     expect(output.shortcutHint).not.toHaveBeenCalled();
   });
@@ -242,9 +239,8 @@ describe("dashboard: lifecycle", () => {
     await expect(
       dashboardDevserverCommand(
         { ...baseDashboardOptions, projectRoot: tmp, noOpen: false },
-        fakeRuntime(),
-        host,
-        createFakeOutput(),
+        testEnvironment(fakeRuntime(), { dashboard: host }),
+        { output: createFakeOutput() },
       ),
     ).resolves.toBeUndefined();
   });
@@ -256,9 +252,8 @@ describe("dashboard: lifecycle", () => {
     const output = createFakeOutput();
     const done = dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      fakeRuntime(),
-      host,
-      output,
+      testEnvironment(fakeRuntime(), { dashboard: host }),
+      { output: output },
     );
     await vi.waitFor(() => expect(startServerSpy).toHaveBeenCalledTimes(1));
     emitLine("r");
@@ -274,9 +269,8 @@ describe("dashboard: lifecycle", () => {
     const { host, closeSpies, emitLine } = createFakeHost({ isTTY: true });
     const done = dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      fakeRuntime(),
-      host,
-      createFakeOutput(),
+      testEnvironment(fakeRuntime(), { dashboard: host }),
+      { output: createFakeOutput() },
     );
     await vi.waitFor(() => expect(host.startServer).toHaveBeenCalledTimes(1));
     emitLine("q");
@@ -290,9 +284,8 @@ describe("dashboard: lifecycle", () => {
     triggerShutdown();
     await dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      fakeRuntime(),
-      host,
-      createFakeOutput(),
+      testEnvironment(fakeRuntime(), { dashboard: host }),
+      { output: createFakeOutput() },
     );
     expect(listenerClosedCount()).toBe(1);
   });
@@ -302,9 +295,8 @@ describe("dashboard: lifecycle", () => {
     const output = createFakeOutput();
     const done = dashboardDevserverCommand(
       { ...baseDashboardOptions, projectRoot: tmp },
-      fakeRuntime(),
-      host,
-      output,
+      testEnvironment(fakeRuntime(), { dashboard: host }),
+      { output: output },
     );
     await vi.waitFor(() => expect(host.startServer).toHaveBeenCalledTimes(1));
     emitLine("h");

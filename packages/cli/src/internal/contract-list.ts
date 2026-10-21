@@ -7,14 +7,11 @@ import {
   type ResolvedProjectPolicy,
 } from "@framelia/verify/project-policy";
 
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
 import { reconcileBinding, type BindingReconciliation } from "./binding-reconciliation.ts";
 import { failureDiagnostic, frameliaNext } from "./outcome.ts";
-import {
-  collectPlaywrightBindings,
-  type PlaywrightTransportDependencies,
-} from "./playwright-transport.ts";
+import { collectPlaywrightBindings } from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
 
 const CONTRACT_LIST_OUTCOME_FORMAT_VERSION = 1 as const;
@@ -114,8 +111,7 @@ function bindingEntry(
  */
 export async function listContractBindings(
   policy: ResolvedProjectPolicy,
-  runtime: CliRuntime,
-  dependencies: PlaywrightTransportDependencies = {},
+  env: Pick<CommandEnvironment, "process" | "adapters">,
 ): Promise<ContractBindings> {
   const inspection = await inspectAuthoredContracts(policy);
   const entries: ContractListEntry[] = inspection.invalid.map((entry) => ({
@@ -169,8 +165,8 @@ export async function listContractBindings(
     manifest = await collectPlaywrightBindings({
       policy,
       selectedProjects: policy.playwright.projects,
-      runtime,
-      dependencies,
+      runtime: env.process,
+      dependencies: await env.adapters.playwright(),
     });
   } catch (error) {
     diagnostics.push(
@@ -203,12 +199,11 @@ export async function listContractBindings(
 
 export async function contractListCommand(
   options: ContractListOptions,
-  runtime: CliRuntime,
-  dependencies: PlaywrightTransportDependencies = {},
+  env: Pick<CommandEnvironment, "process" | "adapters">,
 ): Promise<CliResult<ContractListOutcome>> {
   try {
-    const policy = await openProject(options.projectRoot, runtime).loadConfig();
-    const { entries, diagnostics } = await listContractBindings(policy, runtime, dependencies);
+    const policy = await openProject(options.projectRoot, env.process).loadConfig();
+    const { entries, diagnostics } = await listContractBindings(policy, env);
 
     entries.sort((left, right) =>
       `${left.contractId ?? ""}\0${left.project ?? ""}\0${left.contractPath}`.localeCompare(

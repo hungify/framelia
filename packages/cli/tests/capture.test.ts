@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EXIT_USAGE_ERROR, UsageError } from "../src/exit.ts";
 import { captureCommand } from "../src/internal/capture.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 function fakeRuntime(overrides: Partial<CliRuntime> = {}): CliRuntime {
   return {
@@ -22,7 +23,7 @@ describe("captureCommand", () => {
     await expect(
       captureCommand(
         { fileKey: "abc", nodeId: "1:1", out: "out.png", scale: -1, canvasFill: undefined },
-        fakeRuntime({ env: { FIGMA_ACCESS_TOKEN: "test-token" } }),
+        testEnvironment(fakeRuntime({ env: { FIGMA_ACCESS_TOKEN: "test-token" } })),
       ),
     ).rejects.toBeInstanceOf(UsageError);
   });
@@ -31,7 +32,7 @@ describe("captureCommand", () => {
     await expect(
       captureCommand(
         { fileKey: "abc", nodeId: "1:1", out: "out.png", scale: undefined, canvasFill: undefined },
-        fakeRuntime({ env: {} }),
+        testEnvironment(fakeRuntime({ env: {} })),
       ),
     ).rejects.toBeInstanceOf(UsageError);
   });
@@ -42,8 +43,9 @@ describe("captureCommand", () => {
   ])("exits 2, not the visual-mismatch 1, when no baseline was fetched", async (outcome) => {
     const result = await captureCommand(
       { fileKey: "abc", nodeId: "1:1", out: "out.png", scale: undefined, canvasFill: undefined },
-      fakeRuntime({ env: { FIGMA_ACCESS_TOKEN: "test-token" } }),
-      { fetchBaseline: async () => outcome },
+      testEnvironment(fakeRuntime({ env: { FIGMA_ACCESS_TOKEN: "test-token" } }), {
+        figma: { fetchBaseline: async () => outcome },
+      }),
     );
     expect(result).toMatchObject({ ok: false, exitCode: EXIT_USAGE_ERROR, body: outcome });
   });

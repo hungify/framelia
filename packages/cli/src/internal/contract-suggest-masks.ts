@@ -1,6 +1,6 @@
-import { suggestMasksForUrl } from "@framelia/verify/cli";
 import { z } from "zod";
 
+import type { CommandEnvironment } from "../environment.ts";
 import { EXIT_USAGE_ERROR, usageErrorFromZodError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
 import { targetUrlMessage, viewportPairMessage } from "./browser-input.ts";
@@ -31,20 +31,15 @@ export interface SuggestMasksOptions {
 
 export type SuggestMasksResult = CliResult<unknown>;
 
-export interface SuggestMasksDependencies {
-  readonly suggestMasksForUrl: typeof suggestMasksForUrl;
-}
-
-const defaultDependencies: SuggestMasksDependencies = { suggestMasksForUrl };
-
 export async function suggestMasksCommand(
   options: SuggestMasksOptions,
-  deps: SuggestMasksDependencies = defaultDependencies,
+  env: Pick<CommandEnvironment, "adapters">,
 ): Promise<SuggestMasksResult> {
   const parsed = suggestMasksOptionsSchema.safeParse(options);
   if (!parsed.success) throw usageErrorFromZodError(parsed.error);
 
-  const result = await deps.suggestMasksForUrl({
+  const browser = await env.adapters.browser();
+  const result = await browser.suggestMasksForUrl({
     url: options.targetUrl,
     ...(options.viewportWidth !== undefined && options.viewportHeight !== undefined
       ? { viewport: { width: options.viewportWidth, height: options.viewportHeight } }

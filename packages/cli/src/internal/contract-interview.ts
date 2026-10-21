@@ -5,7 +5,7 @@ import {
   type StyleCheckPoint,
 } from "@framelia/contracts";
 import { targetPathSchema } from "@framelia/contracts/workflow";
-import { deriveExpectStyle, resolveNodeSpec } from "@framelia/verify";
+import type { deriveExpectStyle, resolveNodeSpec } from "@framelia/verify";
 import { z } from "zod";
 
 import type { ScopeKind, ViewportPreset } from "../cli-constants.ts";
@@ -68,8 +68,6 @@ export interface ContractInterviewDependencies {
 export type ContractInterviewResult =
   | { readonly kind: "completed"; readonly answers: ContractAnswers }
   | { readonly kind: "cancelled" };
-
-const defaultDependencies: ContractInterviewDependencies = { resolveNodeSpec, deriveExpectStyle };
 
 export interface ParsedFigmaDesignUrl {
   fileKey: string;
@@ -658,7 +656,7 @@ export async function collectContractAnswers(
   options: ContractCreateOptions,
   prompts: PromptAdapter,
   runtime: CliRuntime,
-  deps: ContractInterviewDependencies = defaultDependencies,
+  deps: ContractInterviewDependencies,
 ): Promise<ContractInterviewResult> {
   try {
     return { kind: "completed", answers: await runInterview(options, prompts, runtime, deps) };

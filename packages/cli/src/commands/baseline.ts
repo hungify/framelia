@@ -9,7 +9,7 @@ const promoteCommand = buildCommand({
   loader: async () => {
     const { baselinePromoteCommand } = await import("../internal/baseline-promote.ts");
     return async function (this: CliContext, flags: BaselinePromoteOptions) {
-      emitResult(this, await baselinePromoteCommand(flags, this.process));
+      emitResult(this, await baselinePromoteCommand(flags, this));
     };
   },
   parameters: {

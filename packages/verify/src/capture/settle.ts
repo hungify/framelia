@@ -28,8 +28,27 @@ export function fontReadyTimeoutMs(remainingBudgetMs: number): number {
 }
 
 /**
+ * Share of the capture's remaining time budget the network-idle wait may use, never more
+ * than NETWORK_IDLE_BEST_EFFORT_MS. A short matcher `timeout` must not be spent almost
+ * entirely on this best-effort wait and then end in a generic matcher timeout.
+ */
+export const NETWORK_IDLE_BUDGET_FRACTION = 0.25;
+
+export function networkIdleTimeoutMs(remainingBudgetMs: number): number {
+  return Math.max(
+    0,
+    Math.min(
+      NETWORK_IDLE_BEST_EFFORT_MS,
+      Math.floor(remainingBudgetMs * NETWORK_IDLE_BUDGET_FRACTION),
+    ),
+  );
+}
+
+/**
  * @param captureBudgetMs the capture's remaining time budget when settle() starts; the
- *   font wait gets FONT_READY_BUDGET_FRACTION of whatever is left after network idle.
+ *   network-idle wait gets NETWORK_IDLE_BUDGET_FRACTION of it (at most
+ *   NETWORK_IDLE_BEST_EFFORT_MS), and the font wait gets FONT_READY_BUDGET_FRACTION of
+ *   whatever is left after network idle.
  */
 export async function settle(
   page: Page,
@@ -39,13 +58,20 @@ export async function settle(
   captureBudgetMs: number,
 ): Promise<FontReadiness> {
   const startedMs = Date.now();
-  await page
-    .waitForLoadState("networkidle", { timeout: NETWORK_IDLE_BEST_EFFORT_MS })
-    .catch(() =>
-      warnings.push(
-        `network did not become idle within ${NETWORK_IDLE_BEST_EFFORT_MS}ms; capture may include pending requests.`,
-      ),
-    );
+  const idleTimeoutMs = networkIdleTimeoutMs(captureBudgetMs);
+  const cutShort =
+    idleTimeoutMs < NETWORK_IDLE_BEST_EFFORT_MS
+      ? ` (cut short by the ${Math.max(0, Math.floor(captureBudgetMs))}ms capture budget; the best-effort wait is ${NETWORK_IDLE_BEST_EFFORT_MS}ms)`
+      : "";
+  const networkIdleWarning = `network did not become idle within ${idleTimeoutMs}ms${cutShort}; capture may include pending requests.`;
+  // Playwright treats `timeout: 0` as "no timeout", so an exhausted budget skips the wait.
+  if (idleTimeoutMs > 0) {
+    await page
+      .waitForLoadState("networkidle", { timeout: idleTimeoutMs })
+      .catch(() => warnings.push(networkIdleWarning));
+  } else {
+    warnings.push(networkIdleWarning);
+  }
   if (animationPolicy === "freeze") {
     try {
       // Tagged and idempotent: repeated captures on one caller-owned page never stack

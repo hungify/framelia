@@ -12,6 +12,7 @@ export type SelectedRunTypeSurface = [SelectedRun, AuthoritativeRunVerdict];
 describe("public API surface", () => {
   it("exposes the selected-run reader and loader-owned authority evaluator", () => {
     expect(runBundleApi.readSelectedRun).toBeTypeOf("function");
+    expect(runBundleApi.cacheSelectedRunProjection).toBeTypeOf("function");
     expect(runBundleApi.evaluateAuthoritativeRun).toBeTypeOf("function");
     expect(runBundleApi.readRunBundle).toBeTypeOf("function");
   });

@@ -7,23 +7,27 @@ import {
   type DashboardSource,
 } from "@framelia/dashboard-server";
 import { JSON_INDENT_SPACES, sanitizePortableValue } from "@framelia/verify";
-import { readSelectedRun } from "@framelia/verify/run-bundle";
+import { cacheSelectedRunProjection, readSelectedRun } from "@framelia/verify/run-bundle";
 
 export const DASHBOARD_RUN_FILE = "selected-run.json";
 const REPORT_MARKER_FILE = ".framelia-report.json";
 const REPORT_MARKER = "framelia-selected-run-dashboard-report";
 
-/** Live source for exactly one explicit durable run. Refreshes from disk for running runs. */
+/**
+ * Live source for exactly one explicit durable run. Refreshes from disk when the run
+ * changes; snapshot() and files() share one projection per change.
+ */
 export function selectedDashboardSource(
   projectRoot: string,
   runId: string,
   suiteName?: string,
 ): DashboardSource {
+  const projection = cacheSelectedRunProjection(projectRoot, runId, (selectedRun) =>
+    projectSelectedRun(projectRoot, selectedRun, suiteName),
+  );
   return {
-    snapshot: () =>
-      projectSelectedRun(projectRoot, readSelectedRun(projectRoot, runId), suiteName).run,
-    files: () =>
-      projectSelectedRun(projectRoot, readSelectedRun(projectRoot, runId), suiteName).files,
+    snapshot: () => projection().run,
+    files: () => projection().files,
   };
 }
 

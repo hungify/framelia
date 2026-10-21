@@ -9,6 +9,7 @@ import {
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, portableErrorMessage, sanitizePortableValue } from "@framelia/verify";
 import {
+  cacheSelectedRunProjection,
   computeExecutionGraphDigest,
   computeCaseId,
   finalizeRunRecord,
@@ -16,7 +17,6 @@ import {
   publishAttempt,
   readCasePlans,
   readRunPlan,
-  readSelectedRun,
   startRunRecord,
 } from "@framelia/verify/run-bundle";
 import type {
@@ -71,6 +71,7 @@ export interface FrameliaReporterOptions {
 type DashboardServerModule = typeof import("@framelia/dashboard-server");
 type ReporterStoreInstance = InstanceType<DashboardServerModule["ReporterStore"]>;
 type DashboardServer = Awaited<ReturnType<DashboardServerModule["startDashboardServer"]>>;
+type SelectedRunProjection = ReturnType<DashboardServerModule["projectSelectedRun"]>;
 
 let dashboardServerModulePromise: Promise<DashboardServerModule> | undefined;
 
@@ -122,6 +123,9 @@ export default class FrameliaReporter implements Reporter {
   #runBundlePending: Promise<void>[] = [];
   #publicationDiagnostics: Diagnostic[] = [];
   #selectedListeners = new Set<(event: DashboardEvent) => void>();
+  /** The dashboard's selected-run projection, recomputed only when the run bundle changes
+   *  (a published attempt or finalization) and shared by snapshot() and files(). */
+  #selectedProjection?: () => SelectedRunProjection;
   #selectedSequence = 0;
   #runContext?: RunContext;
   #transportCollection?: TransportCollection;
@@ -216,10 +220,7 @@ export default class FrameliaReporter implements Reporter {
             const bundle = this.#runBundle;
             const lowLevel = store.snapshot();
             if (!bundle) return lowLevel;
-            const selected = mod.projectSelectedRun(
-              bundle.root,
-              readSelectedRun(bundle.root, bundle.runId),
-            ).run;
+            const selected = this.#projectSelectedRun(mod, bundle).run;
             if (lowLevel.contracts.length === 0) return selected;
             const contracts = [...selected.contracts, ...lowLevel.contracts];
             const summary = mod.summarize(contracts);
@@ -230,10 +231,7 @@ export default class FrameliaReporter implements Reporter {
             const bundle = this.#runBundle;
             const lowLevel = store.files();
             if (!bundle) return lowLevel;
-            const selected = mod.projectSelectedRun(
-              bundle.root,
-              readSelectedRun(bundle.root, bundle.runId),
-            ).files;
+            const selected = this.#projectSelectedRun(mod, bundle).files;
             return new Map([...lowLevel, ...selected]);
           },
           subscribe: (listener) => {
@@ -276,6 +274,16 @@ export default class FrameliaReporter implements Reporter {
         this.#recordingError = `run-bundle recording is disabled for this run: ${errorMessage(error)}`;
         console.error(`framelia reporter: ${this.#recordingError}`);
       });
+  }
+
+  #projectSelectedRun(
+    mod: DashboardServerModule,
+    bundle: { root: string; runId: string },
+  ): SelectedRunProjection {
+    this.#selectedProjection ??= cacheSelectedRunProjection(bundle.root, bundle.runId, (run) =>
+      mod.projectSelectedRun(bundle.root, run),
+    );
+    return this.#selectedProjection();
   }
 
   #reconcileExecution(): void {

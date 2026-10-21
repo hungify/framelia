@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { canonicalJsonDigest } from "../src/canonical-json.ts";
 import { resolveProjectPolicy } from "../src/project-policy.ts";
 import {
+  cacheSelectedRunProjection,
   computeAttemptId,
   computeCaseId,
   finalizeRunRecord,
@@ -36,6 +37,7 @@ import {
   runRecordPath,
   startRunRecord,
 } from "../src/run-bundle/index.ts";
+import type { SelectedRun } from "../src/run-bundle/index.ts";
 import { makeSolidPng } from "../src/testing.ts";
 import { AppError } from "../src/types.ts";
 
@@ -1055,6 +1057,55 @@ describe("freezeRunPlan", () => {
     const casePlan = casePlanFixture();
     const plan = runPlanFixture("run-duplicate-case-plan", [casePlan]);
     expect(() => freezeRunPlan(root, plan, [casePlan, casePlan])).toThrow(/Duplicate case plan/);
+  });
+});
+
+describe("cacheSelectedRunProjection", () => {
+  it("projects once per run change and picks up newly published attempts and finalization", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-cached-projection";
+    setUpRun(root, runId, [casePlan]);
+    const project = vi.fn<(selected: SelectedRun) => { selected: SelectedRun }>((selected) => ({
+      selected,
+    }));
+    const read = cacheSelectedRunProjection(root, runId, project);
+
+    const empty = read();
+    expect(read()).toBe(empty);
+    expect(project).toHaveBeenCalledTimes(1);
+    expect(empty.selected.cases[0]?.attempts).toHaveLength(0);
+
+    // Attempt publication never rewrites run.json; a running run still sees it.
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+      completeEvidence(Buffer.from("attempt-0")),
+    );
+    const published = read();
+    expect(published).not.toBe(empty);
+    expect(published.selected.cases[0]?.attempts).toHaveLength(1);
+    expect(read()).toBe(published);
+    expect(project).toHaveBeenCalledTimes(2);
+
+    await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
+    const finalized = read();
+    expect(finalized.selected.record.status).toBe("finalized");
+    expect(read()).toBe(finalized);
+    expect(project).toHaveBeenCalledTimes(3);
+  });
+
+  it("never caches a failed read", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-cached-not-started";
+    const plan = runPlanFixture(runId, [casePlan]);
+    freezeRunPlan(root, plan, [casePlan]);
+    const read = cacheSelectedRunProjection(root, runId, (selected) => selected);
+    expect(() => read()).toThrow(/No run record/);
+    startRunRecord(root, plan, "2026-09-14T12:00:00.000Z");
+    expect(read().record.status).toBe("running");
   });
 });
 

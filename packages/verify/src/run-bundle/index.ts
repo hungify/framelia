@@ -32,6 +32,7 @@ export type { CasePlanReconciliation } from "./reconcile.ts";
 export { readRunBundle } from "./read.ts";
 export type { RunBundle } from "./read.ts";
 export { evaluateAuthoritativeRun, readSelectedRun } from "./selected-run.ts";
+export { cacheSelectedRunProjection } from "./selected-run-cache.ts";
 export type {
   AuthoritativeCaseVerdict,
   AuthoritativeRunIssue,

@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { runRecordPath } from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -83,6 +84,29 @@ describe("selected run dashboard report", () => {
         fs.access(path.join(outputDirectory, "data", portablePath)),
       ).resolves.toBeUndefined();
     }
+  });
+
+  it("serves snapshot() and files() from one projection until the run changes", async () => {
+    const root = await temporaryRoot("framelia-source-cache-");
+    await createSelectedRun(root, { runId: "run-cached", attempts: [false, true] });
+    const source = selectedDashboardSource(root, "run-cached");
+
+    const snapshot = await source.snapshot();
+    const files = await source.files();
+    expect(await source.snapshot()).toBe(snapshot);
+    expect(await source.files()).toBe(files);
+    expect(files.size).toBeGreaterThan(0);
+
+    // A rewritten run record (e.g. a re-seal) is a change: the next call re-projects it.
+    const recordPath = runRecordPath(root, "run-cached");
+    const record = JSON.parse(await fs.readFile(recordPath, "utf8"));
+    await fs.writeFile(
+      recordPath,
+      `${JSON.stringify({ ...record, finalizedAt: "2026-09-15T00:00:20.000Z" }, null, 2)}\n`,
+    );
+    const refreshed = await source.snapshot();
+    expect(refreshed).not.toBe(snapshot);
+    expect(refreshed.finishedAt).toBe("2026-09-15T00:00:20.000Z");
   });
 
   it("report command requires an explicit run and returns that identity", async () => {

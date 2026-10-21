@@ -4,7 +4,7 @@ import { getProfile } from "@framelia/contracts";
 import type { PNG } from "pngjs";
 
 import { RUN_ARTIFACT } from "../artifacts.ts";
-import { PIXEL_THRESHOLD } from "../constants.ts";
+import { PIXEL_THRESHOLD, WHITE_RGBA } from "../constants.ts";
 import type { CompareOptions, CompareOutcome, TopIssue } from "../types.ts";
 import { areaGap } from "./area-gap.ts";
 import { avgDeltaE2000 } from "./delta-e.ts";
@@ -25,8 +25,8 @@ import {
   largestCluster,
   pixelCompare,
 } from "./pixel.ts";
-import { detectBorderColor, padTo, readPng, writePng } from "./png.ts";
-import { ssimCompare } from "./ssim.ts";
+import { detectBorderColor, flattenAlpha, padTo, parseHexRgb, readPng, writePng } from "./png.ts";
+import { SSIM_WINDOW_SIZE, ssimCompare, ssimDownsampleFactor, ssimWindowSize } from "./ssim.ts";
 
 const MAX_AREA_GAP_PERCENT = 100;
 
@@ -136,8 +136,16 @@ export function compare(
   const height = Math.max(baseline.height, actual.height);
   const resizedForCompare = baseline.width !== actual.width || baseline.height !== actual.height;
   const fillColor = detectBorderColor(baseline);
-  const baselineAligned = padTo(baseline, width, height, fillColor);
-  const actualAligned = padTo(actual, width, height, fillColor);
+  // Flatten both aligned images onto one opaque background once, up front. Otherwise each
+  // metric treats alpha its own way -- pixelmatch blends onto white, SSIM and ΔE read raw
+  // RGB and ignore alpha -- so a transparent pixel could match under one and not another.
+  const background: [number, number, number] = options.canvasFill
+    ? parseHexRgb(options.canvasFill)
+    : fillColor[3] === 255
+      ? [fillColor[0], fillColor[1], fillColor[2]]
+      : [WHITE_RGBA[0], WHITE_RGBA[1], WHITE_RGBA[2]];
+  const baselineAligned = flattenAlpha(padTo(baseline, width, height, fillColor), background);
+  const actualAligned = flattenAlpha(padTo(actual, width, height, fillColor), background);
 
   const maskBitmap = options.maskBounds?.length
     ? buildMaskBitmap(width, height, options.maskBounds)
@@ -148,6 +156,18 @@ export function compare(
   writePng(diffPath, pixel.diff);
 
   const ssim = ssimCompare(baselineAligned, actualAligned, maskBitmap);
+  const ssimWindow = ssimWindowSize(width, height);
+  if (ssimWindow < SSIM_WINDOW_SIZE) {
+    warnings.push(
+      `ssim used a reduced ${ssimWindow}x${ssimWindow} window: the ${width}x${height} comparison is narrower than the standard ${SSIM_WINDOW_SIZE}px window.`,
+    );
+  }
+  const ssimFactor = ssimDownsampleFactor(width, height);
+  if (ssimFactor > 1) {
+    warnings.push(
+      `ssim computed on a ${ssimFactor}x box-downsampled copy of the ${width}x${height} comparison (memory budget); pixel and ΔE metrics use full resolution.`,
+    );
+  }
 
   const bbox = diffBoundingBox(pixel.diff);
   const avgDeltaE = bbox

@@ -10,6 +10,7 @@ interface CheckFlags {
   all?: boolean;
   projectRoot?: string;
   project?: string[];
+  runIdFile?: string;
 }
 
 export const checkCommand = buildCommand({
@@ -45,6 +46,13 @@ export const checkCommand = buildCommand({
         variadic: true,
         brief: "exact configured visual project name (repeatable; empty selects unnamed)",
         placeholder: "name",
+      },
+      runIdFile: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "write the durable run ID to this file as soon as the run starts",
+        placeholder: "path",
       },
     },
     aliases: { c: "contract", p: "project", r: "projectRoot" },

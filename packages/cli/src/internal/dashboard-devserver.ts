@@ -8,10 +8,11 @@ import { z } from "zod";
 import { selectedDashboardSource } from "../dashboard/report.ts";
 import { resolveDashboardUrls, type NetworkUrl } from "../dashboard/urls.ts";
 import type { CommandEnvironment } from "../environment.ts";
-import { usageErrorFromZodError } from "../exit.ts";
+import { JSON_INDENT_SPACES, UsageError, usageErrorFromZodError } from "../exit.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { createDashboardOutput, type DashboardOutput } from "./dashboard-output.ts";
 import type { DashboardHost } from "./dashboard-runtime.ts";
+import { failureOutcome } from "./outcome.ts";
 import { openProject } from "./project.ts";
 import { readRunProjection } from "./run-projection.ts";
 
@@ -25,7 +26,8 @@ interface DashboardServerFlags {
 }
 export interface DashboardOptions extends DashboardServerFlags {
   readonly projectRoot: string | undefined;
-  readonly run: string;
+  /** Parser-optional so a missing run is one structured outcome, not Stricli stderr. */
+  readonly run: string | undefined;
 }
 
 export interface OpenDashboardOptions extends DashboardOptions {}
@@ -104,13 +106,20 @@ function buildShortcuts(
   ];
 }
 
+/** Shortcuts need a person at a terminal: a TTY stdin outside CI. */
+function interactiveInput(runtime: CliRuntime): boolean {
+  return "isTTY" in runtime.stdin && runtime.stdin.isTTY === true && !runtime.env.CI;
+}
+
 function listenForShortcuts(
   host: DashboardHost,
+  runtime: CliRuntime,
   output: DashboardOutput,
   shortcuts: readonly Shortcut[],
 ): () => void {
+  if (!interactiveInput(runtime)) return () => undefined;
   let actionRunning = false;
-  const stop = host.listenForInput((line) => {
+  const stop = host.listenForInput(runtime.stdin, (line) => {
     if (actionRunning) return;
     const input = line.trim().toLowerCase();
     if (input === "h") {
@@ -124,7 +133,6 @@ function listenForShortcuts(
       actionRunning = false;
     });
   });
-  if (!stop) return () => undefined;
   output.shortcutHint();
   return stop;
 }
@@ -132,6 +140,7 @@ function listenForShortcuts(
 async function serveDashboard(
   source: DashboardSource,
   options: DashboardServerFlags,
+  env: Pick<CommandEnvironment, "process" | "signals">,
   host: DashboardHost,
   output: DashboardOutput,
   onReady: (address: {
@@ -141,8 +150,9 @@ async function serveDashboard(
   }) => void,
 ): Promise<void> {
   const { hostname, explicit } = resolveHost(options.host);
-  const shutdown = host.waitForShutdown();
-  let shouldOpen = !options.noOpen;
+  const shutdown = host.waitForShutdown(env.signals);
+  // CI has nobody to look at a browser, and opening one there can hang the job.
+  let shouldOpen = !options.noOpen && !env.process.env.CI;
   let readinessEmitted = false;
   for (;;) {
     const startedAt = host.now();
@@ -173,6 +183,7 @@ async function serveDashboard(
       const quitSignal = createDeferred<void>();
       const stopListening = listenForShortcuts(
         host,
+        env.process,
         output,
         buildShortcuts(
           host,
@@ -202,34 +213,55 @@ async function serveDashboard(
   }
 }
 
-async function loadDashboardSource(
-  options: DashboardDevserverOptions,
-  runtime: CliRuntime,
-): Promise<{ source: DashboardSource; root: string }> {
-  const project = openProject(options.projectRoot, runtime);
-  return { source: await selectedDashboardSource(project.root, options.run), root: project.root };
-}
-
+/**
+ * Serves one selected run until shutdown. Once listening it writes exactly one
+ * `framelia.open-ready` record to stdout; a failure before that (missing run, invalid
+ * port, port in use) writes one `framelia.open-outcome` error record instead and exits 2.
+ */
 export async function dashboardDevserverCommand(
   options: DashboardDevserverOptions,
   env: CommandEnvironment,
   seams: { readonly output?: DashboardOutput } = {},
 ): Promise<void> {
-  requirePositivePort(options.port);
   const runtime = env.process;
-  const host = await env.adapters.dashboard();
-  const output = seams.output ?? createDashboardOutput(runtime);
-  const { source, root } = await loadDashboardSource(options, runtime);
-  const projection = readRunProjection(root, options.run);
-  await serveDashboard(source, options, host, output, (address) => {
-    runtime.stdout.write(
-      `${JSON.stringify({
-        formatVersion: 1,
-        kind: "framelia.open-ready",
-        command: options.command ?? "dashboard",
-        selectedRun: { runId: projection.runId, bundlePath: projection.bundlePath },
-        address,
-      })}\n`,
-    );
-  });
+  const command = options.command ?? "dashboard";
+  let ready = false;
+  try {
+    requirePositivePort(options.port);
+    if (!options.run) {
+      throw new UsageError(`${command} requires --run <id>; list durable runs to choose one.`, {
+        code: "RUN_SELECTION_MISSING",
+      });
+    }
+    const project = openProject(options.projectRoot, runtime);
+    const projection = readRunProjection(project.root, options.run);
+    const source = selectedDashboardSource(project.root, options.run);
+    const host = await env.adapters.dashboard();
+    const output = seams.output ?? createDashboardOutput(runtime);
+    await serveDashboard(source, options, env, host, output, (address) => {
+      ready = true;
+      runtime.stdout.write(
+        `${JSON.stringify({
+          formatVersion: 1,
+          kind: "framelia.open-ready",
+          command,
+          selectedRun: { runId: projection.runId, bundlePath: projection.bundlePath },
+          address,
+        })}\n`,
+      );
+    });
+  } catch (error) {
+    // After readiness the one stdout record is already written; later failures stay on stderr.
+    if (ready) throw error;
+    const failure = failureOutcome({
+      kind: "framelia.open-outcome",
+      command,
+      error,
+      fallbackCode: "DASHBOARD_FAILED",
+      stage: command,
+      projectRoot: options.projectRoot,
+    });
+    runtime.stdout.write(`${JSON.stringify(failure.body, null, JSON_INDENT_SPACES)}\n`);
+    runtime.exitCode = failure.exitCode;
+  }
 }

@@ -93,7 +93,10 @@ describe("route map: default command", () => {
     await run(["--port", "-1"], { process: fakeProcess, loadProjectEnv: false });
     expect(fakeProcess.exitCode).toBe(2);
     expect(fakeProcess.stderrText()).not.toContain("No command registered");
-    expect(fakeProcess.stderrText()).toContain("--run");
+    expect(JSON.parse(fakeProcess.stdoutText())).toMatchObject({
+      kind: "framelia.open-outcome",
+      command: "dashboard",
+    });
   });
 });
 

@@ -24,7 +24,7 @@ import { initCommand } from "./commands/init.ts";
 import { schemaCommand } from "./commands/schema.ts";
 import { statusCommand } from "./commands/status.ts";
 import { buildContext } from "./context.ts";
-import type { CliAdapters } from "./environment.ts";
+import type { CliAdapters, EnvironmentOverrides } from "./environment.ts";
 import { determineExitCode, normalizeStricliExitCode } from "./exit.ts";
 import type { CliRuntime } from "./runtime-types.ts";
 
@@ -102,12 +102,18 @@ function explicitProjectRoot(argv: readonly string[]): string | undefined {
 
 export async function run(
   argv: string[] = process.argv.slice(2),
-  options: { process?: CliRuntime; loadProjectEnv?: boolean; adapters?: Partial<CliAdapters> } = {},
+  options: {
+    process?: CliRuntime;
+    loadProjectEnv?: boolean;
+    adapters?: Partial<CliAdapters>;
+    overrides?: EnvironmentOverrides;
+  } = {},
 ): Promise<void> {
   const context = buildContext({
     process: options.process,
     version: PACKAGE_VERSION,
     ...(options.adapters ? { adapters: options.adapters } : {}),
+    ...(options.overrides ? { overrides: options.overrides } : {}),
   });
   // Resolve the selected application root before reading any environment file. Loading
   // cwd first would let an unrelated parent/sibling .env permanently win over an

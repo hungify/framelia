@@ -123,10 +123,10 @@ describe("golden baseline: alias routes (fetch-gold / diff)", () => {
   });
 });
 
-describe("golden baseline: compare is result-producing (exit 0/1, never a usage error for a checked failure)", () => {
-  it("returns pass: false as JSON on stdout with exit 1 when files are missing/mismatched", () => {
+describe("golden baseline: compare is result-producing (JSON on stdout for every checked failure)", () => {
+  it("returns pass: false as JSON on stdout with exit 2 when input files are missing", () => {
     const result = run(["compare", "--baseline", "missing-a.png", "--actual", "missing-b.png"]);
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(2);
     expect(result.stderr).toBe("");
     const parsed = JSON.parse(result.stdout) as { pass: boolean };
     expect(parsed.pass).toBe(false);
@@ -134,8 +134,17 @@ describe("golden baseline: compare is result-producing (exit 0/1, never a usage 
 });
 
 describe("golden baseline: fast-failing required-flag routes", () => {
+  it("`open` without --run returns one JSON outcome pointing at `runs list`, exit 2", () => {
+    const result = run(["open"]);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      kind: "framelia.open-outcome",
+      diagnostics: [{ code: "RUN_SELECTION_MISSING" }],
+      next: { command: "framelia", argv: ["runs", "list"] },
+    });
+  });
+
   it.each([
-    ["open", ["open"], "Expected input for flag --run"],
     ["auth", ["auth"], "Expected input for flag --url"],
     [
       "contract suggest-masks",

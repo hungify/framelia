@@ -45,7 +45,7 @@ describe("published CLI", () => {
   });
 
   it.each([
-    ["contract", [], ["schemaVersion", "target", "contracts"]],
+    ["contract", [], ["formatVersion", "kind", "id", "target", "baseline"]],
     [
       "requirements",
       ["--target", "requirements"],

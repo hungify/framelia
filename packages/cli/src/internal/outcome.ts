@@ -57,6 +57,7 @@ const STATUS_CODES = new Set([
 /** Codes whose repair starts from the authored contract/binding inventory. */
 const CONTRACT_LIST_CODES = new Set([
   "UNKNOWN_CONTRACT_ID",
+  "CONTRACT_REQUIRED",
   "UNKNOWN_PLAYWRIGHT_PROJECT",
   "CHECK_SELECTION_INVALID",
   "CHECK_SELECTION_EMPTY",

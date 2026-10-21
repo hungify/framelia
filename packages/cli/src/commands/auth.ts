@@ -3,12 +3,13 @@ import { buildCommand } from "@stricli/core";
 import { identityParser, projectRootFlag } from "../cli-constants.ts";
 import type { CliContext } from "../context.ts";
 import type { AuthOptions } from "../internal/auth.ts";
+import { emitResult } from "../output.ts";
 
 export const authCommand = buildCommand({
   loader: async () => {
     const { authCommand: runAuthCommand } = await import("../internal/auth.ts");
-    return function (this: CliContext, flags: AuthOptions) {
-      return runAuthCommand(flags, this);
+    return async function (this: CliContext, flags: AuthOptions) {
+      emitResult(this, await runAuthCommand(flags, this));
     };
   },
   parameters: {

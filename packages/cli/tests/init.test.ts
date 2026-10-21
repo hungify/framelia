@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  detectPlaywrightProjects,
   initializeProject,
   planProjectInitialization,
   projectInitCommand,
@@ -119,8 +120,48 @@ describe("project initialization workflow", () => {
     });
     expect(result.body.reporter?.instructions).toContain("do not replace, reorder, or change");
     expect(fs.readFileSync(path.join(root, "playwright.config.mts"), "utf8")).toBe(playwright);
-    expect(fs.readFileSync(path.join(root, "framelia.config.ts"), "utf8")).not.toContain(
-      "playwright:",
+    expect(fs.readFileSync(path.join(root, "framelia.config.ts"), "utf8")).toContain(
+      'playwright: { config: "playwright.config.mts", projects: ["webkit"] }',
+    );
+    expect(result.body.next).toEqual({
+      command: "framelia",
+      argv: ["contract", "list", "--project-root", root],
+    });
+  });
+
+  it("detects an unnamed Playwright project and leaves a TODO when names cannot be read", async () => {
+    expect(detectPlaywrightProjects("export default { use: {} };\n")).toEqual([""]);
+    expect(
+      detectPlaywrightProjects("export default { projects: [{ name: \"a\" }, { name: 'b' }] };"),
+    ).toEqual(["a", "b"]);
+    expect(detectPlaywrightProjects("export default { projects: devices.map(toProject) };")).toBe(
+      undefined,
+    );
+
+    const root = temporaryProject();
+    fs.writeFileSync(
+      path.join(root, "playwright.config.ts"),
+      "export default { projects: devices.map(toProject) };\n",
+    );
+    const result = await projectInitCommand(
+      { projectRoot: root, dryRun: false, force: undefined },
+      testEnvironment(runtime(root), { prompts: nonInteractivePrompts }),
+    );
+    expect(fs.readFileSync(path.join(root, "framelia.config.ts"), "utf8")).toContain("TODO");
+    expect(result.body.next).toEqual({
+      command: "framelia",
+      argv: ["status", "--project-root", root],
+    });
+  });
+
+  it("ignores durable run bundles alongside auth state", async () => {
+    const root = temporaryProject();
+    await projectInitCommand(
+      { projectRoot: root, dryRun: false, force: undefined },
+      testEnvironment(runtime(root), { prompts: nonInteractivePrompts }),
+    );
+    expect(fs.readFileSync(path.join(root, ".framelia/runs/.gitignore"), "utf8")).toBe(
+      "*\n!.gitignore\n",
     );
   });
 
@@ -156,7 +197,7 @@ describe("project initialization workflow", () => {
     );
     expect(result).toMatchObject({
       exitCode: 2,
-      body: { executionState: "error", diagnostics: [{ code: "INIT_FAILED" }] },
+      body: { executionState: "error", diagnostics: [{ code: "MULTIPLE_PROJECT_CONFIGS" }] },
     });
     expect(fs.existsSync(path.join(root, ".framelia"))).toBe(false);
 

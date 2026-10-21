@@ -231,6 +231,7 @@ const suggestMasksCommand = buildCommand({
         brief: "page URL to scan",
         placeholder: "url",
       },
+      projectRoot: projectRootFlag,
       viewportWidth: {
         kind: "parsed",
         parse: numberParser,
@@ -260,6 +261,7 @@ const suggestMasksCommand = buildCommand({
     },
     aliases: {
       t: "targetUrl",
+      r: "projectRoot",
       w: "viewportWidth",
       H: "viewportHeight",
       s: "storageState",

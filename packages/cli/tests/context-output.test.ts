@@ -68,7 +68,7 @@ describe("run: project env", () => {
     {
       command: ["init"],
       kind: "framelia.init-outcome",
-      diagnostic: "INIT_FAILED",
+      diagnostic: "MULTIPLE_PROJECT_CONFIGS",
     },
   ])(
     "lets the $kind route emit one structured multiple-config outcome",

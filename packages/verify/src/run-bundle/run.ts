@@ -219,6 +219,11 @@ export async function finalizeRunRecord(
       reporterCompleted: boolean;
       resultStatus?: "passed" | "failed" | "timedout" | "interrupted";
     };
+    /** A direct (uncoordinated) runner's own overall result, e.g. Playwright's
+     *  `FullResult.status`. Anything but "passed" reports every selected case without an
+     *  accepted attempt as `selected-attempt-missing` (as `transport` always does), and an
+     *  interrupted/timed-out runner keeps the run `incomplete` rather than `finalized`. */
+    resultStatus?: "passed" | "failed" | "timedout" | "interrupted";
   },
 ): Promise<RunRecord> {
   try {
@@ -235,6 +240,8 @@ export async function finalizeRunRecord(
         ? readRunRecord(root, runId)
         : undefined;
       const now = options.now?.() ?? new Date();
+      const runnerUnfinished =
+        options.resultStatus !== undefined && options.resultStatus !== "passed";
 
       const caseResults = await Promise.all(
         plan.selectedCases.map(async (selected) => {
@@ -330,7 +337,7 @@ export async function finalizeRunRecord(
             ? evidenceVerifiedAttempts.find((attempt) => attempt.attemptId === selectedAttemptId)
             : undefined;
           const runnerAttempt = evidenceVerifiedAttempts.at(-1);
-          if (options.transport && !selectedAttempt) {
+          if ((options.transport || runnerUnfinished) && !selectedAttempt) {
             diagnostics.push({
               code: "selected-attempt-missing",
               stage: "execution",
@@ -410,8 +417,19 @@ export async function finalizeRunRecord(
           left.stage.localeCompare(right.stage) ||
           left.message.localeCompare(right.message),
       );
+      const runnerDiagnostics: Diagnostic[] =
+        options.resultStatus === "interrupted" || options.resultStatus === "timedout"
+          ? [
+              {
+                code: `execution-${options.resultStatus}`,
+                stage: "execution",
+                message: `The test runner finished with status "${options.resultStatus}"; the run did not complete.`,
+              },
+            ]
+          : [];
       const diagnostics = [
         ...publicationDiagnostics,
+        ...runnerDiagnostics,
         ...caseResults.flatMap((result) => result.diagnostics),
       ];
       const status =

@@ -3,13 +3,16 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { promotePageBaseline } from "@framelia/verify";
+import { promotePageBaseline, readPageBaselineMeta } from "@framelia/verify";
 import { makeSolidPng } from "@framelia/verify/testing";
 import { chromium } from "@playwright/test";
 import { PNG } from "pngjs";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
-import { runToMatchPageBaseline } from "../src/matchers/to-match-page-baseline.ts";
+import {
+  runToMatchPageBaseline,
+  type UpdateSnapshotsMode,
+} from "../src/matchers/to-match-page-baseline.ts";
 
 const browser = await chromium.launch();
 afterAll(() => browser.close());
@@ -69,6 +72,7 @@ interface Harness {
     received: Awaited<ReturnType<typeof browser.newPage>>,
     key: string,
     baselineDir: string,
+    updateSnapshots?: UpdateSnapshotsMode,
   ) => ReturnType<typeof runToMatchPageBaseline>;
 }
 
@@ -80,7 +84,7 @@ function harness(): Harness {
     attachCalls,
     attachJsonCalls,
     workDir,
-    run: (received, key, baselineDir) =>
+    run: (received, key, baselineDir, updateSnapshots) =>
       runToMatchPageBaseline(
         received,
         key,
@@ -88,6 +92,7 @@ function harness(): Harness {
         {
           timeoutMs: 5_000,
           workDir,
+          updateSnapshots,
           attach: async (name, filePath) => {
             attachCalls.push({ name, path: filePath });
           },
@@ -164,6 +169,9 @@ describe("runToMatchPageBaseline", () => {
 
       expect(result.pass).toBe(false);
       expect(result.message()).toMatch(/did not match promoted baseline v1/);
+      // Names the measured metrics next to the thresholds they failed against.
+      expect(result.message()).toMatch(/matchRatio [\d.]+ \(min 0\.99\)/);
+      expect(result.message()).toMatch(/areaGap [\d.]+% \(max 5%\)/);
     } finally {
       await context.close();
       await app.close();
@@ -197,6 +205,58 @@ describe("runToMatchPageBaseline", () => {
         baselineVersion: 2,
         baselinePromotedBy: "bob@example.com",
       });
+    } finally {
+      await context.close();
+      await app.close();
+    }
+  });
+
+  it("promotes the capture as v1 under --update-snapshots=missing when no baseline exists", async () => {
+    const baselineDir = tempDir("framelia-page-baseline-dir-");
+    const { html } = pageFixture([100, 150, 200]);
+    const app = await server(html);
+    const context = await browser.newContext({ viewport: SIZE });
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const result = await harness().run(page, "home.desktop", baselineDir, "missing");
+
+      expect(result.pass).toBe(true);
+      expect(result.message()).toMatch(/baseline v1/);
+      expect(readPageBaselineMeta(baselineDir)?.current).toMatchObject({
+        version: 1,
+        promotedBy: "playwright --update-snapshots",
+      });
+
+      // A later "missing" run compares against it instead of re-promoting.
+      const again = await harness().run(page, "home.desktop", baselineDir, "missing");
+      expect(again.pass).toBe(true);
+      expect(readPageBaselineMeta(baselineDir)?.current.version).toBe(1);
+    } finally {
+      await context.close();
+      await app.close();
+    }
+  });
+
+  it("still fails a mismatch under --update-snapshots=missing, but promotes it under changed", async () => {
+    const baselineDir = tempDir("framelia-page-baseline-dir-");
+    const { png: baselinePng } = pageFixture([100, 150, 200]);
+    seedBaseline(baselineDir, baselinePng);
+    const { html: differentHtml } = pageFixture([10, 20, 30]);
+    const app = await server(differentHtml);
+    const context = await browser.newContext({ viewport: SIZE });
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const missing = await harness().run(page, "home.desktop", baselineDir, "missing");
+      expect(missing.pass).toBe(false);
+
+      const changed = await harness().run(page, "home.desktop", baselineDir, "changed");
+      expect(changed.pass).toBe(true);
+      const meta = readPageBaselineMeta(baselineDir);
+      expect(meta?.current.version).toBe(2);
+      expect(meta?.history.map((entry) => entry.version)).toEqual([1]);
     } finally {
       await context.close();
       await app.close();

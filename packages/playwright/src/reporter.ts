@@ -7,7 +7,7 @@ import {
   type RunContext,
   type SourceIdentity,
 } from "@framelia/contracts/workflow";
-import { canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
+import { canonicalJsonDigest, portableErrorMessage, sanitizePortableValue } from "@framelia/verify";
 import {
   computeExecutionGraphDigest,
   computeCaseId,
@@ -25,6 +25,7 @@ import type {
   Reporter,
   Suite,
   TestCase,
+  TestError,
   TestResult,
 } from "@playwright/test/reporter";
 import { nanoid } from "nanoid";
@@ -126,9 +127,21 @@ export default class FrameliaReporter implements Reporter {
   #transportCollection?: TransportCollection;
   #transportError?: Error;
   #transportReady = false;
-  #setupFailures: string[] = [];
-  #teardownFailures: string[] = [];
+  /** Setup/teardown-project tests seen in execute mode, keyed by test id so retries collapse
+   *  into one entry; whether each failed is decided once, at onEnd, from `test.outcome()`
+   *  -- a setup test that failed and then passed on retry is flaky, not a setup failure. */
+  #graphTests = new Map<
+    string,
+    { test: TestCase; projectName: string; setup: boolean; teardown: boolean }
+  >();
   #globalErrors: string[] = [];
+  /** Direct mode: more than one configured project, so contractId-keyed low-level evidence
+   *  carries the project name (see report-projection.ts's `EvidenceKeyOptions`). */
+  #multiProject = false;
+  /** Direct mode: how many collected tests carry a `framelia.contract` annotation. */
+  #contractTestCount = 0;
+  /** Direct mode: why run-bundle recording could not start, when it couldn't. */
+  #recordingError?: string;
 
   constructor(options: FrameliaReporterOptions = {}) {
     this.#options = options;
@@ -171,7 +184,11 @@ export default class FrameliaReporter implements Reporter {
       return;
     }
     this.#projectRoot = this.#options.projectRoot ?? config.rootDir ?? process.cwd();
+    this.#multiProject = (config.projects?.length ?? 0) > 1;
     const tests = suite.allTests();
+    this.#contractTestCount = tests.filter(
+      (test) => readContractRegistration(test) !== undefined,
+    ).length;
     const policyPromise = resolveProjectPolicy({
       cwd: this.#projectRoot,
       projectRoot: this.#projectRoot,
@@ -191,21 +208,33 @@ export default class FrameliaReporter implements Reporter {
       );
       this.#store = store;
       this.#serverPromise = mod.startDashboardServer({
+        // A mixed suite shows both: the selected run's annotated cases, plus whatever
+        // low-level matcher results the ephemeral store holds (never part of the run).
         source: {
           snapshot: async () => {
             await this.#runBundleReady;
             const bundle = this.#runBundle;
-            return bundle
-              ? mod.projectSelectedRun(bundle.root, readSelectedRun(bundle.root, bundle.runId)).run
-              : store.snapshot();
+            const lowLevel = store.snapshot();
+            if (!bundle) return lowLevel;
+            const selected = mod.projectSelectedRun(
+              bundle.root,
+              readSelectedRun(bundle.root, bundle.runId),
+            ).run;
+            if (lowLevel.contracts.length === 0) return selected;
+            const contracts = [...selected.contracts, ...lowLevel.contracts];
+            const summary = mod.summarize(contracts);
+            return { ...selected, contracts, summary, status: mod.overallStatus(summary) };
           },
           files: async () => {
             await this.#runBundleReady;
             const bundle = this.#runBundle;
-            return bundle
-              ? mod.projectSelectedRun(bundle.root, readSelectedRun(bundle.root, bundle.runId))
-                  .files
-              : store.files();
+            const lowLevel = store.files();
+            if (!bundle) return lowLevel;
+            const selected = mod.projectSelectedRun(
+              bundle.root,
+              readSelectedRun(bundle.root, bundle.runId),
+            ).files;
+            return new Map([...lowLevel, ...selected]);
           },
           subscribe: (listener) => {
             const unsubscribeStore = store.subscribe((event) =>
@@ -239,13 +268,14 @@ export default class FrameliaReporter implements Reporter {
     // a run whose dashboard peer dependency is missing/broken must still get durable
     // run-bundle recording (framelia/#77: "Decouple recording from optional dashboard
     // startup" / "Dashboard failure cannot prevent durable recording").
+    // A failure here no longer just logs: onEnd fails the run when annotated tests exist
+    // but could not be recorded (see #recordingError).
     this.#runBundleReady = policyPromise
-      .then((policy) => this.#initializeRunBundle(tests, policy))
-      .catch((error: unknown) =>
-        console.error(
-          `framelia reporter: run-bundle publication disabled for this run: ${String(error)}`,
-        ),
-      );
+      .then((policy) => this.#initializeRunBundle(tests, policy, config))
+      .catch((error: unknown) => {
+        this.#recordingError = `run-bundle recording is disabled for this run: ${errorMessage(error)}`;
+        console.error(`framelia reporter: ${this.#recordingError}`);
+      });
   }
 
   #reconcileExecution(): void {
@@ -327,24 +357,55 @@ export default class FrameliaReporter implements Reporter {
    * collected tests are exact selected membership but not proof of completeness.
    * Direct plans therefore remain `selection.mode: "subset"`, leave `requiredCases`
    * empty, and rely on independently signed gate requirements for completeness. A run
-   * with zero annotated tests or no resolvable policy digest is not published.
+   * with zero annotated tests is not published; one with annotated tests but no
+   * resolvable policy digest (no `framelia.config.*`) throws, failing the run in onEnd.
+   *
+   * Only cases the contract actually applies to are planned: a contract's own `projects`
+   * (else the policy's visual `playwright.projects`) excludes every other project, the
+   * same membership rule `resolveContractProjectMatrix` uses -- those tests skip
+   * themselves at runtime and must not appear as planned-but-unrun cases.
+   *
+   * A sharded invocation (`--shard`) sees only its own shard's tests, so it records a
+   * per-shard bundle whose runId carries a `-shard-<current>-of-<total>` suffix; shard
+   * bundles are never merged (see README).
    */
-  async #initializeRunBundle(tests: TestCase[], policy: ResolvedProjectPolicy): Promise<void> {
-    if (!policy.policyDigest) return;
+  async #initializeRunBundle(
+    tests: TestCase[],
+    policy: ResolvedProjectPolicy,
+    config: FullConfig,
+  ): Promise<void> {
     const contractTests = tests.filter((test) => readContractRegistration(test) !== undefined);
     if (contractTests.length === 0) return;
-    const runId = this.#options.runId ?? nanoid();
+    if (!policy.policyDigest) {
+      throw new Error(
+        `${contractTests.length} framelia.contract test(s) were collected, but no framelia.config.* was found for project root ${this.#projectRoot}. Run \`framelia init\` there (or point the reporter's \`projectRoot\` option at the initialized project) so the run can be recorded.`,
+      );
+    }
+    const shard = config.shard;
+    const baseRunId = this.#options.runId ?? nanoid();
+    const runId = shard ? `${baseRunId}-shard-${shard.current}-of-${shard.total}` : baseRunId;
+    if (shard) {
+      console.warn(
+        `framelia reporter: sharded run (shard ${shard.current}/${shard.total}) -- recording per-shard run bundle "${runId}". Shard bundles are never merged into one run; use \`framelia check\` for an authoritative run.`,
+      );
+    }
 
-    const results = await Promise.all(
-      contractTests.map((test) =>
-        buildCasePlanForTest(test, {
-          projectRoot: this.#projectRoot,
-          runId,
-          policy,
-          source: this.#options.source ?? {},
-        }),
-      ),
-    );
+    const results = (
+      await Promise.all(
+        contractTests.map((test) =>
+          buildCasePlanForTest(test, {
+            projectRoot: this.#projectRoot,
+            runId,
+            policy,
+            source: this.#options.source ?? {},
+          }),
+        ),
+      )
+    ).filter((result) => {
+      const applicable = result.casePlan.contract.authored.projects ?? policy.playwright?.projects;
+      return applicable === undefined || applicable.includes(result.casePlan.project.name);
+    });
+    if (results.length === 0) return;
 
     const planned = results.map((result) => ({
       caseId: result.caseId,
@@ -409,13 +470,11 @@ export default class FrameliaReporter implements Reporter {
     const transportCollection = this.#transportCollection;
     if (transportCollection) {
       const projectName = test.parent.project()?.name;
-      if (projectName !== undefined && result.status !== "passed" && result.status !== "skipped") {
-        const identity = `${projectName}:${test.title}`;
-        if (transportCollection.dependencyProjects.has(projectName)) {
-          this.#setupFailures.push(identity);
-        }
-        if (transportCollection.teardownProjects.has(projectName)) {
-          this.#teardownFailures.push(identity);
+      if (projectName !== undefined) {
+        const setup = transportCollection.dependencyProjects.has(projectName);
+        const teardown = transportCollection.teardownProjects.has(projectName);
+        if (setup || teardown) {
+          this.#graphTests.set(test.id, { test, projectName, setup, teardown });
         }
       }
     } else {
@@ -427,6 +486,7 @@ export default class FrameliaReporter implements Reporter {
           this.#projectRoot,
           result,
           this.#captureDefaults.maxMaskedAreaRatio,
+          { multiProject: this.#multiProject },
         );
         this.#store.recordResult(
           projection.dashboardId,
@@ -495,10 +555,28 @@ export default class FrameliaReporter implements Reporter {
     );
   }
 
-  onError(): void {
-    if (this.#runContext?.mode === "execute") {
-      this.#globalErrors.push("Playwright reported a global execution error.");
+  /** Keeps each global error's own (portable) text -- the execute lifecycle summary and a
+   *  direct run's final record both carry it, so a reader sees what actually went wrong. */
+  onError(error: TestError): void {
+    const message = sanitizePortableValue(
+      (error.message ?? error.value ?? "").trim(),
+      this.#projectRoot,
+    ).trim();
+    this.#globalErrors.push(message || "Playwright reported a global execution error.");
+  }
+
+  /** Execute mode: setup/teardown tests whose final outcome is a failure -- retries collapse
+   *  into one entry per test, and a test that passed on retry ("flaky") is not a failure. */
+  #graphFailures(): { setupFailures: string[]; teardownFailures: string[] } {
+    const setupFailures = new Set<string>();
+    const teardownFailures = new Set<string>();
+    for (const { test, projectName, setup, teardown } of this.#graphTests.values()) {
+      if (test.outcome() !== "unexpected") continue;
+      const identity = `${projectName}:${test.title}`;
+      if (setup) setupFailures.add(identity);
+      if (teardown) teardownFailures.add(identity);
     }
+    return { setupFailures: [...setupFailures], teardownFailures: [...teardownFailures] };
   }
 
   async onEnd(result: FullResult): Promise<void | { status: FullResult["status"] }> {
@@ -538,8 +616,7 @@ export default class FrameliaReporter implements Reporter {
       ];
       writeTransportStatus(runContext, blocked ? "blocked" : "completed", diagnostics, {
         resultStatus: result.status,
-        setupFailures: this.#setupFailures,
-        teardownFailures: this.#teardownFailures,
+        ...this.#graphFailures(),
         globalErrors: this.#globalErrors,
       });
       return blocked ? { status: "failed" } : undefined;
@@ -549,21 +626,46 @@ export default class FrameliaReporter implements Reporter {
     await Promise.all(this.#pending);
     await this.#runBundleReady?.catch(() => undefined);
     await Promise.all(this.#runBundlePending);
+    // A direct run's recording failures fail the Playwright run itself (never just a log
+    // line a green CI job would hide), mirroring execute mode's blocked lifecycle above.
+    const recordingFailures: string[] = [];
+    if (this.#contractTestCount > 0 && this.#recordingError) {
+      recordingFailures.push(this.#recordingError);
+    }
+    if (this.#publicationDiagnostics.length > 0) {
+      recordingFailures.push(
+        `${this.#publicationDiagnostics.length} attempt publication(s) failed; the run bundle is sealed "error".`,
+      );
+    }
     if (this.#runBundle) {
       try {
         await finalizeRunRecord(this.#runBundle.root, this.#runBundle.runId, {
           retryAcceptance: this.#runBundle.retryAcceptance,
-          diagnostics: this.#publicationDiagnostics,
+          diagnostics: [
+            ...this.#publicationDiagnostics,
+            ...this.#globalErrors.map((message) => ({
+              code: "execution-global-error",
+              stage: "execution",
+              message,
+            })),
+          ],
+          resultStatus: result.status,
         });
       } catch (error: unknown) {
-        console.error(
-          `framelia reporter: failed to finalize run bundle for run ${this.#runBundle.runId} -- durable run-bundle recording is incomplete: ${String(error)}`,
+        recordingFailures.push(
+          `failed to finalize run bundle for run ${this.#runBundle.runId} -- durable run-bundle recording is incomplete: ${errorMessage(error)}`,
         );
       }
     }
+    for (const failure of recordingFailures) console.error(`framelia reporter: ${failure}`);
 
     this.#store?.finish();
     const server = await this.#serverPromise?.catch(() => undefined);
     await server?.close();
+    return recordingFailures.length > 0 ? { status: "failed" } : undefined;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

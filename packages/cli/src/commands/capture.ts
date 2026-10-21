@@ -9,7 +9,7 @@ export const captureCommand = buildCommand({
   loader: async () => {
     const { captureCommand: runCaptureCommand } = await import("../internal/capture.ts");
     return async function (this: CliContext, flags: CaptureOptions) {
-      emitResult(this, await runCaptureCommand(flags, this.process));
+      emitResult(this, await runCaptureCommand(flags, this));
     };
   },
   parameters: {

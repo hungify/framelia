@@ -10,6 +10,8 @@ import {
   type SelectedRun,
 } from "@framelia/verify/run-bundle";
 
+import { frameliaNext } from "./outcome.ts";
+
 export type { RunProjection } from "@framelia/contracts/workflow";
 
 function projectSelectedRun(root: string, selected: SelectedRun): RunProjection {
@@ -96,31 +98,19 @@ export function readRunProjection(root: string, runId: string): RunProjection {
 
 export function nextForRun(projection: RunProjection, projectRoot?: string): NextOperation {
   if (projection.executionState === "completed" && projection.visualVerdict === "mismatched") {
-    return {
-      command: "framelia",
-      argv: [
-        "open",
-        "--run",
-        projection.runId,
-        ...(projectRoot ? ["--project-root", projectRoot] : []),
-      ],
-    };
+    return frameliaNext(["open", "--run", projection.runId], projectRoot);
   }
   if (projection.selection.mode === "all") {
-    return {
-      command: "framelia",
-      argv: ["check", "--all", ...(projectRoot ? ["--project-root", projectRoot] : [])],
-    };
+    return frameliaNext(["check", "--all"], projectRoot);
   }
   const contracts = [...new Set(projection.cases.map((entry) => entry.contractId))];
   const projects = [...new Set(projection.cases.map((entry) => entry.project))];
-  return {
-    command: "framelia",
-    argv: [
+  return frameliaNext(
+    [
       "check",
       ...contracts.flatMap((contract) => ["--contract", contract]),
       ...projects.flatMap((project) => ["--project", project]),
-      ...(projectRoot ? ["--project-root", projectRoot] : []),
     ],
-  };
+    projectRoot,
+  );
 }

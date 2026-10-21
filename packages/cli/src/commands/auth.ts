@@ -24,5 +24,14 @@ export const authCommand = buildCommand({
     },
     aliases: { u: "url", r: "projectRoot", y: "yes" },
   },
-  docs: { brief: "Open Playwright for login and save browser session state." },
+  docs: {
+    brief: "Open Playwright for login and save browser session state.",
+    fullDescription: [
+      "Open a headed browser, wait for you to log in, and save the session to the",
+      "configured storageStatePath (owner-only). Needs an interactive terminal.",
+      "",
+      "Example:",
+      "  framelia auth --url https://app.example.com/login",
+    ].join("\n"),
+  },
 });

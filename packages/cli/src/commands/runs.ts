@@ -2,7 +2,7 @@ import { buildCommand, buildRouteMap, numberParser } from "@stricli/core";
 
 import { identityParser, projectRootFlag } from "../cli-constants.ts";
 import type { CliContext } from "../context.ts";
-import type { RunsListOptions, RunsPruneOptions } from "../internal/runs.ts";
+import type { RunsFinalizeOptions, RunsListOptions, RunsPruneOptions } from "../internal/runs.ts";
 import { emitResult } from "../output.ts";
 
 export const runsListCommand = buildCommand({
@@ -75,7 +75,41 @@ const pruneCommand = buildCommand({
   },
 });
 
+const finalizeCommand = buildCommand({
+  loader: async () => {
+    const { runsFinalizeCommand } = await import("../internal/runs.ts");
+    return async function (this: CliContext, flags: RunsFinalizeOptions) {
+      emitResult(this, await runsFinalizeCommand(flags, this));
+    };
+  },
+  parameters: {
+    flags: {
+      run: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "the sharded run's shared run ID",
+        placeholder: "id",
+      },
+      projectRoot: projectRootFlag,
+    },
+    aliases: { r: "projectRoot", R: "run" },
+  },
+  docs: {
+    brief: "Compose and finalize a sharded run once every shard is collected.",
+    fullDescription: [
+      "Compose one sharded direct run's plan from every shard's plan fragment and finalize it.",
+      "Use it when shards ran on separate machines: collect every shard's .framelia/runs/<run>",
+      "directory into one project root first. Exits 2 and lists the missing shards when any",
+      "shard has not completed; a run that is already finalized is left unchanged.",
+      "",
+      "Example:",
+      "  framelia runs finalize --run <run-id>",
+    ].join("\n"),
+  },
+});
+
 export const runsRoutes = buildRouteMap({
-  routes: { list: runsListCommand, prune: pruneCommand },
-  docs: { brief: "Discover and prune durable runs." },
+  routes: { list: runsListCommand, prune: pruneCommand, finalize: finalizeCommand },
+  docs: { brief: "Discover, finalize and prune durable runs." },
 });

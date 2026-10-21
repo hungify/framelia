@@ -55,6 +55,7 @@ supported, because `@stricli/auto-complete` does not install zsh or fish complet
 | `framelia schema`                    | Print the live JSON Schema for an authored contract or signed requirements envelope.   |
 | `framelia runs list`                 | List durable runs, newest first, with status and case counts.                          |
 | `framelia runs prune`                | Remove old runs (`--keep`, `--older-than`, `--dry-run`); never in-progress ones.       |
+| `framelia runs finalize`             | Compose and finalize a sharded run once every shard's run directory is collected.      |
 | `framelia` (no arguments)            | Same as `framelia runs list`; its `next` opens the newest run.                         |
 | `framelia dashboard`                 | Serve one selected durable run; requires `--run`.                                      |
 | `framelia open`                      | Alias for opening one selected durable run without rerunning.                          |
@@ -392,6 +393,11 @@ Run and case plans freeze the exact selected matrix, policy, authored contract, 
 registration identity, retry policy, and stability sample count. Attempt records contain only
 portable paths and hashes; private stability sample images are deleted after hashing.
 
+A sharded direct run (see [`@framelia/playwright`](../playwright/README.md#sharded-runs)) also has
+`shards/<N>-of-<M>/plan/fragment.json` and `shards/<N>-of-<M>/completion/completion.json` per
+shard. It has no `plan/` or `run.json` until every shard completed; readers report it as in
+progress (`RUN_BUNDLE_SHARDS_PENDING`) until then, and exactly like any other run afterwards.
+
 ## Exit codes
 
 | Code | Meaning                                                          |
@@ -430,6 +436,61 @@ Outside GitHub Actions, use `npx framelia check --all --run-id-file run-id.txt` 
 from that file. Upload the run's `bundlePath` (under `.framelia/runs/`) and the output of
 `framelia report --run <run-id>` as CI artifacts when review evidence is needed; prune old local
 runs with `framelia runs prune --keep <n>`.
+
+### Sharded Playwright runs
+
+`framelia check` is not sharded. To shard a direct `npx playwright test` run with the Framelia
+Reporter across runners, give every shard the same `FRAMELIA_RUN_ID`, upload each shard's
+`.framelia/runs/`, download them all into one checkout of the same commit, and finalize there.
+Finalization re-reads the contracts, pinned baselines, spec files and policy each case was planned
+from, so that job needs the project files, not only the run directories.
+
+```yaml
+env:
+  FRAMELIA_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  visual:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npx playwright install --with-deps chromium
+      - run: npx playwright test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: framelia-shard-${{ matrix.shard }}
+          path: .framelia/runs/
+          include-hidden-files: true
+
+  finalize:
+    needs: visual
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: framelia-shard-*
+          path: .framelia/runs/
+          merge-multiple: true
+      - run: npx framelia runs finalize --project-root "$PWD" --run "$FRAMELIA_RUN_ID"
+      # Then gate or report the run like any other:
+      # npx framelia done-gate --project-root "$PWD" --run "$FRAMELIA_RUN_ID" --requirements ...
+```
+
+`runs finalize` emits one `framelia.runs-finalize-outcome` JSON record with `state`
+(`finalized`, `already-finalized`, `waiting` or `empty`), the run's final `status`, and per-shard
+progress. It exits `2` with `RUN_SHARDS_MISSING`, listing each missing shard and whether its plan
+fragment or completion marker is absent, when a shard's directory was not collected or the shard
+never finished. A run is finalized once: running the command again leaves it unchanged. Shards that
+disagree on the shard total, policy or retry policy, or that planned the same case, fail with
+`RUN_BUNDLE_SHARD_CONFLICT`.
 
 ## Troubleshooting
 

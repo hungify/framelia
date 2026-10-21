@@ -6,19 +6,23 @@ import {
   attemptScoreSchema,
   isTerminalRunStatus,
   type AttemptRecord,
+  type RunShard,
 } from "@framelia/contracts/workflow";
 
+import { canonicalJsonDigest } from "../canonical-json.ts";
 import { sha256Hex } from "../hash.ts";
 import { AppError } from "../types.ts";
 import {
   ATTEMPT_EVIDENCE_FILE,
   ATTEMPT_RECORD_FILE_NAME,
   attemptDir,
+  runPlanPath,
   runRecordPath,
   toProjectRelative,
 } from "./layout.ts";
 import { withRunLock } from "./lock.ts";
 import { readRunPlan, readRunRecord } from "./run.ts";
+import { isShardCompleted, readPlanFragment } from "./shard-records.ts";
 import { publishBundleUnit, type StagedFile } from "./staged-write.ts";
 
 export interface AttemptEvidenceFiles {
@@ -57,32 +61,33 @@ export interface AttemptEvidenceFiles {
  * refused outright -- a real, completed comparison always produces an actual-capture
  * image; a claimed pass with nothing behind it is exactly the "reuse an old image"/silent
  * fabrication failure mode #77's acceptance criteria rule out.
+ *
+ * A shard of a sharded direct run (`options.shard`) publishes before the run's plan is
+ * composed, so until then the attempt is checked against that shard's own plan fragment
+ * instead, and refused once the shard published its completion marker.
  */
 export function publishAttempt(
   root: string,
   runId: string,
   attempt: Omit<AttemptRecord, "evidence">,
   files: AttemptEvidenceFiles = {},
+  options: { shard?: RunShard } = {},
 ): Promise<AttemptRecord> {
   return withRunLock(root, runId, () => {
-    const plan = readRunPlan(root, runId);
     if (attempt.runId !== runId) {
       throw new AppError(
         "RUN_BUNDLE_INVALID",
         `Attempt "${attempt.attemptId}" belongs to run "${attempt.runId}", not run "${runId}".`,
       );
     }
-    const selected = plan.selectedCases.find((entry) => entry.caseId === attempt.caseId);
-    if (!selected) {
-      throw new AppError(
-        "RUN_BUNDLE_INVALID",
-        `Attempt "${attempt.attemptId}" references case "${attempt.caseId}", which is not part of run "${runId}"'s selected cases in its frozen plan.`,
-      );
-    }
-    if (selected.casePlanDigest !== attempt.casePlanDigest) {
+    const expectedDigest =
+      options.shard && !fs.existsSync(runPlanPath(root, runId))
+        ? shardCasePlanDigest(root, runId, options.shard, attempt)
+        : frozenCasePlanDigest(root, runId, attempt);
+    if (expectedDigest !== attempt.casePlanDigest) {
       throw new AppError(
         "RUN_BUNDLE_DIGEST_MISMATCH",
-        `Attempt "${attempt.attemptId}"'s casePlanDigest (${attempt.casePlanDigest}) does not match run "${runId}"'s frozen plan digest for case "${attempt.caseId}" (${selected.casePlanDigest}).`,
+        `Attempt "${attempt.attemptId}"'s casePlanDigest (${attempt.casePlanDigest}) does not match run "${runId}"'s frozen plan digest for case "${attempt.caseId}" (${expectedDigest}).`,
       );
     }
     const existingRecord = fs.existsSync(runRecordPath(root, runId))
@@ -148,4 +153,43 @@ export function publishAttempt(
     publishBundleUnit(targetDir, staged);
     return record;
   });
+}
+
+function frozenCasePlanDigest(
+  root: string,
+  runId: string,
+  attempt: Omit<AttemptRecord, "evidence">,
+): string {
+  const plan = readRunPlan(root, runId);
+  const selected = plan.selectedCases.find((entry) => entry.caseId === attempt.caseId);
+  if (!selected) {
+    throw new AppError(
+      "RUN_BUNDLE_INVALID",
+      `Attempt "${attempt.attemptId}" references case "${attempt.caseId}", which is not part of run "${runId}"'s selected cases in its frozen plan.`,
+    );
+  }
+  return selected.casePlanDigest;
+}
+
+function shardCasePlanDigest(
+  root: string,
+  runId: string,
+  shard: RunShard,
+  attempt: Omit<AttemptRecord, "evidence">,
+): string {
+  const fragment = readPlanFragment(root, runId, shard);
+  if (isShardCompleted(root, runId, shard)) {
+    throw new AppError(
+      "RUN_BUNDLE_INVALID",
+      `Shard ${shard.current}/${shard.total} of run "${runId}" already completed; attempt "${attempt.attemptId}" cannot be published after its completion marker.`,
+    );
+  }
+  const casePlan = fragment.casePlans.find((entry) => entry.caseId === attempt.caseId);
+  if (!casePlan) {
+    throw new AppError(
+      "RUN_BUNDLE_INVALID",
+      `Attempt "${attempt.attemptId}" references case "${attempt.caseId}", which is not part of shard ${shard.current}/${shard.total}'s plan fragment of run "${runId}".`,
+    );
+  }
+  return canonicalJsonDigest(casePlan);
 }

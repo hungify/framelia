@@ -22,6 +22,7 @@ import {
   computeExecutionGraphDigest,
   evaluateAuthoritativeRun,
   freezeRunPlan,
+  listRuns,
   readRunBundle,
   readSelectedRun,
   runPlanPath,
@@ -312,6 +313,21 @@ function fakeAttemptResult(options: {
     attachments,
     ...(options.errorMessage ? { error: { message: options.errorMessage } } : {}),
   } as unknown as TestResult;
+}
+
+/** Silences one console method for a test and keeps what it printed. */
+function captureConsole(method: "log" | "warn"): { output: () => string; restore: () => void } {
+  const original = console[method];
+  const lines: string[] = [];
+  console[method] = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  return {
+    output: () => lines.join("\n"),
+    restore: () => {
+      console[method] = original;
+    },
+  };
 }
 
 function initializedProjectRoot(): string {
@@ -1258,7 +1274,7 @@ describe("FrameliaReporter selected-run publication", () => {
     expect(bundle.record.status).toBe("finalized");
   });
 
-  it("records a sharded direct run as a per-shard bundle", async () => {
+  it("falls back to a per-shard bundle when sharded without a shared run ID", async () => {
     const root = initializedProjectRoot();
     const imageDir = tempDir("framelia-run-bundle-images-");
     const binding = pinContract(root, { id: "login.desktop" });
@@ -1266,7 +1282,6 @@ describe("FrameliaReporter selected-run publication", () => {
       projectRoot: root,
       clientRoot: clientRootFixture(),
       port: 0,
-      runId: "run-sharded",
     });
     const test = fakeContractTest({
       id: "t1",
@@ -1274,8 +1289,7 @@ describe("FrameliaReporter selected-run publication", () => {
       specFile: path.join(root, "login.spec.ts"),
       root,
     });
-    const originalWarn = console.warn;
-    console.warn = () => undefined;
+    const warnings = captureConsole("warn");
     try {
       reporter.onBegin(
         { rootDir: root, shard: { current: 2, total: 3 } } as unknown as FullConfig,
@@ -1287,10 +1301,116 @@ describe("FrameliaReporter selected-run publication", () => {
       );
       await reporter.onEnd({ status: "passed" } as unknown as FullResult);
     } finally {
-      console.warn = originalWarn;
+      warnings.restore();
     }
 
-    expect(readRunBundle(root, "run-sharded-shard-2-of-3").record.status).toBe("finalized");
+    const [run] = listRuns(root).runs;
+    expect(run?.runId).toMatch(/-shard-2-of-3$/u);
+    expect(run?.status).toBe("finalized");
+    expect(warnings.output()).toContain("FRAMELIA_RUN_ID");
+  });
+
+  it("shares one plan across shards with a shared run ID and finalizes the run once", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    fs.writeFileSync(path.join(root, "checkout.spec.ts"), "// fixture spec file\n");
+    const login = fakeContractTest({
+      id: "t-login",
+      binding: pinContract(root, { id: "login.desktop" }),
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const checkout = fakeContractTest({
+      id: "t-checkout",
+      binding: pinContract(root, { id: "checkout.desktop" }),
+      specFile: path.join(root, "checkout.spec.ts"),
+      root,
+    });
+    const logs = captureConsole("log");
+
+    try {
+      // Shard 1 takes its shared run ID from the reporter option...
+      const first = new FrameliaReporter({
+        projectRoot: root,
+        clientRoot: clientRootFixture(),
+        port: 0,
+        runId: "ci-run-7",
+      });
+      first.onBegin(
+        { rootDir: root, shard: { current: 1, total: 2 } } as unknown as FullConfig,
+        fakeSuite([login]),
+      );
+      first.onTestEnd(
+        login,
+        fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+      );
+      expect(await first.onEnd({ status: "passed" } as unknown as FullResult)).toBeUndefined();
+      expect(() => readSelectedRun(root, "ci-run-7")).toThrow(/waiting for shard 2\/2/u);
+      expect(logs.output()).toContain("waiting for shard 2/2");
+
+      // ...and shard 2 from FRAMELIA_RUN_ID.
+      process.env.FRAMELIA_RUN_ID = "ci-run-7";
+      const second = new FrameliaReporter({
+        projectRoot: root,
+        clientRoot: clientRootFixture(),
+        port: 0,
+      });
+      second.onBegin(
+        { rootDir: root, shard: { current: 2, total: 2 } } as unknown as FullConfig,
+        fakeSuite([checkout]),
+      );
+      second.onTestEnd(
+        checkout,
+        fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+      );
+      expect(await second.onEnd({ status: "passed" } as unknown as FullResult)).toBeUndefined();
+    } finally {
+      delete process.env.FRAMELIA_RUN_ID;
+      logs.restore();
+    }
+
+    const bundle = readRunBundle(root, "ci-run-7");
+    expect(bundle.record.status).toBe("finalized");
+    expect(bundle.plan.selectedCases.map((entry) => entry.caseId)).toEqual([
+      "checkout.desktop@chromium#0",
+      "login.desktop@chromium#0",
+    ]);
+    expect(listRuns(root).runs.map((run) => run.runId)).toEqual(["ci-run-7"]);
+  });
+
+  it("records an empty plan fragment for a shard without contract tests", async () => {
+    const root = initializedProjectRoot();
+    const imageDir = tempDir("framelia-run-bundle-images-");
+    const login = fakeContractTest({
+      id: "t-login",
+      binding: pinContract(root, { id: "login.desktop" }),
+      specFile: path.join(root, "login.spec.ts"),
+      root,
+    });
+    const logs = captureConsole("log");
+    try {
+      const empty = new FrameliaReporter({ projectRoot: root, port: 0, runId: "ci-run-8" });
+      empty.onBegin(
+        { rootDir: root, shard: { current: 2, total: 2 } } as unknown as FullConfig,
+        fakeSuite([]),
+      );
+      await empty.onEnd({ status: "passed" } as unknown as FullResult);
+
+      const first = new FrameliaReporter({ projectRoot: root, port: 0, runId: "ci-run-8" });
+      first.onBegin(
+        { rootDir: root, shard: { current: 1, total: 2 } } as unknown as FullConfig,
+        fakeSuite([login]),
+      );
+      first.onTestEnd(
+        login,
+        fakeAttemptResult({ status: "passed", score: scoreAttachment(), actualImageDir: imageDir }),
+      );
+      await first.onEnd({ status: "passed" } as unknown as FullResult);
+    } finally {
+      logs.restore();
+    }
+
+    expect(readRunBundle(root, "ci-run-8").record.status).toBe("finalized");
   });
 
   it("still freezes and finalizes the run bundle even when the dashboard itself fails to start", async () => {

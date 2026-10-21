@@ -1,10 +1,15 @@
 import * as fs from "node:fs";
 
-import type { Diagnostic, NextOperation } from "@framelia/contracts/workflow";
+import type { Diagnostic, NextOperation, RunRecordStatus } from "@framelia/contracts/workflow";
+import { portableErrorMessage } from "@framelia/verify";
 import {
+  finalizeShardedRun,
+  inspectShardedRun,
   listRuns,
   runDir,
+  toProjectRelative,
   type InvalidRunEntry,
+  type MissingShard,
   type RunSummary,
 } from "@framelia/verify/run-bundle";
 
@@ -196,6 +201,134 @@ export function runsPruneCommand(
       fallbackCode: "RUNS_PRUNE_FAILED",
       stage: "runs",
       projectRoot: options.projectRoot,
+    });
+  }
+}
+
+export interface RunsFinalizeOptions {
+  readonly projectRoot: string | undefined;
+  readonly run: string | undefined;
+}
+
+export interface RunsFinalizeOutcome {
+  readonly formatVersion: 1;
+  readonly kind: "framelia.runs-finalize-outcome";
+  readonly command: "runs finalize";
+  /** `incomplete` while shards are missing; nothing was composed or finalized then. */
+  readonly executionState: "completed" | "incomplete";
+  readonly exitCode: 0 | 2;
+  readonly runId: string;
+  readonly bundlePath: string;
+  /**
+   * `finalized` by this call, `already-finalized` earlier (by the last shard or a previous
+   * call), `waiting` for missing shards, or `empty` when no shard planned a contract case.
+   */
+  readonly state: "finalized" | "already-finalized" | "waiting" | "empty";
+  /** The finalized run record's status. */
+  readonly status?: RunRecordStatus;
+  readonly shards?: {
+    readonly total: number;
+    readonly completed: readonly number[];
+    readonly missing: readonly MissingShard[];
+  };
+  readonly diagnostics: readonly Diagnostic[];
+  readonly next?: NextOperation;
+}
+
+/**
+ * Composes and finalizes a sharded direct run whose shards ran on separate machines, once
+ * every shard's `.framelia/runs/<run>` directory was collected into this project root. Each
+ * shard finalizes the run itself when it is the last to finish on one machine, so this is a
+ * no-op (`already-finalized`) for a run that is already finalized.
+ */
+export async function runsFinalizeCommand(
+  options: RunsFinalizeOptions,
+  env: Pick<CommandEnvironment, "process">,
+): Promise<
+  CliResult<RunsFinalizeOutcome | FailureOutcome<"framelia.runs-finalize-outcome", "runs finalize">>
+> {
+  let root: string | undefined;
+  try {
+    if (!options.run) {
+      throw new UsageError("runs finalize requires --run <id>; list durable runs to choose one.", {
+        code: "RUN_SELECTION_MISSING",
+      });
+    }
+    const runId = options.run;
+    root = openProject(options.projectRoot, env.process).root;
+    const result = await finalizeShardedRun(root, runId);
+    const base = {
+      formatVersion: 1,
+      kind: "framelia.runs-finalize-outcome",
+      command: "runs finalize",
+      runId,
+      bundlePath: toProjectRelative(root, runDir(root, runId)),
+    } as const;
+    if (result.state === "waiting") {
+      const missing = result.missing
+        .map((entry) => `shard ${entry.current}/${entry.total} (${entry.parts.join(", ")})`)
+        .join(", ");
+      return {
+        ok: false,
+        exitCode: 2,
+        body: {
+          ...base,
+          executionState: "incomplete",
+          exitCode: 2,
+          state: "waiting",
+          shards: { total: result.total, completed: result.completed, missing: result.missing },
+          diagnostics: [
+            {
+              code: "RUN_SHARDS_MISSING",
+              stage: "runs",
+              message: `Run "${runId}" is missing ${missing}. Collect every shard's .framelia/runs/<run> directory into this project root, then run this command again.`,
+            },
+          ],
+          next: frameliaNext(["runs", "list"], options.projectRoot),
+        },
+      };
+    }
+    const shards = inspectShardedRun(root, runId);
+    return {
+      ok: true,
+      exitCode: 0,
+      body: {
+        ...base,
+        executionState: "completed",
+        exitCode: 0,
+        state: result.state,
+        ...(result.state === "finalized" || result.state === "already-finalized"
+          ? { status: result.record.status }
+          : {}),
+        ...(shards
+          ? {
+              shards: { total: shards.total, completed: shards.completed, missing: shards.missing },
+            }
+          : {}),
+        diagnostics:
+          result.state === "empty"
+            ? [
+                {
+                  code: "RUN_SHARDS_EMPTY",
+                  stage: "runs",
+                  message: `No shard of run "${runId}" planned a framelia.contract case; nothing was recorded.`,
+                },
+              ]
+            : [],
+        ...(result.state === "empty"
+          ? {}
+          : { next: frameliaNext(["open", "--run", runId], options.projectRoot) }),
+      },
+    };
+  } catch (error) {
+    return failureOutcome({
+      kind: "framelia.runs-finalize-outcome",
+      command: "runs finalize",
+      error,
+      fallbackCode: "RUNS_FINALIZE_FAILED",
+      stage: "runs",
+      projectRoot: options.projectRoot,
+      ...(root === undefined ? {} : { message: portableErrorMessage(error, root) }),
     });
   }
 }

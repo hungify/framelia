@@ -140,6 +140,25 @@ describe("runs prune", () => {
     expect(fs.existsSync(runDir(root, "recent"))).toBe(true);
   });
 
+  it("removes a sharded run whose every shard completed without a case", async () => {
+    const root = project();
+    await collectShards(root, [1, 2], { 1: [], 2: [] });
+
+    const recent = runsPruneCommand(
+      { projectRoot: root, keep: undefined, olderThan: "7d", dryRun: undefined },
+      env(root),
+    );
+    expect(recent.body).toMatchObject({ removed: [] });
+    expect(fs.existsSync(runDir(root, "run-selected"))).toBe(true);
+
+    const pruned = runsPruneCommand(
+      { projectRoot: root, keep: 0, olderThan: undefined, dryRun: undefined },
+      env(root),
+    );
+    expect(pruned.body).toMatchObject({ removed: [{ runId: "run-selected" }], diagnostics: [] });
+    expect(fs.existsSync(runDir(root, "run-selected"))).toBe(false);
+  });
+
   it("requires a criterion and a valid duration", () => {
     const root = project();
     expect(

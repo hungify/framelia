@@ -126,18 +126,20 @@ export function parseDuration(value: string): number {
   return Number(match[1]) * DURATION_UNITS_MS[match[2] as keyof typeof DURATION_UNITS_MS];
 }
 
+function isOldEnough(createdAt: string, options: RunsPruneOptions, now: Date): boolean {
+  return (
+    options.olderThan === undefined ||
+    Date.parse(createdAt) < now.getTime() - parseDuration(options.olderThan)
+  );
+}
+
 /** Which runs the criteria select, newest first: beyond the kept window and old enough. */
 function selectForPruning(
   runs: readonly RunSummary[],
   options: RunsPruneOptions,
   now: Date,
 ): RunSummary[] {
-  const keep = options.keep ?? 0;
-  const cutoff =
-    options.olderThan === undefined ? undefined : now.getTime() - parseDuration(options.olderThan);
-  return runs
-    .slice(keep)
-    .filter((run) => cutoff === undefined || Date.parse(run.createdAt) < cutoff);
+  return runs.slice(options.keep ?? 0).filter((run) => isOldEnough(run.createdAt, options, now));
 }
 
 /**
@@ -177,6 +179,20 @@ export function runsPruneCommand(
       if (!options.dryRun) fs.rmSync(runDir(project.root, run.runId), { recursive: true });
       removed.push(entry);
     }
+    const kept = runs.length - removed.length;
+    // Shard records of a sharded run that recorded nothing are not a run, so --keep doesn't
+    // count them; they go once old enough, unless a shard still holds the lock.
+    const leftover = invalid.filter((entry) => {
+      const empty = entry.emptyShardedRun;
+      if (!empty || entry.locked || !isOldEnough(empty.createdAt, options, env.now())) return true;
+      if (!options.dryRun) fs.rmSync(runDir(project.root, empty.runId), { recursive: true });
+      removed.push({
+        runId: empty.runId,
+        bundlePath: entry.bundlePath,
+        createdAt: empty.createdAt,
+      });
+      return false;
+    });
     return {
       ok: true,
       exitCode: 0,
@@ -189,8 +205,8 @@ export function runsPruneCommand(
         dryRun: options.dryRun ?? false,
         removed,
         skipped,
-        kept: runs.length - removed.length,
-        diagnostics: invalidDiagnostics(invalid),
+        kept,
+        diagnostics: invalidDiagnostics(leftover),
       },
     };
   } catch (error) {

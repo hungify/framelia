@@ -58,6 +58,11 @@ export interface InvalidRunEntry {
   readonly locked: boolean;
   readonly code: "RUN_BUNDLE_MISSING" | "RUN_BUNDLE_INVALID" | "RUN_BUNDLE_SHARD_CONFLICT";
   readonly message: string;
+  /**
+   * Set when every shard of a sharded run completed without a framelia.contract case: no run
+   * was recorded, so only the shard records are left, and they are safe to prune.
+   */
+  readonly emptyShardedRun?: { readonly runId: string; readonly createdAt: string };
 }
 
 export interface RunListing {
@@ -176,12 +181,16 @@ function summarizePendingShards(
     const state = inspectShardedRun(root, runId)!;
     const fragments = state.shards.flatMap((shard) => (shard.fragment ? [shard.fragment] : []));
     const caseCount = fragments.reduce((total, fragment) => total + fragment.casePlans.length, 0);
+    const createdAt = fragments
+      .map((fragment) => fragment.createdAt)
+      .toSorted((left, right) => Date.parse(left) - Date.parse(right))[0]!;
     if (state.missing.length === 0 && caseCount === 0) {
       return {
         bundlePath,
         locked,
         code: "RUN_BUNDLE_MISSING",
         message: `Sharded run "${runId}": every shard completed without a framelia.contract case, so no run was recorded.`,
+        emptyShardedRun: { runId, createdAt },
       };
     }
     return {
@@ -190,9 +199,7 @@ function summarizePendingShards(
       status: "running",
       terminal: false,
       locked,
-      createdAt: fragments
-        .map((fragment) => fragment.createdAt)
-        .toSorted((left, right) => Date.parse(left) - Date.parse(right))[0]!,
+      createdAt,
       caseCount,
       attemptCount: countPublishedAttempts(directory),
       selectedAttemptCount: 0,

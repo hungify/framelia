@@ -12,6 +12,7 @@
 // the dashboard content (not the login form) is what gets compared.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as path from "node:path";
 
 import { canonicalJsonDigest } from "@framelia/verify";
@@ -92,13 +93,34 @@ const DASHBOARD_HTML = `<style>html,body{margin:0}body{width:${VIEWPORT.width}px
 
 let loginRanBeforePrepare = false;
 
+// Served over http rather than `page.setContent`: an attempt records the page's URL as
+// its targetUrl, and the run bundle only accepts http(s) targets (not `about:blank`).
+let appUrl: string;
+let closeApp: () => Promise<void>;
+
+base.beforeAll(async () => {
+  const app = http.createServer((request, response) =>
+    response.end(request.url === "/dashboard" ? DASHBOARD_HTML : LOGIN_HTML),
+  );
+  await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+  const address = app.address();
+  if (!address || typeof address === "string") throw new Error("server address unavailable");
+  appUrl = `http://127.0.0.1:${address.port}`;
+  closeApp = () =>
+    new Promise((resolve, reject) => app.close((error) => (error ? reject(error) : resolve())));
+});
+
+base.afterAll(async () => {
+  await closeApp();
+});
+
 /** Overrides the built-in `page` fixture itself (Playwright's own documented pattern for
  *  app-level setup, since a brand-new fixture name can't reach `defineFigmaTests`'s
  *  `prepare` -- see this file's header comment): every test through `authedTest` already
  *  has a signed-in page by the time its body starts. */
 const authedTest = base.extend({
   page: async ({ page }, use) => {
-    await page.setContent(LOGIN_HTML);
+    await page.goto(`${appUrl}/login`);
     await page.click("#submit");
     loginRanBeforePrepare = true;
     await use(page);
@@ -113,7 +135,7 @@ defineFigmaTests(authedTest, {
     expect(target.path).toBe("/dashboard");
     // Only now does the "authenticated" dashboard content -- and its pinned image --
     // become the capture target; readiness is awaited explicitly before returning.
-    await page.setContent(DASHBOARD_HTML);
+    await page.goto(`${appUrl}${target.path}`);
     await expect(page.getByTestId("dashboard-ready")).toBeVisible();
   },
 });

@@ -1,20 +1,24 @@
 import type { CaptureDefaults, DashboardEvent } from "@framelia/contracts";
 import {
-  RUN_PLAN_FORMAT_VERSION,
-  runPlanSchema,
+  RUN_PLAN_FRAGMENT_FORMAT_VERSION,
   type CasePlan,
   type Diagnostic,
   type RunContext,
+  type RunShard,
   type SourceIdentity,
 } from "@framelia/contracts/workflow";
 import { canonicalJsonDigest, portableErrorMessage, sanitizePortableValue } from "@framelia/verify";
 import {
+  buildDirectRunPlan,
   cacheSelectedRunProjection,
   computeExecutionGraphDigest,
   computeCaseId,
   finalizeRunRecord,
+  finalizeShardedRun,
   freezeRunPlan,
   publishAttempt,
+  publishPlanFragment,
+  publishShardCompletion,
   readCasePlans,
   readRunPlan,
   startRunRecord,
@@ -51,8 +55,11 @@ export interface FrameliaReporterOptions {
   port?: number;
   /** Forwarded to startDashboardServer; mainly for tests -- production use should rely on the default. */
   clientRoot?: string;
-  /** Overrides the generated run-bundle `runId`; mainly for tests -- production use should
-   *  rely on the default (a fresh `nanoid()` per Playwright invocation). */
+  /** The run-bundle `runId`; falls back to the `FRAMELIA_RUN_ID` environment variable, then
+   *  to a fresh `nanoid()` per Playwright invocation. Set it (or `FRAMELIA_RUN_ID`) to one
+   *  value per CI run when sharding: every `--shard` then contributes to one shared run, which
+   *  is finalized once all shards completed. It must be unique per run -- a published run is
+   *  immutable, so reusing an ID (e.g. a CI re-run) is refused. */
   runId?: string;
   /** Known source/build identity (e.g. a CI-resolved commit SHA) folded into every case
    *  plan's `source` field. framelia/#77's own text calls for case identity to cover
@@ -62,6 +69,9 @@ export interface FrameliaReporterOptions {
    *  value; omitted entirely (`{}`) when not given. */
   source?: SourceIdentity;
 }
+
+/** Environment fallback for the reporter's `runId` option; shared by every shard of one run. */
+const RUN_ID_ENV = "FRAMELIA_RUN_ID";
 
 // @framelia/dashboard-server is an optional peer dependency (it owns the hono/@hono/node-server
 // HTTP runtime) -- a consumer who only calls toMatchFigma/toMatchPage/toMatchUrl and never
@@ -115,6 +125,8 @@ export default class FrameliaReporter implements Reporter {
     runId: string;
     cases: Map<string, { casePlan: CasePlan }>;
     retryAcceptance: RetryAcceptancePolicy;
+    /** Set for one shard of a sharded run sharing its run ID (see #initializeRunBundle). */
+    shard?: RunShard;
   };
   /** Mirrors `#ready`/`#pending` for the run-bundle path -- independent of dashboard
    *  startup so a failed/missing @framelia/dashboard-server peer dependency can never
@@ -219,8 +231,9 @@ export default class FrameliaReporter implements Reporter {
             await this.#runBundleReady;
             const bundle = this.#runBundle;
             const lowLevel = store.snapshot();
-            if (!bundle) return lowLevel;
-            const selected = this.#projectSelectedRun(mod, bundle).run;
+            const projection = bundle && this.#readableProjection(mod, bundle);
+            if (!projection) return lowLevel;
+            const selected = projection.run;
             if (lowLevel.contracts.length === 0) return selected;
             const contracts = [...selected.contracts, ...lowLevel.contracts];
             const summary = mod.summarize(contracts);
@@ -230,8 +243,9 @@ export default class FrameliaReporter implements Reporter {
             await this.#runBundleReady;
             const bundle = this.#runBundle;
             const lowLevel = store.files();
-            if (!bundle) return lowLevel;
-            const selected = this.#projectSelectedRun(mod, bundle).files;
+            const projection = bundle && this.#readableProjection(mod, bundle);
+            if (!projection) return lowLevel;
+            const selected = projection.files;
             return new Map([...lowLevel, ...selected]);
           },
           subscribe: (listener) => {
@@ -284,6 +298,20 @@ export default class FrameliaReporter implements Reporter {
       mod.projectSelectedRun(bundle.root, run),
     );
     return this.#selectedProjection();
+  }
+
+  /** A shard's shared run has no readable plan until every shard completed; until then the
+   *  dashboard shows only low-level results. */
+  #readableProjection(
+    mod: DashboardServerModule,
+    bundle: { root: string; runId: string },
+  ): SelectedRunProjection | undefined {
+    try {
+      return this.#projectSelectedRun(mod, bundle);
+    } catch (error) {
+      if ((error as { code?: unknown }).code === "RUN_BUNDLE_SHARDS_PENDING") return undefined;
+      throw error;
+    }
   }
 
   #reconcileExecution(): void {
@@ -373,9 +401,12 @@ export default class FrameliaReporter implements Reporter {
    * same membership rule `resolveContractProjectMatrix` uses -- those tests skip
    * themselves at runtime and must not appear as planned-but-unrun cases.
    *
-   * A sharded invocation (`--shard`) sees only its own shard's tests, so it records a
-   * per-shard bundle whose runId carries a `-shard-<current>-of-<total>` suffix; shard
-   * bundles are never merged (see README).
+   * A sharded invocation (`--shard`) sees only its own shard's tests. With a shared run ID
+   * (the `runId` option or `FRAMELIA_RUN_ID`), it publishes its cases as that run's plan
+   * fragment instead of freezing a plan -- even an empty one, so the run can tell a shard
+   * without contract tests from one that never ran -- and onEnd finalizes the run once every
+   * shard completed (see @framelia/verify's sharded-run.ts). Without a shared run ID it
+   * records a per-shard bundle whose runId carries a `-shard-<current>-of-<total>` suffix.
    */
   async #initializeRunBundle(
     tests: TestCase[],
@@ -383,18 +414,21 @@ export default class FrameliaReporter implements Reporter {
     config: FullConfig,
   ): Promise<void> {
     const contractTests = tests.filter((test) => readContractRegistration(test) !== undefined);
-    if (contractTests.length === 0) return;
+    const sharedRunId = this.#options.runId ?? (process.env[RUN_ID_ENV]?.trim() || undefined);
+    const shard = config.shard ?? undefined;
+    const sharedShard = shard && sharedRunId !== undefined ? shard : undefined;
+    if (contractTests.length === 0 && !(sharedShard && policy.policyDigest)) return;
     if (!policy.policyDigest) {
       throw new Error(
         `${contractTests.length} framelia.contract test(s) were collected, but no framelia.config.* was found for project root ${this.#projectRoot}. Run \`framelia init\` there (or point the reporter's \`projectRoot\` option at the initialized project) so the run can be recorded.`,
       );
     }
-    const shard = config.shard;
-    const baseRunId = this.#options.runId ?? nanoid();
-    const runId = shard ? `${baseRunId}-shard-${shard.current}-of-${shard.total}` : baseRunId;
-    if (shard) {
+    const baseRunId = sharedRunId ?? nanoid();
+    const runId =
+      shard && !sharedShard ? `${baseRunId}-shard-${shard.current}-of-${shard.total}` : baseRunId;
+    if (shard && !sharedShard) {
       console.warn(
-        `framelia reporter: sharded run (shard ${shard.current}/${shard.total}) -- recording per-shard run bundle "${runId}". Shard bundles are never merged into one run; use \`framelia check\` for an authoritative run.`,
+        `framelia reporter: sharded run (shard ${shard.current}/${shard.total}) without a shared run ID -- recording per-shard run bundle "${runId}". To record every shard into one run, set ${RUN_ID_ENV} (or the reporter's runId option) to one value per CI run for all shards, e.g. ${RUN_ID_ENV}=\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}.`,
       );
     }
 
@@ -413,64 +447,37 @@ export default class FrameliaReporter implements Reporter {
       const applicable = result.casePlan.contract.authored.projects ?? policy.playwright?.projects;
       return applicable === undefined || applicable.includes(result.casePlan.project.name);
     });
-    if (results.length === 0) return;
+    const casePlans = results.map((result) => result.casePlan);
 
-    const planned = results.map((result) => ({
-      caseId: result.caseId,
-      casePlanDigest: canonicalJsonDigest(result.casePlan),
-    }));
-    const contracts = [...new Set(results.map((result) => result.casePlan.contract.id))].toSorted();
-    const availableMatrix = [
-      ...new Map(
-        results.map((result) => {
-          const casePlan = result.casePlan;
-          return [
-            `${casePlan.contract.id}\u0000${casePlan.project.name}`,
-            {
-              contractId: casePlan.contract.id,
-              contractFile: casePlan.contract.file,
-              contractDigest: casePlan.contract.digest,
-              project: casePlan.project.name,
-              required: casePlan.contract.authored.required,
-            },
-          ] as const;
-        }),
-      ).values(),
-    ];
-    const plan = runPlanSchema.parse({
-      formatVersion: RUN_PLAN_FORMAT_VERSION,
-      kind: "framelia.run-plan",
-      runId,
-      policyDigest: policy.policyDigest,
-      executionGraphDigest: canonicalJsonDigest({
-        directCases: results.map((result) => ({
-          caseId: result.caseId,
-          projectRuntimeDigest: result.casePlan.project.runtimeDigest,
-          specFileDigest: result.casePlan.specFileDigest,
-          titlePath: result.casePlan.registration.titlePath,
-        })),
-      }),
-      retryAcceptance: policy.retryAcceptance,
-      selection: { mode: "subset", contracts },
-      availableMatrix,
-      requiredMatrix: [],
-      availableCases: planned,
-      requiredCases: [],
-      selectedCases: planned,
-    });
-
-    freezeRunPlan(
-      this.#projectRoot,
-      plan,
-      results.map((result) => result.casePlan),
-    );
-    startRunRecord(this.#projectRoot, plan, new Date().toISOString());
+    if (sharedShard) {
+      await publishPlanFragment(this.#projectRoot, {
+        formatVersion: RUN_PLAN_FRAGMENT_FORMAT_VERSION,
+        kind: "framelia.run-plan-fragment",
+        runId,
+        shard: { current: sharedShard.current, total: sharedShard.total },
+        policyDigest: policy.policyDigest,
+        retryAcceptance: policy.retryAcceptance,
+        createdAt: new Date().toISOString(),
+        casePlans,
+      });
+    } else {
+      if (results.length === 0) return;
+      const plan = buildDirectRunPlan({
+        runId,
+        policyDigest: policy.policyDigest,
+        retryAcceptance: policy.retryAcceptance,
+        casePlans,
+      });
+      freezeRunPlan(this.#projectRoot, plan, casePlans);
+      startRunRecord(this.#projectRoot, plan, new Date().toISOString());
+    }
 
     this.#runBundle = {
       root: this.#projectRoot,
       runId,
       cases: new Map(results.map((result) => [result.testId, { casePlan: result.casePlan }])),
       retryAcceptance: policy.retryAcceptance,
+      ...(sharedShard ? { shard: { current: sharedShard.current, total: sharedShard.total } } : {}),
     };
   }
 
@@ -533,7 +540,13 @@ export default class FrameliaReporter implements Reporter {
           caseEntry.casePlan,
           bundle.root,
         );
-        await publishAttempt(bundle.root, bundle.runId, attemptRecord, files);
+        await publishAttempt(
+          bundle.root,
+          bundle.runId,
+          attemptRecord,
+          files,
+          bundle.shard ? { shard: bundle.shard } : {},
+        );
         const event: DashboardEvent = {
           sequence: ++this.#selectedSequence,
           runId: bundle.runId,
@@ -585,6 +598,41 @@ export default class FrameliaReporter implements Reporter {
       if (teardown) teardownFailures.add(identity);
     }
     return { setupFailures: [...setupFailures], teardownFailures: [...teardownFailures] };
+  }
+
+  /**
+   * One shard of a shared sharded run: records its completion marker, then finalizes the run
+   * when it is the last shard to complete (on this machine or after the shards' run
+   * directories were collected) -- otherwise leaves the run open for the remaining shards.
+   */
+  async #completeShard(
+    bundle: { root: string; runId: string },
+    shard: RunShard,
+    result: FullResult,
+  ): Promise<void> {
+    await publishShardCompletion(bundle.root, bundle.runId, shard, {
+      resultStatus: result.status,
+      globalErrors: this.#globalErrors,
+      diagnostics: this.#publicationDiagnostics,
+    });
+    const outcome = await finalizeShardedRun(bundle.root, bundle.runId);
+    if (outcome.state === "finalized") {
+      console.log(
+        `framelia reporter: every shard of run ${bundle.runId} completed -- finalized the run (${outcome.record.status}).`,
+      );
+    } else if (outcome.state === "waiting") {
+      console.log(
+        `framelia reporter: shard ${shard.current}/${shard.total} of run ${bundle.runId} completed; waiting for ${outcome.missing
+          .map((missing) => `shard ${missing.current}/${missing.total}`)
+          .join(
+            ", ",
+          )}. The last shard to finish finalizes the run. Shards on other machines: collect every shard's .framelia/runs/<run> directory into one project root and run \`framelia runs finalize --run ${bundle.runId}\`.`,
+      );
+    } else if (outcome.state === "empty") {
+      console.log(
+        `framelia reporter: no shard of run ${bundle.runId} collected a framelia.contract case; nothing was recorded.`,
+      );
+    }
   }
 
   async onEnd(result: FullResult): Promise<void | { status: FullResult["status"] }> {
@@ -645,7 +693,15 @@ export default class FrameliaReporter implements Reporter {
         `${this.#publicationDiagnostics.length} attempt publication(s) failed; the run bundle is sealed "error".`,
       );
     }
-    if (this.#runBundle) {
+    if (this.#runBundle?.shard) {
+      try {
+        await this.#completeShard(this.#runBundle, this.#runBundle.shard, result);
+      } catch (error: unknown) {
+        recordingFailures.push(
+          `failed to complete shard ${this.#runBundle.shard.current}/${this.#runBundle.shard.total} of run ${this.#runBundle.runId} -- durable run-bundle recording is incomplete: ${errorMessage(error)}`,
+        );
+      }
+    } else if (this.#runBundle) {
       try {
         await finalizeRunRecord(this.#runBundle.root, this.#runBundle.runId, {
           retryAcceptance: this.#runBundle.retryAcceptance,

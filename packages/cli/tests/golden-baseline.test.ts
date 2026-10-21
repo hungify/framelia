@@ -90,7 +90,8 @@ describe("golden baseline: unrecognized top-level token falls through to the def
 describe("golden baseline: `--` argument termination", () => {
   it("an option consumes a literal `--` as its value when `--` appears where a value is expected", () => {
     const result = run(["status", "--project-root", "--"]);
-    expect(result.status).toBe(0);
+    // The literal `--` directory holds no config, so status reports it (exit 2) with JSON.
+    expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stdout) as { projectRoot: string };
     expect(parsed.projectRoot.endsWith(path.sep + "--")).toBe(true);
   });

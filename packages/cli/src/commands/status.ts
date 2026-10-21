@@ -8,8 +8,8 @@ import { emitResult } from "../output.ts";
 export const statusCommand = buildCommand({
   loader: async () => {
     const { statusCommand: runStatusCommand } = await import("../internal/status.ts");
-    return function (this: CliContext, flags: StatusOptions) {
-      emitResult(this, runStatusCommand(flags, this));
+    return async function (this: CliContext, flags: StatusOptions) {
+      emitResult(this, await runStatusCommand(flags, this));
     };
   },
   parameters: {

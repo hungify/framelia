@@ -156,8 +156,11 @@ const resolvedThresholdTooltip = computed(() => {
       </div>
       <code class="block mt-1.5 break-all font-mono text-text-soft select-all">{{ promote }}</code>
       <p class="m-0 mt-1.5 text-muted">
-        Recaptures the target and promotes it. Review the diff first, and check
-        <code>--key</code> matches the <code>toMatchPageBaseline</code> key.
+        Recaptures the target and promotes it. Review the diff first<span
+          v-if="!contract.baselineKey"
+          data-testid="promote-key-caveat"
+          >, and check <code>--key</code> matches the <code>toMatchPageBaseline</code> key</span
+        >.
       </p>
       <span class="sr-only" role="status">{{
         copyState === "copied" ? "Command copied to clipboard" : ""

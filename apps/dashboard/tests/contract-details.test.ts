@@ -1,3 +1,4 @@
+import type { DashboardContractResult } from "@framelia/contracts";
 import { renderToString } from "@vue/server-renderer";
 import { describe, expect, it } from "vitest";
 import { createSSRApp, defineComponent, h } from "vue";
@@ -122,8 +123,12 @@ const TreeStub = defineComponent({
 });
 
 describe("ContractDetails actions", () => {
-  async function renderDetails(index: number, inspectedAttemptId?: string) {
-    const contract = dashboardMockRun.contracts[index]!;
+  async function renderDetails(
+    index: number,
+    inspectedAttemptId?: string,
+    overrides: Partial<DashboardContractResult> = {},
+  ) {
+    const contract = { ...dashboardMockRun.contracts[index]!, ...overrides };
     const app = createSSRApp({
       render: () => h(ContractDetails, { contract, inspectedAttemptId }),
     });
@@ -139,6 +144,13 @@ describe("ContractDetails actions", () => {
       "framelia baseline promote --key checkout.mobile --target-url http://127.0.0.1:3000/checkout",
     );
     expect(await renderDetails(0)).not.toContain('data-testid="promote-command"');
+  });
+
+  it("asks to check --key only when the recorded toMatchPageBaseline key is unknown (#101)", async () => {
+    expect(await renderDetails(2)).toContain('data-testid="promote-key-caveat"');
+    const known = await renderDetails(2, undefined, { baselineKey: "checkout.phone" });
+    expect(known).toContain("framelia baseline promote --key checkout.phone --target-url");
+    expect(known).not.toContain('data-testid="promote-key-caveat"');
   });
 
   it("lets each attempt be shown in the inspector, marking the inspected one", async () => {

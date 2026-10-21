@@ -71,7 +71,11 @@ export async function runToMatchPageBaseline(
 ): Promise<MatcherReturnType> {
   const { timeoutMs, workDir } = context;
   const profile = options.profile ?? (options.selector ? "component/dev" : "page");
-  const baselineDir = options.baselineDir ?? path.join(process.cwd(), visualArtifactPath(key));
+  const defaultBaselineDir = path.join(process.cwd(), visualArtifactPath(key));
+  const baselineDir = options.baselineDir ?? defaultBaselineDir;
+  // `framelia baseline promote --key` only ever writes the default directory, so the key
+  // is only worth recording (for an exact dashboard promote command) when that's this one.
+  const promotableByKey = path.resolve(baselineDir) === path.resolve(defaultBaselineDir);
 
   const updateSnapshots = context.updateSnapshots ?? "none";
   const baselineOutcome = resolvePageBaseline(baselineDir);
@@ -154,6 +158,7 @@ export async function runToMatchPageBaseline(
       ...(baselineOutcome.meta.current.runId !== undefined
         ? { baselineRunId: baselineOutcome.meta.current.runId }
         : {}),
+      ...(promotableByKey ? { baselineKey: key } : {}),
     };
     await context.attachJson(`${baseName}${SCORE_ATTACHMENT_SUFFIX}`, scoreAttachment);
 

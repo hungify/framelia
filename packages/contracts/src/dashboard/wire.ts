@@ -92,6 +92,7 @@ const dashboardContractResultSchema = z
     status: dashboardVerdictSchema,
     phase: dashboardPhaseSchema,
     baselineKind: z.enum(["figma", "page"]),
+    baselineKey: z.string().min(1).optional(),
     capture: z.object({ kind: z.enum(["viewport", "element"]) }).loose(),
     blockers: z.array(z.object({ code: z.string(), message: z.string() }).loose()),
     finishedAt: z.string().optional(),

@@ -2,13 +2,24 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { RUN_FORMAT_VERSION } from "@framelia/contracts/workflow";
-import { runDir } from "@framelia/verify/run-bundle";
+import { RUN_FORMAT_VERSION, RUN_PLAN_FRAGMENT_FORMAT_VERSION } from "@framelia/contracts/workflow";
+import {
+  publishPlanFragment,
+  publishShardCompletion,
+  readCasePlans,
+  runDir,
+} from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { run } from "../src/cli.ts";
-import { parseDuration, runsListCommand, runsPruneCommand } from "../src/internal/runs.ts";
+import {
+  parseDuration,
+  runsFinalizeCommand,
+  runsListCommand,
+  runsPruneCommand,
+} from "../src/internal/runs.ts";
 import { createFakeProcess } from "./fake-process.ts";
+import { createSelectedRun } from "./selected-run-fixture.ts";
 import { testEnvironment } from "./test-environment.ts";
 
 const roots: string[] = [];
@@ -129,6 +140,25 @@ describe("runs prune", () => {
     expect(fs.existsSync(runDir(root, "recent"))).toBe(true);
   });
 
+  it("removes a sharded run whose every shard completed without a case", async () => {
+    const root = project();
+    await collectShards(root, [1, 2], { 1: [], 2: [] });
+
+    const recent = runsPruneCommand(
+      { projectRoot: root, keep: undefined, olderThan: "7d", dryRun: undefined },
+      env(root),
+    );
+    expect(recent.body).toMatchObject({ removed: [] });
+    expect(fs.existsSync(runDir(root, "run-selected"))).toBe(true);
+
+    const pruned = runsPruneCommand(
+      { projectRoot: root, keep: 0, olderThan: undefined, dryRun: undefined },
+      env(root),
+    );
+    expect(pruned.body).toMatchObject({ removed: [{ runId: "run-selected" }], diagnostics: [] });
+    expect(fs.existsSync(runDir(root, "run-selected"))).toBe(false);
+  });
+
   it("requires a criterion and a valid duration", () => {
     const root = project();
     expect(
@@ -139,5 +169,148 @@ describe("runs prune", () => {
     ).toMatchObject({ exitCode: 2, body: { diagnostics: [{ code: "INVALID_INPUT" }] } });
     expect(parseDuration("12h")).toBe(12 * 3_600_000);
     expect(() => parseDuration("7 days")).toThrow(/--older-than/);
+  });
+});
+
+/**
+ * A sharded run collected from two shards: shard N planned the N-th case of a two-case
+ * fixture run (or `planned` overrides which case indexes each shard planned).
+ */
+async function collectShards(
+  root: string,
+  shards: readonly number[],
+  planned: Record<number, number[]> = { 1: [0], 2: [1] },
+): Promise<void> {
+  const runId = "run-selected";
+  await createSelectedRun(root, { runId, secondCase: { pass: true } });
+  const casePlans = [...readCasePlans(root, runId).values()].toSorted((a, b) =>
+    a.caseId.localeCompare(b.caseId),
+  );
+  fs.rmSync(runDir(root, runId), { recursive: true });
+  for (const current of shards) {
+    const shard = { current, total: 2 };
+    // eslint-disable-next-line no-await-in-loop -- each shard publishes under the run lock
+    await publishPlanFragment(root, {
+      formatVersion: RUN_PLAN_FRAGMENT_FORMAT_VERSION,
+      kind: "framelia.run-plan-fragment",
+      runId,
+      shard,
+      policyDigest: casePlans[0]!.policyDigest,
+      retryAcceptance: "require-first-attempt",
+      createdAt: "2026-10-20T00:00:00.000Z",
+      casePlans: (planned[current] ?? []).map((index) => casePlans[index]!),
+    });
+    // eslint-disable-next-line no-await-in-loop -- each shard publishes under the run lock
+    await publishShardCompletion(root, runId, shard, {
+      resultStatus: "passed",
+      globalErrors: [],
+      diagnostics: [],
+    });
+  }
+}
+
+describe("runs finalize", () => {
+  it("composes and finalizes a collected sharded run once", async () => {
+    const root = project();
+    await collectShards(root, [1, 2]);
+
+    const first = await runsFinalizeCommand({ projectRoot: root, run: "run-selected" }, env(root));
+    expect(first).toMatchObject({
+      exitCode: 0,
+      body: {
+        kind: "framelia.runs-finalize-outcome",
+        command: "runs finalize",
+        executionState: "completed",
+        exitCode: 0,
+        runId: "run-selected",
+        state: "finalized",
+        shards: { total: 2, completed: [1, 2], missing: [] },
+        next: {
+          command: "framelia",
+          argv: ["open", "--run", "run-selected", "--project-root", root],
+        },
+      },
+    });
+    expect(first.body).toHaveProperty("status");
+
+    const again = await runsFinalizeCommand({ projectRoot: root, run: "run-selected" }, env(root));
+    expect(again).toMatchObject({ exitCode: 0, body: { state: "already-finalized" } });
+  });
+
+  it("exits 2 and lists the shards it is still missing", async () => {
+    const root = project();
+    await collectShards(root, [1]);
+
+    const result = await runsFinalizeCommand({ projectRoot: root, run: "run-selected" }, env(root));
+
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        executionState: "incomplete",
+        exitCode: 2,
+        state: "waiting",
+        shards: {
+          total: 2,
+          completed: [1],
+          missing: [{ current: 2, total: 2, parts: ["plan", "completion"] }],
+        },
+        diagnostics: [
+          { code: "RUN_SHARDS_MISSING", message: expect.stringContaining("shard 2/2") },
+        ],
+      },
+    });
+    expect(fs.existsSync(path.join(runDir(root, "run-selected"), "run.json"))).toBe(false);
+  });
+
+  it("rejects shards that planned the same case", async () => {
+    const root = project();
+    await collectShards(root, [1, 2], { 1: [0], 2: [0, 1] });
+
+    const result = await runsFinalizeCommand({ projectRoot: root, run: "run-selected" }, env(root));
+
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        executionState: "error",
+        diagnostics: [
+          { code: "RUN_BUNDLE_SHARD_CONFLICT", message: expect.stringContaining("login.desktop") },
+        ],
+      },
+    });
+  });
+
+  it("requires --run and reports a run without shard records", async () => {
+    const root = project();
+    expect(
+      await runsFinalizeCommand({ projectRoot: root, run: undefined }, env(root)),
+    ).toMatchObject({
+      exitCode: 2,
+      body: {
+        diagnostics: [{ code: "RUN_SELECTION_MISSING" }],
+        next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
+      },
+    });
+    expect(await runsFinalizeCommand({ projectRoot: root, run: "nope" }, env(root))).toMatchObject({
+      exitCode: 2,
+      body: { diagnostics: [{ code: "RUN_BUNDLE_MISSING" }] },
+    });
+    expect(fs.existsSync(runDir(root, "nope"))).toBe(false);
+  });
+
+  it("is routed as `framelia runs finalize`", async () => {
+    const root = project();
+    await collectShards(root, [1, 2]);
+    const fakeProcess = { ...createFakeProcess(), cwd: () => root };
+
+    await run(["runs", "finalize", "--run", "run-selected"], {
+      process: fakeProcess,
+      loadProjectEnv: false,
+    });
+
+    expect(fakeProcess.exitCode).toBe(0);
+    expect(JSON.parse(fakeProcess.stdoutText())).toMatchObject({
+      kind: "framelia.runs-finalize-outcome",
+      state: "finalized",
+    });
   });
 });

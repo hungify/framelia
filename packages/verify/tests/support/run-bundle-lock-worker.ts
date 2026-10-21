@@ -3,15 +3,20 @@
 // event loop) so `publishAttempt`/`finalizeRunRecord`'s `withRunLock` is exercised the
 // same way it would be across two real Playwright workers/coordinators -- a same-process
 // `Promise.all` over two synchronous-at-heart functions can't reproduce this race at all.
-import type { AttemptRecord } from "@framelia/contracts/workflow";
+import type { AttemptRecord, RunShard } from "@framelia/contracts/workflow";
 
-import { finalizeRunRecord, publishAttempt } from "../../src/run-bundle/index.ts";
+import {
+  finalizeRunRecord,
+  finalizeShardedRun,
+  publishAttempt,
+  publishShardCompletion,
+} from "../../src/run-bundle/index.ts";
 
 async function main(): Promise<void> {
   const [, , mode, root, runId, payloadJson] = process.argv;
   if (!mode || !root || !runId || !payloadJson) {
     throw new Error(
-      "usage: run-bundle-lock-worker.ts <publish|finalize> <root> <runId> <payloadJson>",
+      "usage: run-bundle-lock-worker.ts <publish|finalize|complete-shard> <root> <runId> <payloadJson>",
     );
   }
   const payload: Record<string, unknown> = JSON.parse(payloadJson);
@@ -39,6 +44,16 @@ async function main(): Promise<void> {
       throw new Error(`finalize payload has invalid retryAcceptance: ${String(retryAcceptance)}`);
     }
     await finalizeRunRecord(root, runId, { retryAcceptance });
+  } else if (mode === "complete-shard") {
+    // One shard's onEnd: publish its completion marker, then try to compose and finalize.
+    const shard = payload.shard as RunShard;
+    await publishShardCompletion(root, runId, shard, {
+      resultStatus: "passed",
+      globalErrors: [],
+      diagnostics: [],
+    });
+    const result = await finalizeShardedRun(root, runId);
+    process.stdout.write(`${JSON.stringify({ state: result.state })}\n`);
   } else {
     throw new Error(`unknown mode: ${mode}`);
   }

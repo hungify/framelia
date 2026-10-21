@@ -8,9 +8,11 @@ import {
   collectionManifestSchema,
   commandOutcomeSchema,
   contractBindingSchema,
+  runPlanFragmentSchema,
   runPlanSchema,
   runRecordSchema,
   runContextSchema,
+  shardCompletionSchema,
   transportStatusSchema,
   testRegistrationSchema,
 } from "../src/workflow-records.ts";
@@ -436,6 +438,105 @@ describe("snapshot and execution units", () => {
       evidence: {},
     });
     expect(attempt.retryIndex).toBe(1);
+  });
+});
+
+describe("sharded run records", () => {
+  function casePlan(contractId: string, runId = "run-1") {
+    const binding = {
+      formatVersion: 1,
+      kind: "framelia.contract-binding",
+      contractId,
+      contractFile: `contracts/${contractId}.json`,
+      contractDigest: A_DIGEST,
+    };
+    return {
+      formatVersion: 2,
+      kind: "framelia.case-plan",
+      runId,
+      caseId: `${contractId}@chromium#0`,
+      contract: {
+        id: contractId,
+        file: `contracts/${contractId}.json`,
+        digest: A_DIGEST,
+        authored: contract({ id: contractId }),
+      },
+      snapshotDigest: A_DIGEST,
+      expectedDigest: A_DIGEST,
+      expectedSize: { width: 10, height: 10 },
+      baselineSource: { kind: "figma", fileKey: "file", nodeId: "1:2" },
+      maxMaskedAreaRatio: 0.25,
+      stabilitySamples: 2,
+      policyDigest: A_DIGEST,
+      bindingDigest: A_DIGEST,
+      binding,
+      registration: { specFile: "a.spec.ts", specDigest: A_DIGEST, titlePath: ["a"] },
+      specFile: "a.spec.ts",
+      specFileDigest: A_DIGEST,
+      project: { name: "chromium", runtimeDigest: A_DIGEST },
+      repeatIndex: 0,
+      retryAcceptance: "require-first-attempt",
+      source: {},
+    };
+  }
+
+  function fragment(overrides: Record<string, unknown> = {}) {
+    return {
+      formatVersion: 1,
+      kind: "framelia.run-plan-fragment",
+      runId: "run-1",
+      shard: { current: 1, total: 2 },
+      policyDigest: A_DIGEST,
+      retryAcceptance: "require-first-attempt",
+      createdAt: "2026-09-14T12:00:00.000Z",
+      casePlans: [casePlan("login.desktop")],
+      ...overrides,
+    };
+  }
+
+  it("accepts a shard's plan fragment, including an empty one", () => {
+    expect(runPlanFragmentSchema.safeParse(fragment()).success).toBe(true);
+    expect(runPlanFragmentSchema.safeParse(fragment({ casePlans: [] })).success).toBe(true);
+  });
+
+  it("rejects a fragment whose shard, case plans or policy disagree with its own identity", () => {
+    expect(
+      runPlanFragmentSchema.safeParse(fragment({ shard: { current: 3, total: 2 } })).success,
+    ).toBe(false);
+    expect(
+      runPlanFragmentSchema.safeParse(fragment({ casePlans: [casePlan("login.desktop", "other")] }))
+        .success,
+    ).toBe(false);
+    expect(
+      runPlanFragmentSchema.safeParse(
+        fragment({ casePlans: [casePlan("login.desktop"), casePlan("login.desktop")] }),
+      ).success,
+    ).toBe(false);
+    expect(runPlanFragmentSchema.safeParse(fragment({ policyDigest: B_DIGEST })).success).toBe(
+      false,
+    );
+    expect(
+      runPlanFragmentSchema.safeParse(fragment({ retryAcceptance: "allow-passed-after-retry" }))
+        .success,
+    ).toBe(false);
+  });
+
+  it("records a shard's completion with its runner status, global errors and fragment digest", () => {
+    const completion = {
+      formatVersion: 1,
+      kind: "framelia.shard-completion",
+      runId: "run-1",
+      shard: { current: 2, total: 2 },
+      planFragmentDigest: A_DIGEST,
+      resultStatus: "failed",
+      globalErrors: ["worker crashed"],
+      diagnostics: [],
+      completedAt: "2026-09-14T12:00:01.000Z",
+    };
+    expect(shardCompletionSchema.safeParse(completion).success).toBe(true);
+    expect(
+      shardCompletionSchema.safeParse({ ...completion, resultStatus: "skipped" }).success,
+    ).toBe(false);
   });
 });
 

@@ -1,23 +1,11 @@
 import * as path from "node:path";
 
-import { authoredContractSchema, type Diagnostic } from "@framelia/contracts/workflow";
-import {
-  AppError,
-  assertRawFileState,
-  canonicalJsonDigest,
-  publishBaselineSnapshot,
-  readPinnedBaseline,
-  readRawFileState,
-  stageFigmaBaseline,
-  withAuthoringLock,
-  writeAuthoredContract,
-  type CanonicalJsonValue,
-  type FetchBaselineFn,
-} from "@framelia/verify";
-import { inspectAuthoredContracts } from "@framelia/verify/project-policy";
+import type { Diagnostic } from "@framelia/contracts/workflow";
+import { AppError, readPinnedBaseline, type FetchBaselineFn } from "@framelia/verify";
 
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
+import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
 import { openProject } from "./project.ts";
 
@@ -83,53 +71,23 @@ export async function contractRefreshBaselineCommand(
     if (!contractId) {
       throw new Error("refresh-baseline requires --contract <exact-id>.");
     }
-    const project = openProject(options.projectRoot, runtime);
-    const policy = await project.loadConfig();
-    const configBefore = policy.configPath ? readRawFileState(policy.configPath) : undefined;
-    const inspection = await inspectAuthoredContracts(policy);
-    if (inspection.invalid[0]) {
-      throw new AppError(inspection.invalid[0].code, inspection.invalid[0].message);
-    }
-    const discovered = inspection.contracts.find((entry) => entry.contract.id === contractId);
+    const policy = await openProject(options.projectRoot, runtime).loadConfig();
+    const pinning = await openContractPinning(policy);
+    const discovered = pinning.contracts.find((entry) => entry.contract.id === contractId);
     if (!discovered) {
       throw new Error(`Unknown exact contract id ${JSON.stringify(contractId)}.`);
     }
-    const contractPath = path.resolve(policy.root, discovered.file);
-    const before = readRawFileState(contractPath);
     const previous = await readPinnedBaseline(policy.root, discovered.contract);
-    const staged = await stageFigmaBaseline({
+    const { contract: replacement, digest } = await pinning.pin({
+      contractPath: path.resolve(policy.root, discovered.file),
+      existing: discovered,
+      draft: { ...discovered.contract, revision: discovered.contract.revision + 1 },
       source: previous.snapshot.source,
-      viewport: discovered.contract.viewport,
-      scope: discovered.contract.scope,
       token: optionalFigmaToken(runtime),
       ...(dependencies.fetchBaseline ? { fetchBaseline: dependencies.fetchBaseline } : {}),
-    });
-    const replacement = authoredContractSchema.parse({
-      ...discovered.contract,
-      revision: discovered.contract.revision + 1,
-      baseline: { snapshotDigest: staged.snapshotDigest },
-    });
-    const digest = canonicalJsonDigest(replacement as CanonicalJsonValue);
-
-    await withAuthoringLock(policy.root, async () => {
-      assertRawFileState(contractPath, before);
-      if (policy.configPath && configBefore) {
-        assertRawFileState(policy.configPath, configBefore);
-      }
-      const latest = await inspectAuthoredContracts(policy);
-      if (latest.invalid[0]) {
-        throw new AppError(latest.invalid[0].code, latest.invalid[0].message);
-      }
-      const owner = latest.contracts.find((entry) => entry.contract.id === contractId);
-      if (owner?.file !== discovered.file || owner.digest !== discovered.digest) {
-        throw new AppError(
-          "AUTHORING_CONFLICT",
-          `Contract ${contractId} changed while baseline acquisition was in progress.`,
-        );
-      }
-      await publishBaselineSnapshot(policy.root, replacement, staged);
-      dependencies.afterSnapshotPublished?.();
-      writeAuthoredContract(contractPath, replacement);
+      ...(dependencies.afterSnapshotPublished
+        ? { afterSnapshotPublished: dependencies.afterSnapshotPublished }
+        : {}),
     });
 
     return {

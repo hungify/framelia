@@ -8,22 +8,11 @@ import {
 import {
   AppError,
   assertProjectRelativePath,
-  assertRawFileState,
-  canonicalJsonDigest,
   portableErrorMessage,
-  publishBaselineSnapshot,
   readRawFileState,
-  stageFigmaBaseline,
-  withAuthoringLock,
-  writeAuthoredContract,
-  type CanonicalJsonValue,
   type FetchBaselineFn,
 } from "@framelia/verify";
-import {
-  inspectAuthoredContracts,
-  type DiscoveredAuthoredContract,
-  type InvalidAuthoredContract,
-} from "@framelia/verify/project-policy";
+import type { DiscoveredAuthoredContract } from "@framelia/verify/project-policy";
 
 import type { CliRuntime } from "../runtime-types.ts";
 import {
@@ -32,6 +21,7 @@ import {
   type ContractInterviewDependencies,
 } from "./contract-interview.ts";
 import { listContractBindings } from "./contract-list.ts";
+import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
 import type { PlaywrightTransportDependencies } from "./playwright-collection.ts";
 import { openProject } from "./project.ts";
@@ -106,12 +96,6 @@ function failed(error: unknown): ContractCreateResult {
   };
 }
 
-function assertInspectionValid(invalid: readonly InvalidAuthoredContract[]): void {
-  if (invalid.length === 0) return;
-  const details = invalid.map((entry) => `${entry.code}: ${entry.message}`).join("; ");
-  throw new Error(`Contract discovery must be repaired before authoring: ${details}`);
-}
-
 function selectTarget(
   root: string,
   options: ContractCreateOptions,
@@ -158,9 +142,7 @@ export async function contractCreateCommand(
   try {
     const project = openProject(options.projectRoot, runtime);
     const policy = await project.loadConfig();
-    const inspection = await inspectAuthoredContracts(policy);
-    const configBefore = policy.configPath ? readRawFileState(policy.configPath) : undefined;
-    assertInspectionValid(inspection.invalid);
+    const pinning = await openContractPinning(policy);
 
     const interviewDependencies =
       dependencies.resolveNodeSpec && dependencies.deriveExpectStyle
@@ -179,7 +161,7 @@ export async function contractCreateCommand(
       throw new Error("Contract authoring was cancelled.");
     }
 
-    const existing = inspection.contracts.find(
+    const existing = pinning.contracts.find(
       (entry) => entry.contract.id === interview.answers.contractId,
     );
     if (existing && !options.force) {
@@ -188,8 +170,7 @@ export async function contractCreateCommand(
       );
     }
     const outputPath = selectTarget(project.root, options, existing, interview.answers.contractId);
-    const before = readRawFileState(outputPath);
-    if (before.exists && !existing) {
+    if (readRawFileState(outputPath).exists && !existing) {
       throw new Error(
         `${portablePath(project.root, outputPath)} already exists but does not own contract ${interview.answers.contractId}; it is never overwritten, even with --force.`,
       );
@@ -208,46 +189,17 @@ export async function contractCreateCommand(
       baseline: { snapshotDigest: `sha256:${"0".repeat(64)}` },
       required: existing?.contract.required ?? true,
     });
-    const staged = await stageFigmaBaseline({
+    const {
+      contract,
+      digest: contractDigest,
+      snapshotDigest,
+    } = await pinning.pin({
+      contractPath: outputPath,
+      existing,
+      draft: provisional,
       source: interview.answers.baseline,
-      viewport: provisional.viewport,
-      scope: provisional.scope,
       token: optionalFigmaToken(runtime),
       ...(dependencies.fetchBaseline ? { fetchBaseline: dependencies.fetchBaseline } : {}),
-    });
-    const contract = authoredContractSchema.parse({
-      ...provisional,
-      baseline: { snapshotDigest: staged.snapshotDigest },
-    });
-    const contractDigest = canonicalJsonDigest(contract as CanonicalJsonValue);
-
-    await withAuthoringLock(project.root, async () => {
-      assertRawFileState(outputPath, before);
-      if (policy.configPath && configBefore) {
-        assertRawFileState(policy.configPath, configBefore);
-      }
-      const latest = await inspectAuthoredContracts(policy);
-      assertInspectionValid(latest.invalid);
-      const latestOwner = latest.contracts.find((entry) => entry.contract.id === contract.id);
-      if (existing) {
-        if (
-          latestOwner?.file !== existing.file ||
-          latestOwner.digest !== existing.digest ||
-          portablePath(project.root, outputPath) !== existing.file
-        ) {
-          throw new AppError(
-            "AUTHORING_CONFLICT",
-            `Contract ${contract.id} changed while baseline acquisition was in progress.`,
-          );
-        }
-      } else if (latestOwner) {
-        throw new AppError(
-          "AUTHORING_CONFLICT",
-          `Contract ${contract.id} was created concurrently at ${latestOwner.file}.`,
-        );
-      }
-      await publishBaselineSnapshot(project.root, contract, staged);
-      writeAuthoredContract(outputPath, contract);
     });
 
     const relativePath = portablePath(project.root, outputPath);
@@ -282,7 +234,7 @@ export async function contractCreateCommand(
             },
           ];
     const unbound = bindingDiagnostics.some((entry) => entry.code === "CONTRACT_UNBOUND");
-    prompts.note(`Wrote ${relativePath} and pinned ${staged.snapshotDigest}.`, "Contract authored");
+    prompts.note(`Wrote ${relativePath} and pinned ${snapshotDigest}.`, "Contract authored");
     prompts.outro(
       runnable
         ? "The application scenario is registered and executable."
@@ -304,7 +256,7 @@ export async function contractCreateCommand(
           path: relativePath,
           digest: contractDigest,
           revision: contract.revision,
-          snapshotDigest: staged.snapshotDigest,
+          snapshotDigest: snapshotDigest,
         },
         outcome: existing ? "replaced" : "created",
         diagnostics: bindingDiagnostics,

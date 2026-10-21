@@ -10,6 +10,7 @@ import {
   assertProjectRelativePath,
   assertRawFileState,
   canonicalJsonDigest,
+  portableErrorMessage,
   publishBaselineSnapshot,
   readRawFileState,
   stageFigmaBaseline,
@@ -30,7 +31,7 @@ import {
   type ContractCreateOptions,
   type ContractInterviewDependencies,
 } from "./contract-interview.ts";
-import { contractListCommand } from "./contract-list.ts";
+import { listContractBindings } from "./contract-list.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
 import type { PlaywrightTransportDependencies } from "./playwright-collection.ts";
 import { openProject } from "./project.ts";
@@ -250,8 +251,23 @@ export async function contractCreateCommand(
     });
 
     const relativePath = portablePath(project.root, outputPath);
-    const listed = await contractListCommand({ projectRoot: project.root }, runtime, dependencies);
-    const bindings = listed.body.contracts.filter((entry) => entry.contractId === contract.id);
+    // The contract is already authored; a binding-inspection failure only blocks `runnable`.
+    const bindings = await listContractBindings(policy, runtime, dependencies).then(
+      (listed) => listed.entries.filter((entry) => entry.contractId === contract.id),
+      (error: unknown) => [
+        {
+          contractPath: relativePath,
+          status: "invalid" as const,
+          diagnostics: [
+            {
+              code: error instanceof AppError ? error.code : "CONTRACT_LIST_FAILED",
+              stage: "binding",
+              message: portableErrorMessage(error, project.root),
+            },
+          ],
+        },
+      ],
+    );
     const runnable =
       bindings.length > 0 && bindings.every((entry) => entry.status === "executable");
     const bindingDiagnostics = runnable

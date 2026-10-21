@@ -35,6 +35,7 @@ import {
 import { nanoid } from "nanoid";
 
 import type { CliRuntime } from "../runtime-types.ts";
+import { reconcileBinding } from "./binding-reconciliation.ts";
 import {
   RUN_CONTEXT_ENV,
   assertTransportIdentity,
@@ -132,49 +133,32 @@ export function reconcileSelectedCases(
   manifest: CollectionManifest,
   expected: readonly ContractProjectCase[],
 ): CollectedCase[] {
-  const projects = new Map(manifest.projects.map((project) => [project.name, project]));
   const selected: CollectedCase[] = [];
   for (const matrixCase of expected) {
-    const project = projects.get(matrixCase.project);
-    if (!project) {
-      throw new Error(`Collection omitted selected project ${JSON.stringify(matrixCase.project)}.`);
-    }
-    const candidates = manifest.visualCases.filter(
-      (entry) =>
-        entry.binding.contractId === matrixCase.contractId && entry.project === matrixCase.project,
-    );
-    const byRepeat = new Map<number, CollectedCase[]>();
-    for (const candidate of candidates) {
-      const entries = byRepeat.get(candidate.repeatIndex) ?? [];
-      entries.push(candidate);
-      byRepeat.set(candidate.repeatIndex, entries);
-    }
-    for (let repeatIndex = 0; repeatIndex < project.repeatEach; repeatIndex += 1) {
-      const matches = byRepeat.get(repeatIndex) ?? [];
-      if (matches.length !== 1) {
+    const label = `${matrixCase.contractId}/${JSON.stringify(matrixCase.project)}`;
+    const binding = reconcileBinding(manifest, matrixCase);
+    switch (binding.status) {
+      case "executable":
+        selected.push(...binding.cases);
+        break;
+      case "project-missing":
         throw new Error(
-          `Selected binding ${matrixCase.contractId}/${JSON.stringify(matrixCase.project)}/repeat-${repeatIndex} matched ${matches.length} collected tests; expected exactly one.`,
+          `Collection omitted selected project ${JSON.stringify(matrixCase.project)}.`,
         );
-      }
-      const collected = matches[0]!;
-      if (
-        collected.binding.contractFile !== matrixCase.contractFile ||
-        collected.binding.contractDigest !== matrixCase.contractDigest
-      ) {
+      case "unbound":
         throw new Error(
-          `Selected binding ${matrixCase.contractId}/${JSON.stringify(matrixCase.project)} was remapped to a different authored contract file or digest.`,
+          `Selected binding ${label} matched 0 collected tests; expected exactly one.`,
         );
-      }
-      selected.push(collected);
-    }
-    const indexes = [...byRepeat.keys()].toSorted((left, right) => left - right);
-    if (
-      indexes.length !== project.repeatEach ||
-      indexes.some((repeatIndex, index) => repeatIndex !== index)
-    ) {
-      throw new Error(
-        `Selected binding ${matrixCase.contractId}/${JSON.stringify(matrixCase.project)} has non-contiguous repeat slots; expected 0..${project.repeatEach - 1}.`,
-      );
+      case "duplicate":
+        throw new Error(
+          `Selected binding ${label}/repeat-${binding.repeatIndex} matched ${binding.matched} collected tests; expected exactly one.`,
+        );
+      case "stale":
+        throw new Error(
+          binding.reason === "identity"
+            ? `Selected binding ${label} was remapped to a different authored contract file or digest.`
+            : `Selected binding ${label} has non-contiguous repeat slots; expected exactly one per slot.`,
+        );
     }
   }
   if (selected.length === 0) throw new Error("Collection produced zero selected visual cases.");

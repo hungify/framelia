@@ -87,6 +87,24 @@ describe("baseline staleness (warnings only, never hard-fail)", () => {
     expect(w.some((x: string) => x.includes("not re-verified"))).toBe(true);
   });
 
+  it("offline -> time-based heuristic only, never calls Figma even with a token", async () => {
+    const old = new Date(Date.now() - 20 * 86_400_000).toISOString();
+    const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: old });
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      throw new Error("must not be called");
+    }) as typeof fetch;
+    const w = await checkBaselineStaleness(baseline, {
+      token: "t",
+      fetchImpl,
+      maxAgeDays: 14,
+      offline: true,
+    });
+    expect(calls).toBe(0);
+    expect(w).toEqual([expect.stringMatching(/not re-verified in \d+d, Figma not re-checked/)]);
+  });
+
   it("invalid fetchedAt reports unknown freshness", async () => {
     const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: "not-a-date" });
     const w = await checkBaselineStaleness(baseline, { token: "" });

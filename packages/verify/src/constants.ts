@@ -119,3 +119,5 @@ export const STYLE_GATE_SKIPPED_WARNING = "style-gate skipped: no computed style
 export const FONT_FALLBACK_WARNING = "font fallback: font policy warn allowed incomplete fonts";
 /** classifyDiagnostics() matches on this prefix so a style-gate skip always gates blocking. */
 export const STYLE_GATE_SKIPPED_PREFIX = "style-gate skipped";
+/** FigmaBaselineProvider's cached-baseline fallback has no fresh node document, hence no figmaStyle. */
+export const CACHED_BASELINE_STYLE_GATE_SKIPPED_WARNING = `${STYLE_GATE_SKIPPED_PREFIX}: cached Figma baseline fallback carries no Figma style snapshot.`;

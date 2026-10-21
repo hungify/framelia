@@ -58,6 +58,8 @@ describe("captureReadyPage", () => {
       expect(new Set(outcome.screenshotHashes).size).toBe(1);
       expect(fs.readdirSync(tmpDir)).toEqual(["capture.png"]);
       expect(outcome.fonts.supported).toBe(true);
+      // The caller's page is left as it was: no animation-freeze <style> stays behind.
+      expect(await page.locator("style").count()).toBe(1);
     } finally {
       await context.close();
       await app.close();

@@ -275,3 +275,189 @@ describe("fetchBaseline bound color variables", () => {
     expect(calls.some((url) => url.includes("/variables/local"))).toBe(false);
   });
 });
+
+function recordingSleep(): { sleep: (ms: number) => Promise<void>; delays: number[] } {
+  const delays: number[] = [];
+  return {
+    delays,
+    sleep: async (ms: number) => {
+      delays.push(ms);
+    },
+  };
+}
+
+describe("fetchBaseline transient-failure retry", () => {
+  const png = PNG.sync.write(makeSolidPng(2, 2, [255, 255, 255, 255]));
+
+  /** Serves the happy path, but answers the first `failures` calls for `stage` with `fail()`. */
+  function flakyFetch(
+    stage: "/v1/files/" | "/v1/images/" | "cdn",
+    failures: number,
+    fail: () => Response | Promise<Response>,
+  ): { fetchImpl: typeof fetch; calls: string[] } {
+    const calls: string[] = [];
+    const ok = figmaFetchImpl(png, { type: "FRAME" });
+    let remaining = failures;
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      const matches = stage === "cdn" ? url.startsWith("https://cdn.") : url.includes(stage);
+      if (matches && remaining > 0) {
+        remaining -= 1;
+        return fail();
+      }
+      return ok(input);
+    }) as typeof fetch;
+    return { fetchImpl, calls };
+  }
+
+  it("retries 5xx with capped exponential backoff and jitter, then succeeds", async () => {
+    const { fetchImpl, calls } = flakyFetch(
+      "/v1/files/",
+      2,
+      () => new Response("down", { status: 503 }),
+    );
+    const { sleep, delays } = recordingSleep();
+    const result = await fetchBaseline({
+      fileKey: "file",
+      nodeId: "1:2",
+      outPath: path.join(tmp, "retry-5xx", "figma-baseline.png"),
+      token: "token",
+      fetchImpl,
+      retry: { sleep, random: () => 0.5, baseDelayMs: 100 },
+    });
+    // nodes x3 (503, 503, 200), then images and the CDN download.
+    expect(result).toMatchObject({
+      ok: true,
+      fetched: true,
+      meta: {
+        apiCallLog: [503, 503, 200, 200, 200].map((status) => ({ status })),
+      },
+    });
+    expect(calls.filter((url) => url.includes("/v1/files/"))).toHaveLength(3);
+    // Equal jitter: step/2 + random * step/2 -> 75 for the 100ms step, 150 for 200ms.
+    expect(delays).toEqual([75, 150]);
+  });
+
+  it("honours Retry-After on 429 instead of the computed backoff", async () => {
+    const { fetchImpl } = flakyFetch(
+      "/v1/images/",
+      1,
+      () => new Response("slow down", { status: 429, headers: { "retry-after": "2" } }),
+    );
+    const { sleep, delays } = recordingSleep();
+    const result = await fetchBaseline({
+      fileKey: "file",
+      nodeId: "1:2",
+      outPath: path.join(tmp, "retry-429", "figma-baseline.png"),
+      token: "token",
+      fetchImpl,
+      retry: { sleep, random: () => 0 },
+    });
+    expect(result).toMatchObject({ ok: true, fetched: true });
+    expect(delays).toEqual([2_000]);
+  });
+
+  it("retries network errors and timeouts on the image CDN download", async () => {
+    let failures = 0;
+    const { fetchImpl } = flakyFetch("cdn", 2, () => {
+      failures += 1;
+      if (failures === 1) throw new TypeError("fetch failed: ECONNRESET");
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+    const { sleep, delays } = recordingSleep();
+    const result = await fetchBaseline({
+      fileKey: "file",
+      nodeId: "1:2",
+      outPath: path.join(tmp, "retry-network", "figma-baseline.png"),
+      token: "token",
+      fetchImpl,
+      retry: { sleep, random: () => 1 },
+    });
+    expect(result).toMatchObject({ ok: true, fetched: true });
+    expect(delays).toHaveLength(2);
+  });
+
+  it("gives up after maxAttempts and reports a retryable outcome", async () => {
+    const { fetchImpl, calls } = flakyFetch(
+      "/v1/files/",
+      10,
+      () => new Response("down", { status: 500 }),
+    );
+    const { sleep } = recordingSleep();
+    const result = await fetchBaseline({
+      fileKey: "file",
+      nodeId: "1:2",
+      outPath: path.join(tmp, "retry-exhausted", "figma-baseline.png"),
+      token: "token",
+      fetchImpl,
+      retry: { sleep },
+    });
+    expect(result).toMatchObject({ ok: true, fetched: false, errorClass: "retryable" });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("never retries a non-transient status", async () => {
+    const { fetchImpl, calls } = flakyFetch(
+      "/v1/files/",
+      10,
+      () => new Response("nope", { status: 403 }),
+    );
+    const { sleep, delays } = recordingSleep();
+    const result = await fetchBaseline({
+      fileKey: "file",
+      nodeId: "1:2",
+      outPath: path.join(tmp, "retry-403", "figma-baseline.png"),
+      token: "token",
+      fetchImpl,
+      retry: { sleep },
+    });
+    expect(result).toMatchObject({ ok: false, errorClass: "auth" });
+    expect(calls).toHaveLength(1);
+    expect(delays).toEqual([]);
+  });
+});
+
+describe("fetchBaseline image validation and durability", () => {
+  it("classifies an undecodable download as invalid-image, not a network error, and keeps the old baseline", async () => {
+    const outPath = path.join(tmp, "corrupt", "figma-baseline.png");
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, "previous-baseline");
+    const result = await fetchBaseline({
+      fileKey: "file",
+      nodeId: "1:2",
+      outPath,
+      token: "token",
+      fetchImpl: figmaFetchImpl(Buffer.from("definitely not a png"), { type: "FRAME" }),
+    });
+    expect(result).toMatchObject({ ok: true, fetched: false, errorClass: "invalid-image" });
+    expect(result.fetched ? "" : result.message).not.toMatch(/Network error/);
+    expect(fs.readFileSync(outPath, "utf8")).toBe("previous-baseline");
+    expect(fs.readdirSync(path.dirname(outPath))).toEqual(["figma-baseline.png"]);
+  });
+
+  it("records scale and canvasFill in the sidecar and leaves no temp files behind", async () => {
+    const outPath = path.join(tmp, "identity", "figma-baseline.png");
+    const png = PNG.sync.write(makeSolidPng(2, 2, [0, 0, 0, 0]));
+    const result = await fetchBaseline({
+      fileKey: "file",
+      nodeId: "1:2",
+      outPath,
+      scale: 2,
+      canvasFill: "#ffffff",
+      token: "token",
+      fetchImpl: figmaFetchImpl(png, { type: "FRAME" }),
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      fetched: true,
+      meta: { scale: 2, canvasFill: "#ffffff" },
+    });
+    const written = PNG.sync.read(fs.readFileSync(outPath));
+    expect([...written.data.subarray(0, 4)]).toEqual([255, 255, 255, 255]);
+    expect(fs.readdirSync(path.dirname(outPath)).toSorted()).toEqual([
+      "figma-baseline.meta.json",
+      "figma-baseline.png",
+    ]);
+  });
+});

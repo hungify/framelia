@@ -435,22 +435,34 @@ export async function finalizeRunRecord(
       return record;
     });
   } catch (error) {
-    const previous = readRunRecord(root, runId);
-    const now = options.now?.() ?? new Date();
-    const record = runRecordSchema.parse({
-      ...previous,
-      status: "error",
-      finalizedAt: now.toISOString(),
-      diagnostics: [
-        ...(options.diagnostics ?? []),
-        {
-          code: "run-finalization-failed",
-          stage: "finalization",
-          message: portableErrorMessage(error, root),
-        },
-      ],
-    });
-    publishRunRecord(root, record);
+    // Lock contention is transient, not a finalization failure: sealing the run as
+    // "error" here would make a retryable condition permanent. Let the caller retry.
+    if (error instanceof AppError && error.code === "RUN_BUNDLE_LOCK_TIMEOUT") throw error;
+    try {
+      // Seal under the same lock every other run.json writer holds, so this write can
+      // never interleave with a concurrent publishAttempt/finalizeRunRecord.
+      await withRunLock(root, runId, () => {
+        const previous = readRunRecord(root, runId);
+        const now = options.now?.() ?? new Date();
+        const record = runRecordSchema.parse({
+          ...previous,
+          status: "error",
+          finalizedAt: now.toISOString(),
+          diagnostics: [
+            ...(options.diagnostics ?? []),
+            {
+              code: "run-finalization-failed",
+              stage: "finalization",
+              message: portableErrorMessage(error, root),
+            },
+          ],
+        });
+        publishRunRecord(root, record);
+      });
+    } catch {
+      // Best effort: a missing/corrupt run.json or a lock timeout while sealing must not
+      // replace the original finalization failure, which is what the caller needs.
+    }
     throw error;
   }
 }

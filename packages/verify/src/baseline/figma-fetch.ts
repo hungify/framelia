@@ -6,13 +6,16 @@ import type {
   GetImagesResponse,
   GetLocalVariablesResponse,
 } from "@figma/rest-api-spec";
+import { PNG } from "pngjs";
 import * as z from "zod";
 
 import { FIGMA_BASELINE_ARTIFACT } from "../artifacts.ts";
-import { compositeOnCanvas, parsePng, writePng } from "../compare/png.ts";
+import { compositeOnCanvas, parsePng } from "../compare/png.ts";
 import {
   DEFAULT_IMAGE_SCALE,
   DEFAULT_RETRY_AFTER_MS,
+  FIGMA_FETCH_BASE_BACKOFF_MS,
+  FIGMA_FETCH_MAX_ATTEMPTS,
   HTTP_STATUS,
   HTTP_REQUEST_TIMEOUT_MS,
   JSON_INDENT_SPACES,
@@ -23,6 +26,7 @@ import {
 import { resolveToken } from "../figma-api.ts";
 import { boundColorVariableId, extractFigmaStyle } from "../figma-node-style.ts";
 import type { FigmaVariablesData, StyleSnapshot } from "../figma-node-style.ts";
+import { writeFileAtomic } from "../fs-atomic.ts";
 
 export interface FetchBaselineOptions {
   fileKey: string;
@@ -33,6 +37,24 @@ export interface FetchBaselineOptions {
   canvasFill?: string;
   token?: string;
   fetchImpl?: typeof fetch;
+  /** Retry/backoff tuning for transient failures; every field has a production default. */
+  retry?: FetchRetryOptions;
+}
+
+/**
+ * Transient-failure policy shared by every outbound request in one fetchBaseline call:
+ * 429, 5xx, request timeouts and network errors are retried with capped exponential
+ * backoff plus jitter, honouring a server-sent `Retry-After` when present. `sleep` and
+ * `random` are injectable so tests never wait on a real clock.
+ */
+export interface FetchRetryOptions {
+  /** Total attempts per request, including the first one. Default 3. */
+  maxAttempts?: number;
+  /** First backoff step before jitter; doubles per retry, capped at MAX_RETRY_AFTER_MS. */
+  baseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  /** Returns a value in [0, 1); drives the jitter. */
+  random?: () => number;
 }
 
 export interface ApiCallLogEntry {
@@ -48,6 +70,10 @@ export interface BaselineMeta {
   fetchedAt: string;
   apiCallCount: number;
   apiCallLog: ApiCallLogEntry[];
+  /** Render scale the image was fetched at. Absent on sidecars written before it was recorded. */
+  scale?: number;
+  /** canvasFill the image was composited onto (null = none). Absent on legacy sidecars. */
+  canvasFill?: string | null;
 }
 
 const baselineMetaSchema = z.object({
@@ -63,6 +89,8 @@ const baselineMetaSchema = z.object({
       status: z.number(),
     }),
   ),
+  scale: z.number().positive().optional(),
+  canvasFill: z.string().nullable().optional(),
 });
 
 export type FetchBaselineOutcome =
@@ -76,8 +104,23 @@ export type FetchBaselineOutcome =
       /** Extracted from the node document fetched alongside the image; {} when the response carried no document. */
       figmaStyle: StyleSnapshot;
     }
-  | { ok: true; fetched: false; errorClass: "retryable"; message: string; warnings: string[] }
+  | {
+      ok: true;
+      fetched: false;
+      /** "invalid-image": the downloaded bytes do not decode as a PNG (not a network error). */
+      errorClass: "retryable" | "invalid-image";
+      message: string;
+      warnings: string[];
+    }
   | { ok: false; fetched: false; errorClass: "auth" | "config"; message: string };
+
+/** Thrown internally when the downloaded image bytes are not a decodable PNG. */
+class BaselineImageDecodeError extends Error {
+  constructor(cause: unknown) {
+    super(`downloaded image is not a valid PNG (${sanitizeError(cause)})`, { cause });
+    this.name = "BaselineImageDecodeError";
+  }
+}
 
 export async function fetchBaseline(options: FetchBaselineOptions): Promise<FetchBaselineOutcome> {
   const token = resolveToken(options.token);
@@ -94,37 +137,55 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
   const warnings: string[] = [];
   const apiCallLog: ApiCallLogEntry[] = [];
   const scale = options.scale ?? DEFAULT_IMAGE_SCALE;
-  let tempBaselinePath: string | undefined;
-  let tempMetaPath: string | undefined;
+  const maxAttempts = Math.max(1, options.retry?.maxAttempts ?? FIGMA_FETCH_MAX_ATTEMPTS);
+  const baseDelayMs = options.retry?.baseDelayMs ?? FIGMA_FETCH_BASE_BACKOFF_MS;
+  const sleepImpl = options.retry?.sleep ?? sleep;
+  const random = options.retry?.random ?? Math.random;
   let baselineCommitted = false;
   let previousBaseline: Buffer | null = null;
 
   // Shared by every outbound request in this flow -- the api.figma.com JSON calls and the
-  // final CDN image download alike -- so a transient 429/5xx self-heals the same way
-  // everywhere instead of only on the two calls that happen to route through `call()`.
+  // final CDN image download alike -- so a transient 429/5xx/timeout/network error
+  // self-heals the same way everywhere. The last attempt's response (or error) is
+  // returned/thrown unchanged, so classify() and the catch below still see what failed.
   const fetchWithRetry = async (
     url: string,
     init: RequestInit,
     logEndpoint: string,
   ): Promise<Response> => {
-    const doFetch = async () => {
-      const res = await fetchImpl(url, {
-        ...init,
-        signal: AbortSignal.timeout(HTTP_REQUEST_TIMEOUT_MS),
-      });
+    for (let attempt = 1; ; attempt++) {
+      // A retry loop is inherently sequential: each attempt must observe the previous
+      // one's outcome before deciding whether to wait and try again.
+      let res: Response;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        res = await fetchImpl(url, {
+          ...init,
+          signal: AbortSignal.timeout(HTTP_REQUEST_TIMEOUT_MS),
+        });
+      } catch (error) {
+        if (attempt >= maxAttempts) throw error;
+        // eslint-disable-next-line no-await-in-loop
+        await sleepImpl(backoffDelayMs(attempt, baseDelayMs, random));
+        continue;
+      }
       apiCallLog.push({
         endpoint: logEndpoint,
         timestamp: new Date().toISOString(),
         status: res.status,
       });
-      return res;
-    };
-    let res = await doFetch();
-    if (res.status === HTTP_STATUS.TOO_MANY_REQUESTS) {
-      await sleep(parseRetryAfterMs(res.headers.get("retry-after")));
-      res = await doFetch();
+      if (!isTransientStatus(res.status) || attempt >= maxAttempts) return res;
+      const retryAfter = res.headers.get("retry-after");
+      // Release the discarded response's connection before waiting.
+      // eslint-disable-next-line no-await-in-loop
+      await res.body?.cancel().catch(() => {});
+      // eslint-disable-next-line no-await-in-loop
+      await sleepImpl(
+        retryAfter === null
+          ? backoffDelayMs(attempt, baseDelayMs, random)
+          : parseRetryAfterMs(retryAfter),
+      );
     }
-    return res;
   };
 
   const call = (endpoint: string): Promise<Response> =>
@@ -151,12 +212,12 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
         message: `nodeId not found in file (404) during ${context}; verify fileKey "${options.fileKey}" and nodeId "${options.nodeId}" (not an auth problem).`,
       };
     }
-    if (status === HTTP_STATUS.TOO_MANY_REQUESTS || status >= HTTP_STATUS.INTERNAL_SERVER_ERROR) {
+    if (isTransientStatus(status)) {
       return {
         ok: true,
         fetched: false,
         errorClass: "retryable",
-        message: `Figma API unavailable (${status}) during ${context}; existing baseline on disk remains usable.`,
+        message: `Figma API unavailable (${status}) during ${context} after ${maxAttempts} attempt(s); existing baseline on disk remains usable.`,
         warnings,
       };
     }
@@ -254,20 +315,17 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       };
     }
     const buf = Buffer.from(await pngRes.arrayBuffer());
-    const outDir = path.dirname(options.outPath);
-    fs.mkdirSync(outDir, { recursive: true });
-    previousBaseline = fs.existsSync(options.outPath) ? fs.readFileSync(options.outPath) : null;
-    const tempSuffix = `.tmp-${process.pid}-${Date.now()}`;
-    tempBaselinePath = `${options.outPath}${tempSuffix}`;
-    tempMetaPath = `${baselineMetaPath(options.outPath)}${tempSuffix}`;
-    fs.writeFileSync(tempBaselinePath, buf);
-    // Validate the download is a well-formed PNG before committing it (throws on
-    // corruption); parse the buffer already in memory instead of reading it back off disk.
-    const downloaded = parsePng(buf);
-
+    // Validate the download is a well-formed PNG before touching disk; parse the buffer
+    // already in memory. A decode failure is its own outcome, never a "network error".
+    let downloaded: PNG;
+    try {
+      downloaded = parsePng(buf);
+    } catch (error) {
+      throw new BaselineImageDecodeError(error);
+    }
+    let imageBytes: Buffer = buf;
     if (options.canvasFill) {
-      const composited = compositeOnCanvas(downloaded, options.canvasFill);
-      writePng(tempBaselinePath, composited);
+      imageBytes = PNG.sync.write(compositeOnCanvas(downloaded, options.canvasFill));
       warnings.push(
         `composited baseline onto canvasFill ${options.canvasFill} (alpha/shadow flattened).`,
       );
@@ -280,14 +338,16 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       fetchedAt: new Date().toISOString(),
       apiCallCount: apiCallLog.length,
       apiCallLog,
+      scale,
+      canvasFill: options.canvasFill ?? null,
     };
     const metaPath = baselineMetaPath(options.outPath);
-    fs.writeFileSync(tempMetaPath, `${JSON.stringify(meta, null, JSON_INDENT_SPACES)}\n`);
-    fs.renameSync(tempBaselinePath, options.outPath);
+    previousBaseline = fs.existsSync(options.outPath) ? fs.readFileSync(options.outPath) : null;
+    // Image first, sidecar last, each durably (fsync'd temp file, rename, directory
+    // fsync): the sidecar only ever describes an image that is already on disk.
+    writeFileAtomic(options.outPath, imageBytes);
     baselineCommitted = true;
-    fs.renameSync(tempMetaPath, metaPath);
-    tempBaselinePath = undefined;
-    tempMetaPath = undefined;
+    writeFileAtomic(metaPath, `${JSON.stringify(meta, null, JSON_INDENT_SPACES)}\n`);
 
     return {
       ok: true,
@@ -300,11 +360,23 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
     };
   } catch (err) {
     if (baselineCommitted) {
-      if (previousBaseline) fs.writeFileSync(options.outPath, previousBaseline);
-      else fs.rmSync(options.outPath, { force: true });
+      // The sidecar write failed after the image landed: put the previous image back so
+      // the untouched sidecar still describes the bytes next to it.
+      try {
+        if (previousBaseline) writeFileAtomic(options.outPath, previousBaseline);
+        else fs.rmSync(options.outPath, { force: true });
+      } catch {
+        // Best effort -- the original failure reported below is what the caller needs.
+      }
     }
-    for (const tempPath of [tempBaselinePath, tempMetaPath]) {
-      if (tempPath) fs.rmSync(tempPath, { force: true });
+    if (err instanceof BaselineImageDecodeError) {
+      return {
+        ok: true,
+        fetched: false,
+        errorClass: "invalid-image",
+        message: `Figma image for nodeId "${options.nodeId}" failed validation: ${err.message}; existing baseline on disk remains usable.`,
+        warnings,
+      };
     }
     return {
       ok: true,
@@ -338,6 +410,16 @@ function sanitizeError(err: unknown): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientStatus(status: number): boolean {
+  return status === HTTP_STATUS.TOO_MANY_REQUESTS || status >= HTTP_STATUS.INTERNAL_SERVER_ERROR;
+}
+
+/** Capped exponential backoff with "equal jitter": half of each step fixed, half random. */
+function backoffDelayMs(attempt: number, baseDelayMs: number, random: () => number): number {
+  const step = Math.min(baseDelayMs * 2 ** (attempt - 1), MAX_RETRY_AFTER_MS);
+  return Math.round(step / 2 + random() * (step / 2));
 }
 
 function parseRetryAfterMs(headerValue: string | null): number {

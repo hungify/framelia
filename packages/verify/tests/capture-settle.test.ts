@@ -7,10 +7,12 @@ import {
   countDevtoolsMatches,
   fontIncomplete,
   fontReadyTimeoutMs,
+  networkIdleTimeoutMs,
   releaseAnimationFreeze,
   settle,
 } from "../src/capture/settle.ts";
 import type { FontReadiness } from "../src/capture/types.ts";
+import { NETWORK_IDLE_BEST_EFFORT_MS } from "../src/constants.ts";
 
 const browser = await chromium.launch();
 afterAll(() => browser.close());
@@ -57,7 +59,7 @@ describe("settle", () => {
       const page = await context.newPage();
       await page.goto(app.url);
       const warnings: string[] = [];
-      const fonts = await settle(page, warnings, undefined, "freeze", 2_000);
+      const fonts = await settle(page, warnings, undefined, "freeze", 20_000);
       expect(fonts.supported).toBe(true);
       expect(warnings).toEqual([]);
     } finally {
@@ -73,7 +75,7 @@ describe("settle", () => {
       const page = await context.newPage();
       await page.goto(app.url);
       const warnings: string[] = [];
-      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 2_000);
+      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 20_000);
       expect(warnings.some((w) => w.includes("matched no elements"))).toBe(true);
     } finally {
       await context.close();
@@ -88,7 +90,7 @@ describe("settle", () => {
       const page = await context.newPage();
       await page.goto(app.url);
       const warnings: string[] = [];
-      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 2_000);
+      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 20_000);
       expect(warnings.some((w) => w.includes("matched no elements"))).toBe(false);
     } finally {
       await context.close();
@@ -121,6 +123,70 @@ describe("settle font budget", () => {
   });
 });
 
+function fakePage(networkIdle: (timeout: number | undefined) => Promise<void>): {
+  page: Page;
+  networkIdleTimeouts: Array<number | undefined>;
+} {
+  const networkIdleTimeouts: Array<number | undefined> = [];
+  const page = {
+    waitForLoadState: async (_state: string, options?: { timeout?: number }) => {
+      networkIdleTimeouts.push(options?.timeout);
+      await networkIdle(options?.timeout);
+    },
+    waitForTimeout: async () => {},
+    evaluate: async () => ({ supported: true, status: "loaded", failed: [] }),
+  } as unknown as Page;
+  return { page, networkIdleTimeouts };
+}
+
+describe("settle network-idle budget", () => {
+  it("caps the network-idle wait at a fraction of the remaining capture budget", async () => {
+    const { page, networkIdleTimeouts } = fakePage(async () => {});
+    await settle(page, [], undefined, "allow", 2_000);
+    expect(networkIdleTimeouts).toEqual([networkIdleTimeoutMs(2_000)]);
+    expect(networkIdleTimeoutMs(2_000)).toBeLessThan(2_000);
+    expect(networkIdleTimeoutMs(2_000)).toBeLessThan(NETWORK_IDLE_BEST_EFFORT_MS);
+  });
+
+  it("keeps the best-effort ceiling for a large budget", async () => {
+    const { page, networkIdleTimeouts } = fakePage(async () => {});
+    await settle(page, [], undefined, "allow", 600_000);
+    expect(networkIdleTimeouts).toEqual([NETWORK_IDLE_BEST_EFFORT_MS]);
+    expect(networkIdleTimeoutMs(600_000)).toBe(NETWORK_IDLE_BEST_EFFORT_MS);
+  });
+
+  it("warns that the wait was cut short by the capture budget", async () => {
+    const { page } = fakePage(async () => {
+      throw new Error("Timeout exceeded");
+    });
+    const warnings: string[] = [];
+    await settle(page, warnings, undefined, "allow", 2_000);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(`within ${networkIdleTimeoutMs(2_000)}ms`);
+    expect(warnings[0]).toContain("cut short");
+  });
+
+  it("keeps the plain warning when the full best-effort wait elapsed", async () => {
+    const { page } = fakePage(async () => {
+      throw new Error("Timeout exceeded");
+    });
+    const warnings: string[] = [];
+    await settle(page, warnings, undefined, "allow", 600_000);
+    expect(warnings).toEqual([
+      `network did not become idle within ${NETWORK_IDLE_BEST_EFFORT_MS}ms; capture may include pending requests.`,
+    ]);
+  });
+
+  it("skips the wait (never passing Playwright's unbounded timeout 0) when no budget is left", async () => {
+    const { page, networkIdleTimeouts } = fakePage(async () => {});
+    const warnings: string[] = [];
+    await settle(page, warnings, undefined, "allow", 0);
+    expect(networkIdleTimeouts).toEqual([]);
+    expect(networkIdleTimeoutMs(-5)).toBe(0);
+    expect(warnings.some((warning) => warning.includes("cut short"))).toBe(true);
+  });
+});
+
 describe("animation freeze", () => {
   it("is injected once and removed by releaseAnimationFreeze", async () => {
     const app = await server("<p>freeze</p>");
@@ -129,8 +195,8 @@ describe("animation freeze", () => {
       const page = await context.newPage();
       await page.goto(app.url);
       const count = () => page.locator("style[data-framelia-freeze]").count();
-      await settle(page, [], undefined, "freeze", 2_000);
-      await settle(page, [], undefined, "freeze", 2_000);
+      await settle(page, [], undefined, "freeze", 20_000);
+      await settle(page, [], undefined, "freeze", 20_000);
       expect(await count()).toBe(1);
       await releaseAnimationFreeze(page);
       expect(await count()).toBe(0);

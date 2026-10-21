@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileFunction } from "node:vm";
 
-import { MIN_STABILITY_SAMPLES } from "@framelia/contracts";
+import { MIN_STABILITY_SAMPLES, resolveDisplayThreshold } from "@framelia/contracts";
 import {
   authoredContractSchema,
   contractBindingSchema,
@@ -35,6 +35,7 @@ import {
   SCORE_ATTACHMENT_SUFFIX,
 } from "./attach.ts";
 import { resolveFigmaCompareOptions } from "./figma-profile.ts";
+import { describeMismatch } from "./matcher-outcome.ts";
 import { CONTRACT_ANNOTATION_TYPE } from "./registration.ts";
 import { assertExecuteCaseReady, assertExecutePolicyReady } from "./run-context.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "./score-attachment.ts";
@@ -45,7 +46,7 @@ import {
   captureStyleIssues,
   withStyleCheckTimeout,
 } from "./style-checks.ts";
-import { withTimeout } from "./timeout.ts";
+import { remainingTestBudgetMs, withTimeout } from "./timeout.ts";
 
 /** Annotation `type` every registered test carries. */
 export { CONTRACT_ANNOTATION_TYPE } from "./registration.ts";
@@ -167,9 +168,10 @@ export interface DefineFigmaTestsOptions {
    *  falling back to the contract file's own directory -- see discoverProjectConfig).
    *  Rarely needed; set when a contract file lives outside the project it belongs to. */
   projectRoot?: string;
-  /** Deadline for capture+compare+style-check+attribution, in ms. Defaults to the
-   *  test's own configured timeout (`testInfo.timeout`), falling back to 60s when that's
-   *  unset (0 = unbounded in Playwright's own config). */
+  /** Deadline for capture+compare+style-check+attribution, in ms. Defaults to whatever
+   *  remains of the test's own timeout (`testInfo.timeout`) when capture starts -- measured
+   *  from the start of the test body, minus a 1s margin -- falling back to 60s when the
+   *  test timeout is 0 (unlimited in Playwright's own config). */
   timeoutMs?: number;
   // `maxMaskedAreaRatio`/`fontPolicy`/`animationPolicy`/`devtoolsSelector` below (and
   // `timeoutMs`/`prepare`/`projectRoot` above) are literal values the caller's own
@@ -351,7 +353,14 @@ export async function runFigmaContractTest(
       pass: outcome.pass,
       message: outcome.pass
         ? `defineFigmaTests: ${contract.id} matched its pinned baseline (matchRatio ${outcome.matchRatio?.toFixed(4)}).`
-        : `defineFigmaTests: ${contract.id} did not match its pinned baseline (matchRatio ${outcome.matchRatio?.toFixed(4) ?? "n/a"}, ssim ${outcome.ssim?.toFixed(4) ?? "n/a"}). See attached expected/actual/diff.`,
+        : `defineFigmaTests: ${contract.id} did not match its pinned baseline (${describeMismatch(
+            outcomeWithStyle,
+            resolveDisplayThreshold({
+              profile,
+              profileOverrides: contract.profileOverrides,
+              clusterCheck,
+            }),
+          )}). See attached expected/actual/diff.`,
     };
   } catch (error) {
     return {
@@ -564,10 +573,12 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       projectRoot,
       allowUninitialized: true,
     });
-    // A contract whose project filter excludes this Playwright project skips (see
-    // `testInfo.skip` below) before ever awaiting `policyPromise` -- swallow here so an
-    // unrelated project's broken `framelia.config` can't surface as an unhandled
-    // rejection for a test that was never going to run against it anyway.
+    // The callback below awaits `policyPromise` (and fails on a stale or broken policy)
+    // *before* its project-filter `testInfo.skip`, deliberately: even an excluded project
+    // must not silently skip past a policy that changed after collection. That await only
+    // happens when a registered test actually runs, though -- swallow here so a broken
+    // `framelia.config` can't surface as an unhandled rejection when none does (e.g.
+    // `--list`, or every registered test filtered out).
     policyPromise.catch(() => undefined);
 
     registerAtSpecLocation(
@@ -580,6 +591,7 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
       // fixture-parser constraint rules out forwarding a caller's full, unknown-in-advance
       // fixture set.
       async ({ page }, testInfo: TestInfo) => {
+        const bodyStartedAt = Date.now();
         assertExecuteCaseReady(testInfo, registration, projectRoot);
         // Precapture reconciliation: `contract` above was loaded once, at collection
         // time, and closed over by this callback -- Playwright may not actually invoke
@@ -742,8 +754,11 @@ export function defineFigmaTests<TestArgs extends { page: Page }, WorkerArgs ext
 
         await options.prepare({ page }, { target: liveContract.target });
 
+        // What is left of the test's own timeout after prepare() and every check above --
+        // not the whole timeout again, which Playwright would cut short mid-capture.
         const timeoutMs =
-          options.timeoutMs ?? (testInfo.timeout > 0 ? testInfo.timeout : DEFAULT_TIMEOUT_MS);
+          options.timeoutMs ??
+          remainingTestBudgetMs(testInfo.timeout, Date.now() - bodyStartedAt, DEFAULT_TIMEOUT_MS);
         const result = await runFigmaContractTest(page, liveContract, privateBaseline, {
           timeoutMs,
           workDir,

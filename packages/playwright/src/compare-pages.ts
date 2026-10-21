@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_MASKED_AREA_RATIO } from "@framelia/contracts";
+import { DEFAULT_MAX_MASKED_AREA_RATIO, resolveDisplayThreshold } from "@framelia/contracts";
 import type { VisualMask } from "@framelia/contracts";
 import type { ProfileName } from "@framelia/verify";
 import { compare } from "@framelia/verify";
@@ -12,6 +12,7 @@ import {
   type AttachJsonFn,
 } from "./attach.ts";
 import { captureActual } from "./capture.ts";
+import { describeMismatch, operationalFailure } from "./matcher-outcome.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "./score-attachment.ts";
 import { withTimeout } from "./timeout.ts";
 
@@ -31,6 +32,8 @@ export interface ComparePagesOptions {
    *  at 4) instead of 1. pageB must share the same `deviceScaleFactor`, or the mismatch
    *  surfaces as a compare() dimension error. */
   scale?: true;
+  /** Per-call deadline in ms for both captures and the compare; defaults to the expect timeout. */
+  timeout?: number;
 }
 
 export interface ComparePagesContext {
@@ -95,18 +98,14 @@ export async function runComparePages(
     );
 
     if (!captureA.ok) {
-      return {
-        pass: false,
-        message: () =>
-          `${matcherLabel}: capturing the received page failed (${captureA.error}): ${captureA.message}`,
-      };
+      return operationalFailure(
+        `${matcherLabel}: capturing the received page failed (${captureA.error}): ${captureA.message}`,
+      );
     }
     if (!captureB.ok) {
-      return {
-        pass: false,
-        message: () =>
-          `${matcherLabel}: capturing the comparison page failed (${captureB.error}): ${captureB.message}`,
-      };
+      return operationalFailure(
+        `${matcherLabel}: capturing the comparison page failed (${captureB.error}): ${captureB.message}`,
+      );
     }
 
     const aPath = captureA.capturePaths[0]!;
@@ -131,10 +130,9 @@ export async function runComparePages(
       const combinedRatio = unionMaskedArea / (canvasWidth * canvasHeight);
       const areaReject = checkMaskAreaRatio(combinedRatio, cap);
       if (areaReject) {
-        return {
-          pass: false,
-          message: () => `${matcherLabel}: combined mask area exceeds cap -- ${areaReject.message}`,
-        };
+        return operationalFailure(
+          `${matcherLabel}: combined mask area exceeds cap -- ${areaReject.message}`,
+        );
       }
       // Reflect the bounds compare() actually excluded (both sides' union),
       // not just captureA's own -- captureA.maskEvidence alone would
@@ -178,12 +176,11 @@ export async function runComparePages(
       message: () =>
         outcome.pass
           ? `${matcherLabel}: pages matched (matchRatio ${outcome.matchRatio?.toFixed(4)}).`
-          : `${matcherLabel}: pages did not match (matchRatio ${outcome.matchRatio?.toFixed(4) ?? "n/a"}, ssim ${outcome.ssim?.toFixed(4) ?? "n/a"}). See attached expected/actual/diff.`,
+          : `${matcherLabel}: pages did not match (${describeMismatch(outcome, resolveDisplayThreshold({ profile }))}). See attached expected/actual/diff.`,
     };
   } catch (error) {
-    return {
-      pass: false,
-      message: () => `${matcherLabel}: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    return operationalFailure(
+      `${matcherLabel}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

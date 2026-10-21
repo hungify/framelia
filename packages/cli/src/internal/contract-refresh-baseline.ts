@@ -1,12 +1,13 @@
 import * as path from "node:path";
 
 import type { Diagnostic } from "@framelia/contracts/workflow";
-import { AppError, readPinnedBaseline, type FetchBaselineFn } from "@framelia/verify";
+import { readPinnedBaseline, type FetchBaselineFn } from "@framelia/verify";
 
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
+import { failureDiagnostic, frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
 
 const REFRESH_OUTCOME_FORMAT_VERSION = 1 as const;
@@ -49,13 +50,7 @@ function failure(error: unknown): CliResult<ContractRefreshBaselineOutcome> {
       command: "contract refresh-baseline",
       executionState: "error",
       exitCode: 2,
-      diagnostics: [
-        {
-          code: error instanceof AppError ? error.code : "BASELINE_REFRESH_FAILED",
-          stage: "refresh-baseline",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      ],
+      diagnostics: [failureDiagnostic(error, "BASELINE_REFRESH_FAILED", "refresh-baseline")],
     },
   };
 }
@@ -108,15 +103,7 @@ export async function contractRefreshBaselineCommand(
           snapshotDigest: replacement.baseline.snapshotDigest,
         },
         diagnostics: [],
-        next: {
-          command: "framelia",
-          argv: [
-            "check",
-            "--contract",
-            replacement.id,
-            ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-          ],
-        },
+        next: frameliaNext(["check", "--contract", replacement.id], options.projectRoot),
       },
     };
   } catch (error) {

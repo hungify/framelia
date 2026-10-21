@@ -12,7 +12,7 @@ import {
   type CommandOutcome,
   type Diagnostic,
 } from "@framelia/contracts/workflow";
-import { canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
+import { EXIT_USAGE_ERROR, canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
 import {
   discoverAuthoredContracts,
   resolveContractProjectMatrix,
@@ -32,6 +32,7 @@ import { nanoid } from "nanoid";
 
 import type { CliRuntime } from "../runtime-types.ts";
 import { reconcileBinding } from "./binding-reconciliation.ts";
+import { runExitCode } from "./outcome.ts";
 import {
   PlaywrightTransportError,
   collectPlaywrightBindings,
@@ -186,7 +187,7 @@ function errorOutcome(
     command: "check",
     executionState: "error",
     visualVerdict: "not-evaluated",
-    exitCode: 2,
+    exitCode: EXIT_USAGE_ERROR,
     diagnostics: [diagnostic(code, "check", message)],
     ...details,
   });
@@ -346,7 +347,7 @@ export async function runCheck(
       command: "check",
       executionState: complete ? "completed" : "incomplete",
       visualVerdict,
-      exitCode: complete ? (visualVerdict === "mismatched" ? 1 : 0) : 2,
+      exitCode: runExitCode(complete, visualVerdict),
       runId,
       bundlePath,
       diagnostics: projection.diagnostics,

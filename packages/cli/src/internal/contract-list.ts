@@ -1,5 +1,5 @@
 import type { CollectionManifest, Diagnostic } from "@framelia/contracts/workflow";
-import { AppError, portableErrorMessage } from "@framelia/verify";
+import { portableErrorMessage } from "@framelia/verify";
 import {
   inspectAuthoredContracts,
   resolveContractProjectMatrix,
@@ -10,6 +10,7 @@ import {
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 import { reconcileBinding, type BindingReconciliation } from "./binding-reconciliation.ts";
+import { failureDiagnostic, frameliaNext } from "./outcome.ts";
 import {
   collectPlaywrightBindings,
   type PlaywrightTransportDependencies,
@@ -152,8 +153,9 @@ export async function listContractBindings(
         status: "invalid",
         required: discovered.contract.required,
         diagnostics: [
-          issue(
-            error instanceof AppError ? error.code : "CONTRACT_MATRIX_INVALID",
+          failureDiagnostic(
+            error,
+            "CONTRACT_MATRIX_INVALID",
             "configuration",
             portableErrorMessage(error, policy.root),
           ),
@@ -228,14 +230,7 @@ export async function contractListCommand(
         contracts: entries,
         diagnostics,
         next: entries.some((entry) => entry.status === "unbound")
-          ? {
-              command: "framelia",
-              argv: [
-                "contract",
-                "list",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            }
+          ? frameliaNext(["contract", "list"], options.projectRoot)
           : undefined,
       },
     };
@@ -250,13 +245,7 @@ export async function contractListCommand(
         executionState: "error",
         exitCode: 2,
         contracts: [],
-        diagnostics: [
-          issue(
-            error instanceof AppError ? error.code : "CONTRACT_LIST_FAILED",
-            "list",
-            error instanceof Error ? error.message : String(error),
-          ),
-        ],
+        diagnostics: [failureDiagnostic(error, "CONTRACT_LIST_FAILED", "list")],
       },
     };
   }

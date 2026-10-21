@@ -7,6 +7,7 @@ import { writeFileAtomic } from "@framelia/verify";
 import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "../config.ts";
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
+import { frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
 import type { PromptAdapter } from "./prompts.ts";
 
@@ -235,24 +236,10 @@ export async function projectInitCommand(
         ...(plan.reporterInstructions ? { instructions: plan.reporterInstructions } : {}),
       },
       diagnostics: [],
-      next:
-        plan.reporterRegistration === "manual"
-          ? {
-              command: "framelia",
-              argv: [
-                "init",
-                "--dry-run",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            }
-          : {
-              command: "framelia",
-              argv: [
-                "contract",
-                "create",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            },
+      next: frameliaNext(
+        plan.reporterRegistration === "manual" ? ["init", "--dry-run"] : ["contract", "create"],
+        options.projectRoot,
+      ),
     };
     prompts.note(
       changes.map((change) => `${change.action}: ${change.path}`).join("\n"),

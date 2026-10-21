@@ -1,10 +1,9 @@
 import * as path from "node:path";
 
-import { AppError } from "@framelia/verify";
-
 import { exportDashboardReport } from "../dashboard/report.ts";
 import type { CliResult } from "../output.ts";
 import type { CliRuntime } from "../runtime-types.ts";
+import { failureDiagnostic, frameliaNext, runExitCode } from "./outcome.ts";
 import { openProject } from "./project.ts";
 import { nextForRun, readRunProjection, type RunProjection } from "./run-projection.ts";
 
@@ -61,12 +60,10 @@ export async function reportCommand(
       outputDirectory: path.resolve(runtime.cwd(), options.output),
       ...(dependencies.clientRoot ? { clientRoot: dependencies.clientRoot } : {}),
     });
-    const exitCode =
-      projection.executionState !== "completed"
-        ? 2
-        : projection.visualVerdict === "mismatched"
-          ? 1
-          : 0;
+    const exitCode = runExitCode(
+      projection.executionState === "completed",
+      projection.visualVerdict,
+    );
     return {
       ok: exitCode === 0,
       exitCode,
@@ -91,24 +88,17 @@ export async function reportCommand(
         executionState: "error",
         visualVerdict: "not-evaluated",
         exitCode: 2,
-        diagnostics: [
-          {
-            code: error instanceof AppError ? error.code : "REPORT_FAILED",
-            stage: "report",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ],
-        next: {
-          command: "framelia",
-          argv: [
+        diagnostics: [failureDiagnostic(error, "REPORT_FAILED", "report")],
+        next: frameliaNext(
+          [
             "report",
             "--run",
             options.run ?? "<run-id>",
             "--output",
             options.output ?? "framelia-report",
-            ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
           ],
-        },
+          options.projectRoot,
+        ),
       },
     };
   }

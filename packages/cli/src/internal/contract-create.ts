@@ -6,7 +6,6 @@ import {
   type Diagnostic,
 } from "@framelia/contracts/workflow";
 import {
-  AppError,
   assertProjectRelativePath,
   portableErrorMessage,
   readRawFileState,
@@ -23,6 +22,7 @@ import {
 import { listContractBindings } from "./contract-list.ts";
 import { openContractPinning } from "./contract-pinning.ts";
 import { optionalFigmaToken } from "./figma-token.ts";
+import { failureDiagnostic, frameliaNext } from "./outcome.ts";
 import type { PlaywrightTransportDependencies } from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
 import type { PromptAdapter } from "./prompts.ts";
@@ -70,15 +70,6 @@ function portablePath(root: string, filePath: string): string {
   return path.relative(root, filePath).split(path.sep).join("/");
 }
 
-function diagnostic(error: unknown): Diagnostic {
-  const code = error instanceof AppError ? error.code : "CONTRACT_AUTHORING_FAILED";
-  return {
-    code,
-    stage: "authoring",
-    message: error instanceof Error ? error.message : String(error),
-  };
-}
-
 function failed(error: unknown): ContractCreateResult {
   return {
     ok: false,
@@ -91,7 +82,7 @@ function failed(error: unknown): ContractCreateResult {
       exitCode: 2,
       authored: false,
       runnable: false,
-      diagnostics: [diagnostic(error)],
+      diagnostics: [failureDiagnostic(error, "CONTRACT_AUTHORING_FAILED", "authoring")],
     },
   };
 }
@@ -211,11 +202,12 @@ export async function contractCreateCommand(
           contractPath: relativePath,
           status: "invalid" as const,
           diagnostics: [
-            {
-              code: error instanceof AppError ? error.code : "CONTRACT_LIST_FAILED",
-              stage: "binding",
-              message: portableErrorMessage(error, project.root),
-            },
+            failureDiagnostic(
+              error,
+              "CONTRACT_LIST_FAILED",
+              "binding",
+              portableErrorMessage(error, project.root),
+            ),
           ],
         },
       ],
@@ -268,24 +260,10 @@ export async function contractCreateCommand(
               },
             }
           : {}),
-        next: runnable
-          ? {
-              command: "framelia",
-              argv: [
-                "check",
-                "--contract",
-                contract.id,
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            }
-          : {
-              command: "framelia",
-              argv: [
-                "contract",
-                "list",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            },
+        next: frameliaNext(
+          runnable ? ["check", "--contract", contract.id] : ["contract", "list"],
+          options.projectRoot,
+        ),
       },
     };
   } catch (error) {

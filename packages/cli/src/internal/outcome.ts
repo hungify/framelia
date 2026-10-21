@@ -84,7 +84,11 @@ export function nextForFailureCode(
     // init is idempotent: it creates only what is missing and prints the reporter recipe.
     return frameliaNext(["init"], projectRoot);
   }
-  if (code === "RUN_BUNDLE_MISSING" || code === "RUN_SELECTION_MISSING") {
+  if (
+    code === "RUN_BUNDLE_MISSING" ||
+    code === "RUN_SELECTION_MISSING" ||
+    code === "RUN_BUNDLE_SHARDS_PENDING"
+  ) {
     return frameliaNext(["runs", "list"], projectRoot);
   }
   if (STATUS_CODES.has(code)) return frameliaNext(["status"], projectRoot);

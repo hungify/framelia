@@ -84,6 +84,12 @@ const app = buildApplication(
   },
 );
 
+/**
+ * Routes that must never see the project's .env: done-gate's trust inputs (signing key path,
+ * job identity, audience) have to come from the protected job runtime, not the project.
+ */
+const ROUTES_WITHOUT_PROJECT_ENV = new Set(["done-gate"]);
+
 function explicitProjectRoot(argv: readonly string[]): string | undefined {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]!;
@@ -103,7 +109,7 @@ export async function run(
   // explicit --project-root because process environment has highest precedence.
   if (
     options.loadProjectEnv !== false &&
-    argv[0] !== "done-gate" &&
+    !ROUTES_WITHOUT_PROJECT_ENV.has(argv[0] ?? "") &&
     !argv.includes("--help") &&
     !argv.includes("--version") &&
     !argv.includes("-V")

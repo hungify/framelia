@@ -16,7 +16,6 @@ import { EXIT_USAGE_ERROR, canonicalJsonDigest, portableErrorMessage } from "@fr
 import {
   discoverAuthoredContracts,
   resolveContractProjectMatrix,
-  resolveProjectPolicy,
   type ContractProjectCase,
 } from "@framelia/verify/project-policy";
 import {
@@ -41,6 +40,7 @@ import {
   type PlaywrightExecution,
   type PlaywrightTransportDependencies,
 } from "./playwright-transport.ts";
+import { openProject } from "./project.ts";
 import { nextForRun, readRunProjection } from "./run-projection.ts";
 
 export interface CheckRequest {
@@ -219,11 +219,7 @@ export async function runCheck(
   signalProcess.on("SIGINT", handleSignal);
   signalProcess.on("SIGTERM", handleSignal);
   try {
-    const policy = await resolveProjectPolicy({
-      cwd,
-      ...(request.projectRoot ? { projectRoot: request.projectRoot } : {}),
-      env: request.runtime.env,
-    });
+    const policy = await openProject(request.projectRoot, request.runtime).loadConfig();
     outcomeRoot = policy.root;
     if (!policy.playwright || !policy.policyDigest) {
       throw new Error(

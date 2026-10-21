@@ -553,6 +553,7 @@ describe("FrameliaReporter", () => {
         baselinePromotedBy: "alice@example.com",
         baselineVersion: 2,
         baselineRunId: "ci-run-42",
+        baselineKey: "home.desktop",
       }),
     );
     const url = await reporter.dashboardUrl();
@@ -560,6 +561,7 @@ describe("FrameliaReporter", () => {
     expect(run.contracts[0]).toMatchObject({
       id: "test-a",
       status: "passed",
+      baselineKey: "home.desktop",
       baseline: {
         provenance: "promoted",
         revision: "v2",

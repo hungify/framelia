@@ -3,11 +3,12 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { visualArtifactPath } from "@framelia/contracts";
 import { promotePageBaseline, readPageBaselineMeta } from "@framelia/verify";
 import { makeSolidPng } from "@framelia/verify/testing";
 import { chromium } from "@playwright/test";
 import { PNG } from "pngjs";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   runToMatchPageBaseline,
@@ -149,6 +150,35 @@ describe("runToMatchPageBaseline", () => {
         baselineRunId: "ci-run-42",
       });
     } finally {
+      await context.close();
+      await app.close();
+    }
+  });
+
+  it("records its key only when the baseline lives where `framelia baseline promote --key` writes it (#101)", async () => {
+    const projectRoot = tempDir("framelia-page-baseline-root-");
+    const defaultDir = path.join(projectRoot, visualArtifactPath("home.desktop"));
+    const customDir = tempDir("framelia-page-baseline-dir-");
+    const { html, png } = pageFixture([100, 150, 200]);
+    seedBaseline(defaultDir, png);
+    seedBaseline(customDir, png);
+    const app = await server(html);
+    const context = await browser.newContext({ viewport: SIZE });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(projectRoot);
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+
+      const atDefault = harness();
+      expect((await atDefault.run(page, "home.desktop", defaultDir)).pass).toBe(true);
+      expect(atDefault.attachJsonCalls[0]?.data).toMatchObject({ baselineKey: "home.desktop" });
+
+      // A custom baselineDir isn't what `promote --key` would write, so no key is claimed.
+      const atCustom = harness();
+      expect((await atCustom.run(page, "home.desktop", customDir)).pass).toBe(true);
+      expect(atCustom.attachJsonCalls[0]?.data).not.toHaveProperty("baselineKey");
+    } finally {
+      cwd.mockRestore();
       await context.close();
       await app.close();
     }

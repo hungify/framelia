@@ -306,7 +306,11 @@ export function deriveContract(
     const expected = findEvidenceAttachment(result, baseName, "-expected");
     const actual = findEvidenceAttachment(result, baseName, "-actual");
     const diff = findEvidenceAttachment(result, baseName, "-diff");
-    const imageEvidence: Pick<DashboardContractResult, "baseline" | "actual" | "diff"> = {
+    const imageEvidence: Pick<
+      DashboardContractResult,
+      "baselineKey" | "baseline" | "actual" | "diff"
+    > = {
+      ...(primary.baselineKey !== undefined ? { baselineKey: primary.baselineKey } : {}),
       ...(expected
         ? {
             baseline: {

@@ -16,9 +16,9 @@ function positiveInteger(value: number | undefined): value is number {
  * packages/cli/src/commands/baseline.ts). The dashboard stays read-only: it only builds
  * the command for the user to review and run.
  *
- * `--key` is the contract id: the wire format carries no separate `toMatchPageBaseline`
- * key, so the UI asks the user to check it. Undefined for anything that isn't a failed
- * page-baseline result with a known target URL.
+ * `--key` is the recorded `toMatchPageBaseline` key (`baselineKey`) when the run carries
+ * one; otherwise it falls back to the contract id and the UI asks the user to check it.
+ * Undefined for anything that isn't a failed page-baseline result with a known target URL.
  */
 export function promoteCommand(contract: DashboardContractResult): string | undefined {
   if (contract.baselineKind !== "page" || contract.status !== "failed") return undefined;
@@ -26,7 +26,12 @@ export function promoteCommand(contract: DashboardContractResult): string | unde
   const targetUrl = contract.actual?.url || evidence?.finalUrl;
   if (!targetUrl) return undefined;
 
-  const args: string[] = ["--key", contract.contractId ?? contract.id, "--target-url", targetUrl];
+  const args: string[] = [
+    "--key",
+    contract.baselineKey ?? contract.contractId ?? contract.id,
+    "--target-url",
+    targetUrl,
+  ];
   const selector =
     evidence?.scope.kind === "region"
       ? evidence.scope.selector

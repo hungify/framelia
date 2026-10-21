@@ -114,6 +114,17 @@ describe("dashboardRunSchema", () => {
     expect(dashboardRunSchema.safeParse(withExtra).success).toBe(true);
   });
 
+  it("accepts an optional toMatchPageBaseline baselineKey, but not an empty one (#101)", () => {
+    const withKey = (baselineKey: string) => ({
+      ...validRun,
+      contracts: [{ ...validRun.contracts[0], baselineKind: "page", baselineKey }],
+    });
+    expect(dashboardRunSchema.parse(withKey("home.desktop")).contracts[0]?.baselineKey).toBe(
+      "home.desktop",
+    );
+    expect(dashboardRunSchema.safeParse(withKey("")).success).toBe(false);
+  });
+
   it("rejects a run with a wrong schemaVersion literal", () => {
     expect(dashboardRunSchema.safeParse({ ...validRun, schemaVersion: 1 }).success).toBe(false);
   });

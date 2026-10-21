@@ -53,6 +53,12 @@ describe("promoteCommand", () => {
     );
   });
 
+  it("uses the recorded toMatchPageBaseline key over the contract id when known (#101)", () => {
+    expect(promoteCommand(pageContract({ contractId: "home", baselineKey: "home.wide" }))).toBe(
+      "framelia baseline promote --key home.wide --target-url http://127.0.0.1:3000/ --viewport-width 1440 --viewport-height 900",
+    );
+  });
+
   it("is only offered for failed page-baseline results with a target URL", () => {
     expect(promoteCommand(pageContract({ status: "passed" }))).toBeUndefined();
     expect(promoteCommand(pageContract({ baselineKind: "figma" }))).toBeUndefined();

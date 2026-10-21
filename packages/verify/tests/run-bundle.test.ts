@@ -34,6 +34,7 @@ import {
   readRunBundle,
   readSelectedRun,
   readRunRecord,
+  runDir,
   runRecordPath,
   startRunRecord,
 } from "../src/run-bundle/index.ts";
@@ -359,10 +360,16 @@ function setUpRun(root: string, runId: string, casePlans: readonly CasePlan[]): 
 // "cross-process lock" describe block below): those workers are genuinely separate OS
 // processes coordinating through a real filesystem lock -- there is no fake-timer or
 // in-process event to await instead, since neither process runs inside this test's own
-// event loop. A short, real sleep is the only way to give the publish worker a reliable
-// head start before the finalize worker starts.
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// event loop. Polling the filesystem for the lock is the only way to know the publish
+// worker holds it before the finalize worker starts; a fixed head start is not, because
+// spawning a worker can take longer than any short sleep on a loaded machine.
+async function waitForPath(target: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(target)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${target}`);
+    // eslint-disable-next-line no-await-in-loop -- polling another process's progress
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe("publishAttempt", () => {
@@ -1297,12 +1304,12 @@ describe("cross-process lock", () => {
 
     // The publish worker holds the lock for 300ms once it acquires it (see attempt.ts's
     // own test-only FRAMELIA_TEST_ATTEMPT_HOLD_MS seam) -- long enough that a finalize
-    // worker started shortly after is virtually guaranteed to still be waiting for the
-    // lock when the publish is mid-flight, the exact window the fix closes.
+    // worker started once the lock exists is still waiting for it while the publish is
+    // mid-flight, the exact window the fix closes.
     const publishPromise = runWorker(["publish", root, runId, publishPayload], {
       FRAMELIA_TEST_ATTEMPT_HOLD_MS: "300",
     });
-    await sleep(50);
+    await waitForPath(path.join(runDir(root, runId), "lock"));
     const finalizePromise = runWorker(["finalize", root, runId, finalizePayload]);
 
     const [publishResult, finalizeResult] = await Promise.all([publishPromise, finalizePromise]);
@@ -1313,8 +1320,7 @@ describe("cross-process lock", () => {
     // exact-membership check (see read.ts) is exactly what would catch a torn state
     // where attempt-1 landed on disk after finalization already sealed the run without
     // it. Because finalize necessarily waited for the still-lock-holding publish to
-    // finish first (the 50ms head start plus a 300ms hold make any other ordering
-    // implausible), both attempts end up correctly reflected in the finalized record.
+    // finish first (it only starts once the publish holds the lock), both attempts end up correctly reflected in the finalized record.
     const bundle = readRunBundle(root, runId);
     expect(bundle.record.status).toBe("finalized");
     const caseRecord = bundle.record.cases[0]!;

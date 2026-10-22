@@ -27,7 +27,7 @@ export interface DashboardOptions extends DashboardServerFlags {
   readonly run: string;
 }
 
-export interface OpenDashboardOptions extends DashboardOptions {}
+export type OpenDashboardOptions = DashboardOptions;
 
 export interface DashboardDevserverOptions extends DashboardOptions {
   readonly command?: "open" | "dashboard";

@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Figma file keys are public document identifiers (they appear in share URLs), not credentials"
+regexTarget = "line"
+regexes = ['''(?i)file_?key"?\s*[:=]\s*"[A-Za-z0-9]{22}"''']

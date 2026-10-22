@@ -21,6 +21,12 @@ defineEmits<{
   "update:detailsOpen": [value: boolean];
 }>();
 
+defineSlots<{
+  default(): unknown;
+  rail(): unknown;
+  details(): unknown;
+}>();
+
 const mode = computed(() => artifactModeMeta(props.artifactMode));
 
 const workspaceStyle = computed(() => {

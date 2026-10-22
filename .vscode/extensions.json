@@ -1,0 +1,16 @@
+{
+  "recommendations": [
+    "oxc.oxc-vscode",
+    "dbaeumer.vscode-eslint",
+    "Vue.volar",
+    "vitest.explorer",
+    "ms-playwright.playwright",
+    "bradlc.vscode-tailwindcss",
+    "editorconfig.editorconfig"
+  ],
+  "unwantedRecommendations": [
+    "esbenp.prettier-vscode",
+    "octref.vetur",
+    "johnsoncodehk.vscode-typescript-vue-plugin"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  // Repo-wide
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  // Oxfmt (oxc extension) formats; Oxlint then ESLint fix on save (`.oxlintrc.json`, `eslint.config.ts`).
+  "[vue][typescript][javascript][json][jsonc][yaml][markdown][css]": {
+    "editor.defaultFormatter": "oxc.oxc-vscode",
+    "editor.formatOnSave": true
+  },
+  "[vue][typescript][javascript]": {
+    "editor.codeActionsOnSave": {
+      "source.fixAll.oxc": "explicit",
+      "source.fixAll.eslint": "explicit"
+    }
+  },
+
+  "eslint.validate": ["javascript", "typescript", "vue"],
+
+  // TypeScript
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "js/ts.preferences.preferTypeOnlyAutoImports": true,
+
+  // Tailwind (apps/dashboard)
+  "tailwindCSS.experimental.classRegex": [
+    ["cva\\(((?:[^()]|\\([^()]*\\))*)\\)", "[\"'`]([^\"'`]*)[\"'`]"],
+    ["cn\\(((?:[^()]|\\([^()]*\\))*)\\)", "[\"'`]([^\"'`]*)[\"'`]"]
+  ],
+
+  // Noise
+  "search.exclude": {
+    "**/dist": true,
+    "**/pnpm-lock.yaml": true,
+    "**/.framelia": true,
+    "**/reports/mutation": true,
+    "apps/dashboard/auto-imports.d.ts": true,
+    "apps/dashboard/components.d.ts": true,
+    "apps/dashboard/typed-router.d.ts": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "**/.stryker-tmp/**": true
+  }
+}

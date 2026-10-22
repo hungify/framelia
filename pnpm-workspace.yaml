@@ -24,3 +24,29 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
+
+minimumReleaseAge: 1440
+blockExoticSubdeps: true
+
+# CI `audit` job: `pnpm audit --audit-level high`. Only high and critical advisories are fixed;
+# these are the ones triaged instead. Remove an entry once a fixed version can be resolved.
+auditConfig:
+  ignoreGhsas:
+    # examples/framelia-reference-app is a generated consumer app that is never published.
+    - GHSA-qx66-fv34-fjm8 # @tanstack/react-start, @tanstack/start-server-core
+    - GHSA-965c-763c-88jm # better-auth
+    - GHSA-r4xp-prcw-77qf # better-auth
+    - GHSA-p6vx-979v-rg4c # seroval
+    - GHSA-jp82-f5mq-hwhp # seroval
+    - GHSA-97r2-qh9m-474h # seroval
+    - GHSA-wp97-x4hv-qvhp # seroval
+    - GHSA-7rv5-mrxv-xcr9 # seroval
+    # Pulled in by @nuxt/ui's editor components (exact pin 3.29.2 in @tiptap/starter-kit); the
+    # dashboard build tree-shakes them out of the shipped JS.
+    - GHSA-j95f-988m-3j2f # @tiptap/core
+    - GHSA-c8x8-7fp4-3x9w # prosemirror-view
+    # Dev tooling only, never shipped in a published package.
+    - GHSA-5gmw-xhrv-c9v3 # tinypool, exact-pinned by oxfmt (formatter)
+    - GHSA-85c8-ppgw-ccpr # tinypool, exact-pinned by oxfmt (formatter)
+    - GHSA-mrhx-c7xc-m3w5 # zod 3.x via @stryker-mutator/core (mutation testing); no 3.x fix
+    - GHSA-587h-7wmj-h5pm # vite-plus, pinned by the pnpm catalog for the examples toolchain

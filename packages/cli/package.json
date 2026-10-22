@@ -48,6 +48,7 @@
     "pretest": "pnpm --filter @framelia/contracts build && pnpm --filter @framelia/verify build && pnpm --filter @framelia/dashboard-server build && pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation": "stryker run ../../stryker.config.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test",
     "done-gate": "tsx src/cli.ts done-gate"

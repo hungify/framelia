@@ -82,7 +82,7 @@ export async function withRunLock<T>(
       // A retry-with-backoff acquire loop is inherently sequential: each attempt must
       // observe the previous one's outcome before deciding whether to retry, so there is
       // nothing here to run in parallel.
-      // eslint-disable-next-line no-await-in-loop
+      // eslint-disable-next-line no-await-in-loop -- sequential by design, see above
       await sleepAsync(Math.min(backoffMs, MAX_BACKOFF_MS));
       backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     }

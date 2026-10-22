@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, useTemplateRef } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -29,7 +29,7 @@ const props = withDefaults(
 const emit = defineEmits<{ beforeLoad: [Event]; afterLoad: [Event] }>();
 
 const reveal = defineModel<number>({ default: 50 });
-const root = ref<HTMLElement | null>(null);
+const root = useTemplateRef<HTMLElement>("root");
 const activePointer = ref<number | null>(null);
 
 const canvasStyle = computed(() => ({

@@ -19,7 +19,7 @@ describe("buildMaskBitmap", () => {
   it("clamps rects that extend past the canvas", () => {
     const bitmap = buildMaskBitmap(5, 5, [{ x: 3, y: 3, width: 10, height: 10 }]);
     expect(bitmap![4 * 5 + 4]).toBe(1);
-    expect(bitmap!.length).toBe(25);
+    expect(bitmap!).toHaveLength(25);
   });
 
   it("does not double count overlapping rects", () => {

@@ -2,7 +2,7 @@ import * as path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { sanitizePortableValue } from "../src/portable.ts";
+import { sanitizePortableValue } from "../src/index.ts";
 
 describe("sanitizePortableValue", () => {
   it("sanitizes strings through nested objects and arrays with deterministic key order", () => {

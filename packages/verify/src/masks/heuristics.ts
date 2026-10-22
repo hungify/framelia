@@ -84,7 +84,7 @@ export async function suggestMasks(
   for (const heuristic of heuristics) {
     // Sequential by design: one evaluate() round-trip per heuristic keeps each
     // heuristic's DOM query isolated and easy to attribute if one throws.
-    // eslint-disable-next-line no-await-in-loop
+    // eslint-disable-next-line no-await-in-loop -- sequential by design, see above
     const matches = await page.evaluate((selector): RawMatch[] => {
       return Array.from(document.querySelectorAll(selector)).map((element) => {
         const testId = element.getAttribute("data-testid");

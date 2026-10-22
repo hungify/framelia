@@ -7,9 +7,9 @@ import {
   deriveDashboardVerdict,
   projectCapture,
   projectCaptureEvidence,
-} from "../../src/dashboard/projections.ts";
-import type { DashboardDiagnostic } from "../../src/dashboard/types.ts";
-import { getProfile } from "../../src/profiles.ts";
+} from "../../src/index.ts";
+import type { DashboardDiagnostic } from "../../src/index.ts";
+import { getProfile } from "../../src/index.ts";
 
 describe("deriveComparisonSummary", () => {
   it("computes diffRatio as 1 - matchRatio", () => {

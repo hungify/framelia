@@ -5,7 +5,7 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { recordStorageState } from "../src/auth.ts";
+import { recordStorageState } from "../src/cli.ts";
 
 const temporaryDirectories: string[] = [];
 

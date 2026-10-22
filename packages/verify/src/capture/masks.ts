@@ -88,7 +88,7 @@ export async function resolveMasks(
     const locator = page.locator(mask.selector);
     // Sequential by design: fail fast on the first bad selector instead of
     // querying every remaining mask selector once one is already wrong.
-    // eslint-disable-next-line no-await-in-loop
+    // eslint-disable-next-line no-await-in-loop -- sequential by design, see above
     const count = await locator.count();
     const maxMatches = mask.maxMatches ?? 1;
     requested[maskIndex]!.matchedCount = count;
@@ -110,7 +110,7 @@ export async function resolveMasks(
     // instead of round-tripping the two checks for one element at a time.
     // Still one await per mask (not per element): the next mask must wait for
     // this one's fail-fast verdict before it's worth querying.
-    // eslint-disable-next-line no-await-in-loop
+    // eslint-disable-next-line no-await-in-loop -- sequential by design, see above
     const matchChecks = await Promise.all(
       Array.from({ length: count }, async (_, index) => {
         const item = locator.nth(index);

@@ -40,6 +40,7 @@
     "pretest": "pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation": "stryker run ../../stryker.config.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test"
   },
@@ -47,8 +48,8 @@
     "@framelia/contracts": "workspace:*",
     "@framelia/verify": "workspace:*",
     "@hono/node-server": "^2.0.12",
-    "hono": "4.12.32",
-    "nanoid": "3.3.16"
+    "hono": "4.13.13",
+    "nanoid": "3.3.20"
   },
   "devDependencies": {
     "@types/node": "26.0.1",

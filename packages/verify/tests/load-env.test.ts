@@ -4,8 +4,8 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { AppError } from "../src/index.ts";
 import { loadEnvFiles, loadProjectEnv } from "../src/load-env.ts";
-import { AppError } from "../src/types.ts";
 import { captureThrown } from "./support/capture-error.ts";
 
 const originalValue = process.env.FRAMELIA_LOAD_ENV_TEST;

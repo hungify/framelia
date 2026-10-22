@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "fff": {
+      "type": "stdio",
+      "command": "fff-mcp",
+      "args": ["--no-update-check"]
+    },
+    "codebase-memory-mcp": {
+      "type": "stdio",
+      "command": "codebase-memory-mcp",
+      "args": []
+    }
+  }
+}

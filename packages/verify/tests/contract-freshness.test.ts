@@ -9,7 +9,7 @@ import {
   isContractFresh,
   readContractFreshness,
   writeContractFreshness,
-} from "../src/contract-freshness.ts";
+} from "../src/index.ts";
 
 const temporaryDirectories: string[] = [];
 

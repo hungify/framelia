@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { runWithConcurrency } from "../src/concurrency.ts";
+import { runWithConcurrency } from "../src/index.ts";
 
 function deferred<T>(value: T, delayMs: number): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), delayMs));

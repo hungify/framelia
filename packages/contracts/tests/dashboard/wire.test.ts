@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { assembleContractResult } from "../../src/dashboard/projections.ts";
-import { dashboardEventSchema, dashboardRunSchema } from "../../src/dashboard/wire.ts";
+import { assembleContractResult } from "../../src/index.ts";
+import { dashboardEventSchema, dashboardRunSchema } from "../../src/index.ts";
 
 describe("dashboardEventSchema", () => {
   const validEvent = {

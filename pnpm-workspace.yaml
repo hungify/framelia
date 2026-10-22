@@ -9,3 +9,6 @@ allowBuilds:
 
 overrides:
   esbuild: 0.28.1
+
+minimumReleaseAge: 1440
+blockExoticSubdeps: true

@@ -40,16 +40,16 @@ describe("assertClientBuildExists", () => {
   });
 });
 
-describe("mountClientRoutes", () => {
-  async function buildClientApp(): Promise<{ app: Hono; clientRoot: string }> {
-    const clientRoot = await tempDir("framelia-static-client-");
-    await fs.writeFile(path.join(clientRoot, "index.html"), "<main>Framelia</main>");
-    await fs.writeFile(path.join(clientRoot, "app.js"), "console.log('hi')");
-    const app = new Hono();
-    mountClientRoutes(app, clientRoot);
-    return { app, clientRoot };
-  }
+async function buildClientApp(): Promise<{ app: Hono; clientRoot: string }> {
+  const clientRoot = await tempDir("framelia-static-client-");
+  await fs.writeFile(path.join(clientRoot, "index.html"), "<main>Framelia</main>");
+  await fs.writeFile(path.join(clientRoot, "app.js"), "console.log('hi')");
+  const app = new Hono();
+  mountClientRoutes(app, clientRoot);
+  return { app, clientRoot };
+}
 
+describe("mountClientRoutes", () => {
   it("serves a real file with the correct content-type from serveStatic's MIME table", async () => {
     const { app } = await buildClientApp();
     const response = await app.request("/app.js");

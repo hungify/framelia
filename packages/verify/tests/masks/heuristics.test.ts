@@ -1,7 +1,7 @@
 import { chromium } from "@playwright/test";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { suggestMasks } from "../../src/masks/heuristics.ts";
+import { suggestMasks } from "../../src/index.ts";
 
 const browser = await chromium.launch();
 afterAll(() => browser.close());

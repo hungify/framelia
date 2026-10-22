@@ -4,8 +4,8 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadFrameliaConfig } from "../src/config.ts";
 import { UsageError } from "../src/exit.ts";
+import { loadFrameliaConfig } from "../src/index.ts";
 import { openProject } from "../src/internal/project.ts";
 import { createFakeProcess } from "./fake-process.ts";
 const temporaryDirectories: string[] = [];

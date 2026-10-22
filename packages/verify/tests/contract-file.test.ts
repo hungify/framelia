@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { SCHEMA_VERSION } from "@framelia/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readContractEntry } from "../src/contract-file.ts";
+import { readContractEntry } from "../src/index.ts";
 
 const temporaryDirectories: string[] = [];
 

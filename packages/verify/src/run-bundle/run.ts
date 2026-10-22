@@ -312,72 +312,10 @@ export async function finalizeRunRecordLocked(
 
   const caseResults = await Promise.all(
     plan.selectedCases.map(async (selected) => {
-      const diagnostics: Diagnostic[] = [];
-      const dir = attemptsDir(root, runId, selected.caseId);
-      const attempts: AttemptRecord[] = [];
-      const evidenceVerifiedAttempts: AttemptRecord[] = [];
-      if (fs.existsSync(dir)) {
-        for (const entry of fs
-          .readdirSync(dir, { withFileTypes: true })
-          .toSorted((left, right) => left.name.localeCompare(right.name))) {
-          if (!entry.isDirectory()) continue;
-          const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
-          if (!fs.existsSync(attemptPath)) {
-            diagnostics.push({
-              code: "attempt-publication-partial",
-              stage: "publication",
-              message: `Case "${selected.caseId}" contains partial attempt directory "${entry.name}".`,
-            });
-            continue;
-          }
-          let attempt: AttemptRecord;
-          try {
-            attempt = parseJsonFile(
-              attemptPath,
-              attemptRecordSchema,
-              "RUN_BUNDLE_INVALID",
-              `attempt bundle at ${attemptPath}`,
-            );
-          } catch (error) {
-            diagnostics.push({
-              code: "attempt-record-invalid",
-              stage: "publication",
-              message: portableErrorMessage(error, root),
-            });
-            continue;
-          }
-          if (
-            attempt.runId !== runId ||
-            attempt.caseId !== selected.caseId ||
-            attempt.casePlanDigest !== selected.casePlanDigest
-          ) {
-            diagnostics.push({
-              code: "attempt-identity-invalid",
-              stage: "publication",
-              message: `Attempt "${attempt.attemptId}" does not match run/case/frozen-plan identity.`,
-            });
-            continue;
-          }
-          attempts.push(attempt);
-          try {
-            validateAttemptEvidence(root, attempt);
-            evidenceVerifiedAttempts.push(attempt);
-          } catch (error) {
-            diagnostics.push({
-              code: "attempt-evidence-invalid",
-              stage: "evidence",
-              message: portableErrorMessage(error, root),
-            });
-          }
-        }
-      }
-      attempts.sort(
-        (left, right) =>
-          left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
-      );
-      evidenceVerifiedAttempts.sort(
-        (left, right) =>
-          left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId),
+      const { attempts, evidenceVerifiedAttempts, diagnostics } = scanCaseAttempts(
+        root,
+        runId,
+        selected,
       );
 
       const casePlan = casePlans.get(selected.caseId);
@@ -423,57 +361,13 @@ export async function finalizeRunRecordLocked(
       };
     }),
   );
-  const transportDiagnostics: Diagnostic[] = [];
-  if (options.transport) {
-    const runnerAttempts = caseResults
-      .map((result) => result.runnerAttempt)
-      .filter((attempt): attempt is AttemptRecord => attempt !== undefined);
-    const allRunnerCasesComplete =
-      runnerAttempts.length === plan.selectedCases.length &&
-      runnerAttempts.every((attempt) => attempt.executionState === "completed");
-    const runnerVisualVerdict = allRunnerCasesComplete
-      ? runnerAttempts.some((attempt) => attempt.visualVerdict === "mismatched")
-        ? "mismatched"
-        : runnerAttempts.every((attempt) => attempt.visualVerdict === "passed")
-          ? "passed"
-          : "not-evaluated"
-      : "not-evaluated";
-    const expectedExitCode =
-      runnerVisualVerdict === "mismatched" ? 1 : runnerVisualVerdict === "passed" ? 0 : null;
-    const expectedResultStatus =
-      runnerVisualVerdict === "mismatched"
-        ? "failed"
-        : runnerVisualVerdict === "passed"
-          ? "passed"
-          : undefined;
-    if (options.transport.cancelled) {
-      transportDiagnostics.push({
-        code: "execution-cancelled",
-        stage: "execution",
-        message: "The test-runner child was cancelled after graceful SIGINT forwarding.",
-      });
-    }
-    if (!options.transport.reporterCompleted) {
-      transportDiagnostics.push({
-        code: "reporter-lifecycle-incomplete",
-        stage: "execution",
-        message: "The Framelia reporter did not publish a completed execution lifecycle summary.",
-      });
-    }
-    if (
-      options.transport.signal !== null ||
-      expectedExitCode === null ||
-      options.transport.exitCode !== expectedExitCode ||
-      (expectedResultStatus !== undefined &&
-        options.transport.resultStatus !== expectedResultStatus)
-    ) {
-      transportDiagnostics.push({
-        code: "execution-exit-unexplained",
-        stage: "execution",
-        message: `Test runner exit ${options.transport.exitCode ?? options.transport.signal ?? "unknown"} / result ${options.transport.resultStatus ?? "missing"} is not explained by the latest complete published visual attempts.`,
-      });
-    }
-  }
+  const transportDiagnostics = options.transport
+    ? transportDiagnosticsFor(
+        options.transport,
+        caseResults.flatMap((result) => result.runnerAttempt ?? []),
+        plan.selectedCases.length,
+      )
+    : [];
   const publicationDiagnostics = [...(options.diagnostics ?? []), ...transportDiagnostics].toSorted(
     (left, right) =>
       left.code.localeCompare(right.code) ||
@@ -514,6 +408,144 @@ export async function finalizeRunRecordLocked(
   });
   publishRunRecord(root, record);
   return record;
+}
+
+const byRetryThenId = (left: AttemptRecord, right: AttemptRecord): number =>
+  left.retryIndex - right.retryIndex || left.attemptId.localeCompare(right.attemptId);
+
+/**
+ * Reads every attempt directory of one selected case from disk. `attempts` are the ones that
+ * parse and carry this case's run/case/frozen-plan identity; `evidenceVerifiedAttempts` are
+ * the subset whose evidence still matches. Anything else becomes a diagnostic, never a throw.
+ */
+function scanCaseAttempts(
+  root: string,
+  runId: string,
+  selected: RunPlan["selectedCases"][number],
+): {
+  attempts: AttemptRecord[];
+  evidenceVerifiedAttempts: AttemptRecord[];
+  diagnostics: Diagnostic[];
+} {
+  const diagnostics: Diagnostic[] = [];
+  const dir = attemptsDir(root, runId, selected.caseId);
+  const attempts: AttemptRecord[] = [];
+  const evidenceVerifiedAttempts: AttemptRecord[] = [];
+  if (fs.existsSync(dir)) {
+    for (const entry of fs
+      .readdirSync(dir, { withFileTypes: true })
+      .toSorted((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isDirectory()) continue;
+      const attemptPath = path.join(dir, entry.name, ATTEMPT_RECORD_FILE_NAME);
+      if (!fs.existsSync(attemptPath)) {
+        diagnostics.push({
+          code: "attempt-publication-partial",
+          stage: "publication",
+          message: `Case "${selected.caseId}" contains partial attempt directory "${entry.name}".`,
+        });
+        continue;
+      }
+      let attempt: AttemptRecord;
+      try {
+        attempt = parseJsonFile(
+          attemptPath,
+          attemptRecordSchema,
+          "RUN_BUNDLE_INVALID",
+          `attempt bundle at ${attemptPath}`,
+        );
+      } catch (error) {
+        diagnostics.push({
+          code: "attempt-record-invalid",
+          stage: "publication",
+          message: portableErrorMessage(error, root),
+        });
+        continue;
+      }
+      if (
+        attempt.runId !== runId ||
+        attempt.caseId !== selected.caseId ||
+        attempt.casePlanDigest !== selected.casePlanDigest
+      ) {
+        diagnostics.push({
+          code: "attempt-identity-invalid",
+          stage: "publication",
+          message: `Attempt "${attempt.attemptId}" does not match run/case/frozen-plan identity.`,
+        });
+        continue;
+      }
+      attempts.push(attempt);
+      try {
+        validateAttemptEvidence(root, attempt);
+        evidenceVerifiedAttempts.push(attempt);
+      } catch (error) {
+        diagnostics.push({
+          code: "attempt-evidence-invalid",
+          stage: "evidence",
+          message: portableErrorMessage(error, root),
+        });
+      }
+    }
+  }
+  return {
+    attempts: attempts.toSorted(byRetryThenId),
+    evidenceVerifiedAttempts: evidenceVerifiedAttempts.toSorted(byRetryThenId),
+    diagnostics,
+  };
+}
+
+/**
+ * A coordinated run's test-runner child must exit the way the attempts it published say it
+ * should: 1 when any complete attempt mismatched, 0 when all passed. Reports a cancelled
+ * child, a reporter that never published its lifecycle summary, and an exit that the
+ * published attempts do not explain.
+ */
+function transportDiagnosticsFor(
+  transport: NonNullable<FinalizeRunOptions["transport"]>,
+  runnerAttempts: readonly AttemptRecord[],
+  selectedCaseCount: number,
+): Diagnostic[] {
+  const allComplete =
+    runnerAttempts.length === selectedCaseCount &&
+    runnerAttempts.every((attempt) => attempt.executionState === "completed");
+  const verdict = !allComplete
+    ? "not-evaluated"
+    : runnerAttempts.some((attempt) => attempt.visualVerdict === "mismatched")
+      ? "mismatched"
+      : runnerAttempts.every((attempt) => attempt.visualVerdict === "passed")
+        ? "passed"
+        : "not-evaluated";
+  const expectedExitCode = verdict === "mismatched" ? 1 : verdict === "passed" ? 0 : null;
+  const expectedResultStatus =
+    verdict === "mismatched" ? "failed" : verdict === "passed" ? "passed" : undefined;
+
+  const diagnostics: Diagnostic[] = [];
+  if (transport.cancelled) {
+    diagnostics.push({
+      code: "execution-cancelled",
+      stage: "execution",
+      message: "The test-runner child was cancelled after graceful SIGINT forwarding.",
+    });
+  }
+  if (!transport.reporterCompleted) {
+    diagnostics.push({
+      code: "reporter-lifecycle-incomplete",
+      stage: "execution",
+      message: "The Framelia reporter did not publish a completed execution lifecycle summary.",
+    });
+  }
+  if (
+    transport.signal !== null ||
+    expectedExitCode === null ||
+    transport.exitCode !== expectedExitCode ||
+    (expectedResultStatus !== undefined && transport.resultStatus !== expectedResultStatus)
+  ) {
+    diagnostics.push({
+      code: "execution-exit-unexplained",
+      stage: "execution",
+      message: `Test runner exit ${transport.exitCode ?? transport.signal ?? "unknown"} / result ${transport.resultStatus ?? "missing"} is not explained by the latest complete published visual attempts.`,
+    });
+  }
+  return diagnostics;
 }
 
 /** Reads the run's current coordination record (`run.json`), whatever its `status`. */

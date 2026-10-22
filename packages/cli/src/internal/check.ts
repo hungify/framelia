@@ -8,15 +8,19 @@ import {
   collectionManifestSchema,
   commandOutcomeSchema,
   runPlanSchema,
+  type CasePlan,
   type CollectedCase,
   type CollectionManifest,
   type CommandOutcome,
+  type RunPlan,
+  type RunProjection,
 } from "@framelia/contracts/workflow";
 import { EXIT_USAGE_ERROR, canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
 import {
   discoverAuthoredContracts,
   resolveContractProjectMatrix,
   type ContractProjectCase,
+  type ResolvedProjectPolicy,
 } from "@framelia/verify/project-policy";
 import {
   buildCasePlanForCollectedCase,
@@ -253,6 +257,96 @@ function exportRunId(runId: string, request: CheckRequest, runtime: CliRuntime):
   }
 }
 
+/**
+ * Binds the selection to the tests Playwright collected and builds what gets frozen: one
+ * case plan per selected case, and the run plan that names them. Nothing is written here.
+ */
+async function planCheckRun(input: {
+  policy: ResolvedProjectPolicy;
+  policyDigest: string;
+  matrix: ReturnType<typeof resolveContractProjectMatrix>;
+  selection: ReturnType<typeof selectMatrix>;
+  manifest: CollectionManifest;
+  request: CheckRequest;
+  runId: string;
+}): Promise<{ selectedCollected: CollectedCase[]; casePlans: CasePlan[]; plan: RunPlan }> {
+  const { policy, matrix, selection, manifest, request, runId } = input;
+  const selectedCollected = reconcileSelectedCases(manifest, selection.selected);
+  const casePlans = await Promise.all(
+    selectedCollected.map((collected) =>
+      buildCasePlanForCollectedCase(collected, {
+        projectRoot: policy.root,
+        runId,
+        policy,
+        source: {},
+      }),
+    ),
+  );
+  const plannedCases = casePlans.map((casePlan) => ({
+    caseId: casePlan.caseId,
+    casePlanDigest: canonicalJsonDigest(casePlan),
+  }));
+  const graphManifest = collectionManifestSchema.parse({
+    ...manifest,
+    formatVersion: COLLECTION_FORMAT_VERSION,
+    visualCases: selectedCollected,
+  });
+  const fullSelection = selection.scope === "all";
+  const plan = runPlanSchema.parse({
+    formatVersion: RUN_PLAN_FORMAT_VERSION,
+    kind: "framelia.run-plan",
+    runId,
+    policyDigest: input.policyDigest,
+    executionGraphDigest: computeExecutionGraphDigest(graphManifest),
+    selection: {
+      mode: fullSelection ? "all" : "subset",
+      contracts:
+        request.all === true
+          ? [...new Set(selection.selected.map((entry) => entry.contractId))]
+          : [...request.contract],
+      ...(request.project.length > 0 ? { projects: [...request.project] } : {}),
+    },
+    availableMatrix: matrix.allCases,
+    requiredMatrix: matrix.requiredCases,
+    availableCases: plannedCases,
+    requiredCases: fullSelection ? plannedCases : [],
+    retryAcceptance: policy.retryAcceptance,
+    selectedCases: plannedCases,
+  });
+  return { selectedCollected, casePlans, plan };
+}
+
+/** The outcome of a run that was planned, executed and finalized, read back from its bundle. */
+function runOutcome(input: {
+  request: CheckRequest;
+  runId: string;
+  bundlePath: string;
+  selection: CommandOutcome["selection"];
+  execution: PlaywrightExecution;
+  projection: RunProjection;
+}): CommandOutcome {
+  const { request, execution, projection } = input;
+  const complete = execution.reporterCompleted && projection.executionState === "completed";
+  const visualVerdict = projection.visualVerdict;
+  return commandOutcomeSchema.parse({
+    formatVersion: COMMAND_OUTCOME_FORMAT_VERSION,
+    kind: "framelia.command-outcome",
+    command: "check",
+    executionState: complete ? "completed" : "incomplete",
+    visualVerdict,
+    exitCode: runExitCode(complete, visualVerdict),
+    runId: input.runId,
+    bundlePath: input.bundlePath,
+    diagnostics: projection.diagnostics,
+    selection: input.selection,
+    coverage: projection.selection,
+    cases: projection.cases,
+    ...(complete && visualVerdict === "passed"
+      ? {}
+      : { next: nextForRun(projection, request.projectRoot) }),
+  });
+}
+
 /** Owns selection, collection transport, immutable planning, execution and sole finalization. */
 export async function runCheck(
   request: CheckRequest,
@@ -314,47 +408,14 @@ export async function runCheck(
       });
     }
 
-    const selectedCollected = reconcileSelectedCases(manifest, selection.selected);
-    const casePlans = await Promise.all(
-      selectedCollected.map((collected) =>
-        buildCasePlanForCollectedCase(collected, {
-          projectRoot: policy.root,
-          runId: runId!,
-          policy,
-          source: {},
-        }),
-      ),
-    );
-    const plannedCases = casePlans.map((casePlan) => ({
-      caseId: casePlan.caseId,
-      casePlanDigest: canonicalJsonDigest(casePlan),
-    }));
-    const graphManifest = collectionManifestSchema.parse({
-      ...manifest,
-      formatVersion: COLLECTION_FORMAT_VERSION,
-      visualCases: selectedCollected,
-    });
-    const fullSelection = selection.scope === "all";
-    const plan = runPlanSchema.parse({
-      formatVersion: RUN_PLAN_FORMAT_VERSION,
-      kind: "framelia.run-plan",
-      runId,
+    const { selectedCollected, casePlans, plan } = await planCheckRun({
+      policy,
       policyDigest: policy.policyDigest,
-      executionGraphDigest: computeExecutionGraphDigest(graphManifest),
-      selection: {
-        mode: fullSelection ? "all" : "subset",
-        contracts:
-          request.all === true
-            ? [...new Set(selection.selected.map((entry) => entry.contractId))]
-            : [...request.contract],
-        ...(request.project.length > 0 ? { projects: [...request.project] } : {}),
-      },
-      availableMatrix: matrix.allCases,
-      requiredMatrix: matrix.requiredCases,
-      availableCases: plannedCases,
-      requiredCases: fullSelection ? plannedCases : [],
-      retryAcceptance: policy.retryAcceptance,
-      selectedCases: plannedCases,
+      matrix,
+      selection,
+      manifest,
+      request,
+      runId,
     });
     outcomeSelection = selectionResult(
       request,
@@ -400,25 +461,13 @@ export async function runCheck(
       });
     }
 
-    const projection = readRunProjection(policy.root, runId);
-    const complete = execution.reporterCompleted && projection.executionState === "completed";
-    const visualVerdict = projection.visualVerdict;
-    return commandOutcomeSchema.parse({
-      formatVersion: COMMAND_OUTCOME_FORMAT_VERSION,
-      kind: "framelia.command-outcome",
-      command: "check",
-      executionState: complete ? "completed" : "incomplete",
-      visualVerdict,
-      exitCode: runExitCode(complete, visualVerdict),
+    return runOutcome({
+      request,
       runId,
       bundlePath,
-      diagnostics: projection.diagnostics,
       selection: outcomeSelection,
-      coverage: projection.selection,
-      cases: projection.cases,
-      ...(complete && visualVerdict === "passed"
-        ? {}
-        : { next: nextForRun(projection, request.projectRoot) }),
+      execution,
+      projection: readRunProjection(policy.root, runId),
     });
   } catch (error) {
     return errorOutcome(error, outcomeRoot, request, {

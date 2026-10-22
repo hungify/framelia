@@ -133,60 +133,19 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
     };
   }
 
-  const fetchImpl = options.fetchImpl ?? fetch;
   const warnings: string[] = [];
   const apiCallLog: ApiCallLogEntry[] = [];
   const scale = options.scale ?? DEFAULT_IMAGE_SCALE;
-  const maxAttempts = Math.max(1, options.retry?.maxAttempts ?? FIGMA_FETCH_MAX_ATTEMPTS);
-  const baseDelayMs = options.retry?.baseDelayMs ?? FIGMA_FETCH_BASE_BACKOFF_MS;
-  const sleepImpl = options.retry?.sleep ?? sleep;
-  const random = options.retry?.random ?? Math.random;
-  let baselineCommitted = false;
-  let previousBaseline: Buffer | null = null;
-
-  // Shared by every outbound request in this flow -- the api.figma.com JSON calls and the
-  // final CDN image download alike -- so a transient 429/5xx/timeout/network error
-  // self-heals the same way everywhere. The last attempt's response (or error) is
-  // returned/thrown unchanged, so classify() and the catch below still see what failed.
-  const fetchWithRetry = async (
-    url: string,
-    init: RequestInit,
-    logEndpoint: string,
-  ): Promise<Response> => {
-    for (let attempt = 1; ; attempt++) {
-      // A retry loop is inherently sequential: each attempt must observe the previous
-      // one's outcome before deciding whether to wait and try again.
-      let res: Response;
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        res = await fetchImpl(url, {
-          ...init,
-          signal: AbortSignal.timeout(HTTP_REQUEST_TIMEOUT_MS),
-        });
-      } catch (error) {
-        if (attempt >= maxAttempts) throw error;
-        // eslint-disable-next-line no-await-in-loop
-        await sleepImpl(backoffDelayMs(attempt, baseDelayMs, random));
-        continue;
-      }
-      apiCallLog.push({
-        endpoint: logEndpoint,
-        timestamp: new Date().toISOString(),
-        status: res.status,
-      });
-      if (!isTransientStatus(res.status) || attempt >= maxAttempts) return res;
-      const retryAfter = res.headers.get("retry-after");
-      // Release the discarded response's connection before waiting.
-      // eslint-disable-next-line no-await-in-loop
-      await res.body?.cancel().catch(() => {});
-      // eslint-disable-next-line no-await-in-loop
-      await sleepImpl(
-        retryAfter === null
-          ? backoffDelayMs(attempt, baseDelayMs, random)
-          : parseRetryAfterMs(retryAfter),
-      );
-    }
+  const retry: Required<FetchRetryOptions> = {
+    maxAttempts: Math.max(1, options.retry?.maxAttempts ?? FIGMA_FETCH_MAX_ATTEMPTS),
+    baseDelayMs: options.retry?.baseDelayMs ?? FIGMA_FETCH_BASE_BACKOFF_MS,
+    sleep: options.retry?.sleep ?? sleep,
+    random: options.retry?.random ?? Math.random,
   };
+  const { maxAttempts } = retry;
+  // Shared by every outbound request in this flow -- the api.figma.com JSON calls and the
+  // final CDN image download alike -- so a transient failure self-heals the same way everywhere.
+  const fetchWithRetry = createRetryingFetch(options.fetchImpl ?? fetch, retry, apiCallLog);
 
   const call = (endpoint: string): Promise<Response> =>
     fetchWithRetry(
@@ -195,7 +154,7 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       endpoint.split("?")[0] ?? endpoint,
     );
 
-  const classify = (status: number, context: string): FetchBaselineOutcome | null => {
+  const classify = (status: number, context: string): FetchBaselineOutcome => {
     if (status === HTTP_STATUS.UNAUTHORIZED || status === HTTP_STATUS.FORBIDDEN) {
       return {
         ok: false,
@@ -221,7 +180,13 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
         warnings,
       };
     }
-    return null;
+    return {
+      ok: true,
+      fetched: false,
+      errorClass: "retryable",
+      message: `Unexpected Figma API status ${status} during ${context}.`,
+      warnings,
+    };
   };
 
   try {
@@ -229,15 +194,7 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       `/v1/files/${encodeURIComponent(options.fileKey)}/nodes?ids=${encodeURIComponent(options.nodeId)}&depth=1`,
     );
     if (!metaRes.ok) {
-      return (
-        classify(metaRes.status, "metadata fetch") ?? {
-          ok: true,
-          fetched: false,
-          errorClass: "retryable",
-          message: `Unexpected Figma API status ${metaRes.status} during metadata fetch.`,
-          warnings,
-        }
-      );
+      return classify(metaRes.status, "metadata fetch");
     }
     const metaJson = (await metaRes.json()) as GetFileNodesResponse;
     const nodeEntry = metaJson.nodes?.[options.nodeId];
@@ -283,15 +240,7 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       `/v1/images/${encodeURIComponent(options.fileKey)}?ids=${encodeURIComponent(options.nodeId)}&format=png&scale=${scale}&use_absolute_bounds=${useAbsoluteBounds}`,
     );
     if (!imgRes.ok) {
-      return (
-        classify(imgRes.status, "image render") ?? {
-          ok: true,
-          fetched: false,
-          errorClass: "retryable",
-          message: `Unexpected Figma API status ${imgRes.status} during image render.`,
-          warnings,
-        }
-      );
+      return classify(imgRes.status, "image render");
     }
     const imgJson = (await imgRes.json()) as GetImagesResponse & { err?: string | null };
     const imageUrl = imgJson.images?.[options.nodeId];
@@ -342,12 +291,7 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       canvasFill: options.canvasFill ?? null,
     };
     const metaPath = baselineMetaPath(options.outPath);
-    previousBaseline = fs.existsSync(options.outPath) ? fs.readFileSync(options.outPath) : null;
-    // Image first, sidecar last, each durably (fsync'd temp file, rename, directory
-    // fsync): the sidecar only ever describes an image that is already on disk.
-    writeFileAtomic(options.outPath, imageBytes);
-    baselineCommitted = true;
-    writeFileAtomic(metaPath, `${JSON.stringify(meta, null, JSON_INDENT_SPACES)}\n`);
+    writeBaselineDurably(options.outPath, metaPath, imageBytes, meta);
 
     return {
       ok: true,
@@ -359,16 +303,6 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       figmaStyle,
     };
   } catch (err) {
-    if (baselineCommitted) {
-      // The sidecar write failed after the image landed: put the previous image back so
-      // the untouched sidecar still describes the bytes next to it.
-      try {
-        if (previousBaseline) writeFileAtomic(options.outPath, previousBaseline);
-        else fs.rmSync(options.outPath, { force: true });
-      } catch {
-        // Best effort -- the original failure reported below is what the caller needs.
-      }
-    }
     if (err instanceof BaselineImageDecodeError) {
       return {
         ok: true,
@@ -385,6 +319,82 @@ export async function fetchBaseline(options: FetchBaselineOptions): Promise<Fetc
       message: `Network error during fetch-baseline (${sanitizeError(err)}); existing baseline on disk remains usable.`,
       warnings,
     };
+  }
+}
+
+/**
+ * One outbound request with the transient-failure policy: 429, 5xx, request timeouts and
+ * network errors are retried with capped exponential backoff plus jitter, honouring a
+ * server-sent `Retry-After`. The last attempt's response (or error) is returned/thrown
+ * unchanged, so the caller still sees what failed. Every received response is logged.
+ */
+function createRetryingFetch(
+  fetchImpl: typeof fetch,
+  retry: Required<FetchRetryOptions>,
+  callLog: ApiCallLogEntry[],
+): (url: string, init: RequestInit, logEndpoint: string) => Promise<Response> {
+  const { maxAttempts, baseDelayMs, sleep: sleepImpl, random } = retry;
+  return async (url, init, logEndpoint) => {
+    for (let attempt = 1; ; attempt++) {
+      // A retry loop is inherently sequential: each attempt must observe the previous
+      // one's outcome before deciding whether to wait and try again.
+      let res: Response;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        res = await fetchImpl(url, {
+          ...init,
+          signal: AbortSignal.timeout(HTTP_REQUEST_TIMEOUT_MS),
+        });
+      } catch (error) {
+        if (attempt >= maxAttempts) throw error;
+        // eslint-disable-next-line no-await-in-loop
+        await sleepImpl(backoffDelayMs(attempt, baseDelayMs, random));
+        continue;
+      }
+      callLog.push({
+        endpoint: logEndpoint,
+        timestamp: new Date().toISOString(),
+        status: res.status,
+      });
+      if (!isTransientStatus(res.status) || attempt >= maxAttempts) return res;
+      const retryAfter = res.headers.get("retry-after");
+      // Release the discarded response's connection before waiting.
+      // eslint-disable-next-line no-await-in-loop
+      await res.body?.cancel().catch(() => {});
+      // eslint-disable-next-line no-await-in-loop
+      await sleepImpl(
+        retryAfter === null
+          ? backoffDelayMs(attempt, baseDelayMs, random)
+          : parseRetryAfterMs(retryAfter),
+      );
+    }
+  };
+}
+
+/**
+ * Image first, sidecar last, each durably (fsync'd temp file, rename, directory fsync): the
+ * sidecar only ever describes an image that is already on disk. When the sidecar write fails
+ * after the image landed, the previous image is put back so the untouched sidecar still
+ * describes the bytes next to it, and the original error is rethrown.
+ */
+function writeBaselineDurably(
+  imagePath: string,
+  metaPath: string,
+  imageBytes: Buffer,
+  meta: BaselineMeta,
+): void {
+  const previousImage = fs.existsSync(imagePath) ? fs.readFileSync(imagePath) : null;
+  writeFileAtomic(imagePath, imageBytes);
+  try {
+    writeFileAtomic(metaPath, `${JSON.stringify(meta, null, JSON_INDENT_SPACES)}\n`);
+  } catch (error) {
+    try {
+      if (previousImage) writeFileAtomic(imagePath, previousImage);
+      else fs.rmSync(imagePath, { force: true });
+    } catch {
+      // Best effort -- the original failure is what the caller needs.
+    }
+    throw error;
   }
 }
 

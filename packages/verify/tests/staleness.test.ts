@@ -27,6 +27,13 @@ const baseMeta = {
   apiCallLog: [],
 };
 
+function figmaMeta(lastModified: string): typeof fetch {
+  return (async () =>
+    new Response(JSON.stringify({ lastModified, nodes: { [baseMeta.nodeId]: { document: {} } } }), {
+      status: 200,
+    })) as typeof fetch;
+}
+
 describe("baseline staleness (warnings only, never hard-fail)", () => {
   it("no sidecar -> warning", async () => {
     const dir = path.join(tmp, `g-${n++}`);
@@ -49,14 +56,6 @@ describe("baseline staleness (warnings only, never hard-fail)", () => {
     const w = await checkBaselineStaleness(baseline, { token: "", maxAgeDays: 14 });
     expect(w[0]).toMatch(/not re-verified in \d+d, no token/);
   });
-
-  function figmaMeta(lastModified: string): typeof fetch {
-    return (async () =>
-      new Response(
-        JSON.stringify({ lastModified, nodes: { [baseMeta.nodeId]: { document: {} } } }),
-        { status: 200 },
-      )) as typeof fetch;
-  }
 
   it("token + changed lastModified -> stale warning", async () => {
     const baseline = baselineWithMeta({ ...baseMeta, fetchedAt: new Date().toISOString() });

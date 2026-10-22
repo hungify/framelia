@@ -7,7 +7,7 @@ import { chromium } from "@playwright/test";
 import { PNG } from "pngjs";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import { captureReadyPage } from "../src/capture/core.ts";
+import { captureReadyPage } from "../src/internal.ts";
 
 const browser = await chromium.launch();
 afterAll(() => browser.close());

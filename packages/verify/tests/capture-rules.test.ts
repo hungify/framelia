@@ -6,7 +6,7 @@ import {
   checkScopeSize,
   checkUniqueMatch,
 } from "../src/capture/domain/capture-rules.ts";
-import type { FontReadiness } from "../src/capture/types.ts";
+import type { FontReadiness } from "../src/internal.ts";
 
 function fonts(overrides: Partial<FontReadiness> = {}): FontReadiness {
   return { supported: true, status: "loaded", failed: [], ...overrides };

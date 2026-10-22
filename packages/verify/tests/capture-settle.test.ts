@@ -4,7 +4,7 @@ import { chromium } from "@playwright/test";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { countDevtoolsMatches, fontIncomplete, settle } from "../src/capture/settle.ts";
-import type { FontReadiness } from "../src/capture/types.ts";
+import type { FontReadiness } from "../src/internal.ts";
 
 const browser = await chromium.launch();
 afterAll(() => browser.close());

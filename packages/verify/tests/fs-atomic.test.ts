@@ -4,7 +4,7 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { fsyncDirectory, writeFileAtomic } from "../src/fs-atomic.ts";
+import { fsyncDirectory, writeFileAtomic } from "../src/index.ts";
 
 const roots: string[] = [];
 

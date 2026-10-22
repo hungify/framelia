@@ -1,8 +1,8 @@
 import { styleToleranceOverridesSchema, verificationContractSchema } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
-import type { StyleSnapshot } from "../src/figma-node-style.ts";
-import { compareStyles } from "../src/style-compare.ts";
+import type { StyleSnapshot } from "../src/index.ts";
+import { compareStyles } from "../src/index.ts";
 
 describe("compareStyles", () => {
   it("returns no issues when both snapshots are empty", () => {

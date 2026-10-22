@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { attributeDiffRegions, type SelectorBounds } from "../src/compare/attribution.ts";
-import type { DiffCluster } from "../src/compare/pixel.ts";
+import { attributeDiffRegions, type SelectorBounds } from "../src/index.ts";
+import type { DiffCluster } from "../src/index.ts";
 
 function cluster(x0: number, y0: number, x1: number, y1: number): DiffCluster {
   return { pixels: (x1 - x0) * (y1 - y0), bbox: { x0, y0, x1, y1 } };

@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 
 import { avgDeltaE2000 } from "../src/compare/delta-e.ts";
 import { buildMaskBitmap } from "../src/compare/mask.ts";
-import { makeSolidPng } from "../src/compare/png.ts";
-import { AppError } from "../src/types.ts";
+import { AppError } from "../src/index.ts";
+import { makeSolidPng } from "../src/testing.ts";
 import { captureThrown } from "./support/capture-error.ts";
 
 describe("avgDeltaE2000", () => {

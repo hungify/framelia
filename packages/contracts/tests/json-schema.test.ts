@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as z from "zod";
 
-import { toJsonSchema } from "../src/json-schema.ts";
-import { verificationContractSchema } from "../src/visual-contract.ts";
+import { toJsonSchema } from "../src/index.ts";
+import { verificationContractSchema } from "../src/index.ts";
 
 describe("toJsonSchema", () => {
   it("produces a JSON Schema object for a plain schema", () => {

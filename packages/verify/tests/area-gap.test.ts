@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { areaGap } from "../src/compare/area-gap.ts";
-import { makeSolidPng } from "../src/compare/png.ts";
+import { makeSolidPng } from "../src/testing.ts";
 
 describe("areaGap", () => {
   it("returns 0% for same-size images", () => {

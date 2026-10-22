@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SCHEMA_VERSION } from "../src/constants.ts";
-import { verificationRequestSchema } from "../src/request.ts";
+import { verificationRequestSchema } from "../src/index.ts";
 
 const contract = (id: string) => ({
   id,

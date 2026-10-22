@@ -9,7 +9,7 @@ import {
   largestRealDiffCluster,
   pixelCompare,
 } from "../src/compare/pixel.ts";
-import { makeSolidPng } from "../src/compare/png.ts";
+import { makeSolidPng } from "../src/testing.ts";
 
 describe("countRealDiffPixels", () => {
   it("returns 0 for a black (no diff) image", () => {

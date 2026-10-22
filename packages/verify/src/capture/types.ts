@@ -1,28 +1,10 @@
 import type { BaselineSource, VisualMask } from "@framelia/contracts";
 
-import type { ComputedTextStyle, RejectResult } from "../types.ts";
+import type { ComputedTextStyle, MaskEvidence, RejectResult } from "../types.ts";
 
-export const MASK_COLOR = "#FF00FF";
-
-export interface MaskBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface MaskEvidence {
-  requested: Array<{ selector: string; reason: string; maxMatches: number; matchedCount: number }>;
-  matchedCount: number;
-  bounds: MaskBounds[];
-  unionMaskedArea: number;
-  maskedAreaRatio: number;
-  maskColor: typeof MASK_COLOR;
-  status: "applied" | "skipped" | "failed";
-  code?: string;
-  message?: string;
-  resolvedAt: string;
-}
+// Declared in ../types.ts so that module never imports back from capture/.
+export { MASK_COLOR } from "../types.ts";
+export type { MaskBounds, MaskEvidence } from "../types.ts";
 
 type CaptureScope =
   | { kind: "page"; fullPage: boolean }

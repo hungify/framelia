@@ -1,7 +1,7 @@
 import type { DashboardContractResult, DashboardEvent } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
-import { ReporterStore } from "../src/reporter-store.ts";
+import { ReporterStore } from "../src/index.ts";
 
 function passedResult(id: string): DashboardContractResult {
   return {

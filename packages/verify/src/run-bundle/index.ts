@@ -61,6 +61,7 @@ export type { ShardedRunFinalization } from "./sharded-run.ts";
 export {
   finalizeRunRecord,
   freezeRunPlan,
+  globalErrorDiagnostics,
   publishRunRecord,
   readRunPlan,
   readRunRecord,

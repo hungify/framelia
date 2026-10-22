@@ -98,6 +98,7 @@ export const contractScopeSchema = z.discriminatedUnion("kind", [
 // that still targets that same element -- "body.loading", "html[dir]", "#app:not(.x)" all still
 // select the document/root/app-shell element itself, just conditionally.
 const BROAD_MASK_SELECTOR =
+  // eslint-disable-next-line regexp/no-contradiction-with-assertion -- `\b(?:app|shell)\b` anywhere inside the attribute value is the intended match
   /^(?:html|body|#root|#app|\[data-(?:testid|framelia)[^\]]*\b(?:app|shell)\b[^\]]*\]|\.[\w-]*\b(?:app|shell)\b[\w-]*)(?:[\s.[:>+~,]|$)/i;
 
 /**

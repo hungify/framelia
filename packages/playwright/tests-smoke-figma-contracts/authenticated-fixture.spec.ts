@@ -99,7 +99,7 @@ let loginRanBeforePrepare = false;
 const authedTest = base.extend({
   page: async ({ page }, use) => {
     await page.setContent(LOGIN_HTML);
-    await page.click("#submit");
+    await page.locator("#submit").click();
     loginRanBeforePrepare = true;
     await use(page);
   },

@@ -28,6 +28,7 @@ const WEIGHTLESS_ENTRIES = new Set(["@framelia/dashboard-server/constants"]);
  */
 function staticImportSpecifiers(content: string): string[] {
   const patterns = [
+    // eslint-disable-next-line regexp/no-contradiction-with-assertion -- `\bfrom` after a lazy run is the intended "next from keyword" match
     /^[ \t]*(?:import|export)\b[^'"]*?\bfrom\s*["']([^"']+)["']/gm,
     /^[ \t]*import\s+["']([^"']+)["']/gm,
     /\brequire\(\s*["']([^"']+)["']\s*\)/g,

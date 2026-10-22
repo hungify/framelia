@@ -1,0 +1,55 @@
+# Triaged advisories for `osv-scanner scan source --lockfile pnpm-lock.yaml` (CI `audit` job).
+# Each entry expires so it is reviewed again; remove it once a fixed version can be resolved.
+
+# Pulled in by @nuxt/ui's editor components; the dashboard build tree-shakes them out (only CSS
+# selectors mention tiptap/prosemirror in packages/dashboard-server/dist/dashboard).
+[[IgnoredVulns]]
+id = "GHSA-cp6q-959q-f8rh"
+ignoreUntil = 2027-01-22
+reason = "@tiptap/core via @nuxt/ui (exact pin 3.29.2 in @tiptap/starter-kit): not in the shipped dashboard JS"
+
+[[IgnoredVulns]]
+id = "GHSA-j95f-988m-3j2f"
+ignoreUntil = 2027-01-22
+reason = "@tiptap/core via @nuxt/ui (exact pin 3.29.2 in @tiptap/starter-kit): not in the shipped dashboard JS"
+
+[[IgnoredVulns]]
+id = "GHSA-c8x8-7fp4-3x9w"
+ignoreUntil = 2027-01-22
+reason = "prosemirror-view via @nuxt/ui -> @tiptap/pm: not in the shipped dashboard JS"
+
+# Dev tooling only, never shipped in a published package.
+[[IgnoredVulns]]
+id = "GHSA-5gmw-xhrv-c9v3"
+ignoreUntil = 2027-01-22
+reason = "tinypool exact-pinned by oxfmt 0.62.0 (formatter, dev only); clears with an oxfmt upgrade"
+
+[[IgnoredVulns]]
+id = "GHSA-85c8-ppgw-ccpr"
+ignoreUntil = 2027-01-22
+reason = "tinypool exact-pinned by oxfmt 0.62.0 (formatter, dev only); clears with an oxfmt upgrade"
+
+[[IgnoredVulns]]
+id = "GHSA-4mjr-xmp4-gh2g"
+ignoreUntil = 2027-01-22
+reason = "qs via @stryker-mutator/core -> typed-rest-client (mutation testing, dev only)"
+
+[[IgnoredVulns]]
+id = "GHSA-q8mj-m7cp-5q26"
+ignoreUntil = 2027-01-22
+reason = "qs via @stryker-mutator/core -> typed-rest-client (mutation testing, dev only)"
+
+[[IgnoredVulns]]
+id = "GHSA-x5fp-wj9c-mxmx"
+ignoreUntil = 2027-01-22
+reason = "qs via @stryker-mutator/core -> typed-rest-client (mutation testing, dev only)"
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2027-01-22
+reason = "braces via micromatch in @changesets/cli (release tooling, dev only); no fixed version yet"
+
+[[IgnoredVulns]]
+id = "GHSA-hp3w-g68c-fv3c"
+ignoreUntil = 2027-01-22
+reason = "sprintf-js via js-yaml 3 in @changesets/cli (release tooling, dev only); no fixed version yet"

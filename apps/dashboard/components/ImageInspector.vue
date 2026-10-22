@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DashboardContractResult } from "@framelia/contracts";
-import { computed, nextTick, onBeforeUnmount, ref, toRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, toRef, useTemplateRef, watch } from "vue";
 
 import { useCanvasView, type CanvasSize } from "../composables/useCanvasView";
 import { useEvidenceSizing, type EvidenceKind } from "../composables/useEvidenceSizing";
@@ -47,8 +47,8 @@ const sizeMismatch = computed(() => {
   );
 });
 
-const viewportEl = ref<HTMLElement | null>(null);
-const splitPaneEl = ref<HTMLElement | null>(null);
+const viewportEl = useTemplateRef<HTMLElement>("viewportEl");
+const splitPaneEl = useTemplateRef<HTMLElement>("splitPaneEl");
 const autoFit = ref(true);
 const fittedScale = ref(1);
 const { view, MIN_ZOOM, MAX_ZOOM, fitToView, centerAt, zoomAt, pan } = useCanvasView();

@@ -39,6 +39,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation": "stryker run ../../stryker.config.mjs",
     "typecheck": "tsc --noEmit",
     "check:zero-deps": "node scripts/check-zero-deps.mjs",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test && pnpm run check:zero-deps"

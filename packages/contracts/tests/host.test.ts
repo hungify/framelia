@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isLoopbackHostname, isWildcardHostname } from "../src/host.ts";
+import { isLoopbackHostname, isWildcardHostname } from "../src/index.ts";
 
 describe("isLoopbackHostname", () => {
   it("accepts the three spellings every caller already knew about", () => {

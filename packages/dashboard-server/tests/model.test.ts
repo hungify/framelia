@@ -1,7 +1,7 @@
 import type { SelectedRun } from "@framelia/verify/run-bundle";
 import { describe, expect, it } from "vitest";
 
-import { overallStatus, projectSelectedRun, summarize } from "../src/model.ts";
+import { overallStatus, projectSelectedRun, summarize } from "../src/index.ts";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 

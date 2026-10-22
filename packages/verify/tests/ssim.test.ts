@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 
 import { buildMaskBitmap } from "../src/compare/mask.ts";
-import { makeSolidPng } from "../src/compare/png.ts";
 import { ssimCompare } from "../src/compare/ssim.ts";
+import { makeSolidPng } from "../src/testing.ts";
 
 describe("ssimCompare", () => {
   it("returns 1 for identical images", () => {

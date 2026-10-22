@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { httpUrlSchema, nonEmptyTrimmed } from "../src/primitives.ts";
+import { httpUrlSchema, nonEmptyTrimmed } from "../src/index.ts";
 
 describe("nonEmptyTrimmed", () => {
   it("accepts a non-empty string", () => {

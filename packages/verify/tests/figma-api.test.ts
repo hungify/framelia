@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NODE_META_CACHE_TTL_MS } from "../src/constants.ts";
-import { clearNodeMetaCache, getNodeMetadata } from "../src/figma-api.ts";
+import { clearNodeMetaCache, getNodeMetadata } from "../src/index.ts";
 
 afterEach(() => {
   clearNodeMetaCache();

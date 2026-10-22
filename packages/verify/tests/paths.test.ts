@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { compositeOnCanvas, makeSolidPng, parseHexRgb } from "../src/compare/png.ts";
 import { resolveArtifactPath } from "../src/index.ts";
-import { AppError } from "../src/types.ts";
+import { AppError } from "../src/index.ts";
 import { captureThrown } from "./support/capture-error.ts";
 
 describe("resolveArtifactPath", () => {

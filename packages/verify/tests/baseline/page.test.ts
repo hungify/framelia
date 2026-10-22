@@ -10,7 +10,7 @@ import {
   promotePageBaseline,
   readPageBaselineMeta,
   resolvePageBaseline,
-} from "../../src/baseline/page.ts";
+} from "../../src/index.ts";
 
 const temporaryDirectories: string[] = [];
 

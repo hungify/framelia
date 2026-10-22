@@ -6,7 +6,7 @@ import * as path from "node:path";
 import type { DashboardEvent, DashboardRun } from "@framelia/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { startDashboardServer, type DashboardSource } from "../src/server.ts";
+import { startDashboardServer, type DashboardSource } from "../src/index.ts";
 
 const temporaryDirectories: string[] = [];
 

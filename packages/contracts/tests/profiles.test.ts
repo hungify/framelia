@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getProfile, resolveDisplayThreshold, resolveStyleGateEligible } from "../src/profiles.ts";
+import { getProfile, resolveDisplayThreshold, resolveStyleGateEligible } from "../src/index.ts";
 
 describe("getProfile", () => {
   it("keeps component/strict's own numbers unchanged when explicitly requested by name", () => {

@@ -8,7 +8,7 @@ import {
   topIssueSchema,
   visualDiagnosticSchema,
   visualScoreArtifactSchema,
-} from "../src/score.ts";
+} from "../src/index.ts";
 
 const validHash = `sha256:${"a".repeat(64)}`;
 

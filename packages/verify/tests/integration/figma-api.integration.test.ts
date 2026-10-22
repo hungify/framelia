@@ -6,7 +6,7 @@ import {
   getNodeMetadata,
   type NodeMetadata,
   resolveToken,
-} from "../../src/figma-api.ts";
+} from "../../src/index.ts";
 
 // Real Figma file: framelia design system, "login form" node.
 // https://www.figma.com/design/q2MZbYDBibNKYDm7ESfvKF/framelia?node-id=6006-1028

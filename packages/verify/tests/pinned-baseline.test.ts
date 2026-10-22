@@ -7,11 +7,11 @@ import { authoredContractSchema, baselineSnapshotSchema } from "@framelia/contra
 import { PNG } from "pngjs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { canonicalJsonDigest } from "../src/canonical-json.ts";
 import { sha256Hex } from "../src/hash.ts";
-import { readPinnedBaseline } from "../src/pinned-baseline.ts";
+import { canonicalJsonDigest } from "../src/index.ts";
+import { readPinnedBaseline } from "../src/index.ts";
+import { AppError } from "../src/index.ts";
 import { makeSolidPng } from "../src/testing.ts";
-import { AppError } from "../src/types.ts";
 
 // `import * as fs from "node:fs"` yields a non-configurable ESM namespace object --
 // `vi.spyOn` can never redefine a property on it. `vi.mock` with `importOriginal`

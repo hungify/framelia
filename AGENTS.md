@@ -2,13 +2,13 @@
 
 Framelia: Playwright matchers (`toMatchFigma`, `toMatchPage`, `toMatchUrl`) plus a CLI and Vue dashboard for Figma-to-web and web-to-web visual verification. pnpm monorepo, TypeScript, Node 22.13+ (`.tool-versions`). Architecture and package graph: `README.md`.
 
-- `packages/contracts`, `verify`, `dashboard-server`, `playwright`, `cli` (published as `framelia`), and `apps/dashboard` (private, bundled into `dashboard-server`). The dependency direction and public surfaces are in `.agents/rules/package-boundaries.md`.
+- `packages/contracts`, `verify`, `dashboard-server`, `playwright`, `cli` (published as `framelia`), and `apps/dashboard` (private, bundled into `dashboard-server`). Packages are deep modules: read [packages/README.md](./packages/README.md) before adding a package or importing across packages (`pnpm lint:boundaries` enforces it). The dependency direction is in `.agents/rules/package-boundaries.md`.
 
 ## Commands
 
 - `pnpm install` (also installs git hooks and runs `pnpm agents:link`), then `pnpm exec playwright install chromium` once.
 - `pnpm --filter <pkg> test [tests/<file>.test.ts] [-t '<name>']`: one package, file or test. No `--` before the file: it makes Vitest run everything.
-- `pnpm validate`: zero-deps check, typecheck, all tests, lint (Oxlint + ESLint), format check, Knip. Run before finishing.
+- `pnpm validate`: zero-deps check, typecheck, `lint:boundaries` (dependency-cruiser), all tests, lint (Oxlint + ESLint), format check, Knip. Run before finishing.
 - `pnpm lint:fix`, `pnpm fmt`: Oxlint + ESLint fixes, Oxfmt. `pnpm knip`: unused files, dependencies and exports (`knip.config.ts`).
 - `pnpm size`: build the dashboard and check its bundle budgets (`.size-limit.json`). Raise a budget only with a reason in the commit message.
 - `pnpm build`, `pnpm dev:dashboard` (mock data), `pnpm framelia <args>` (CLI from source).

@@ -21,7 +21,7 @@ The dependency graph points one way: `contracts -> verify -> dashboard-server ->
 | `framelia` (cli)             | `contracts`, `verify`, `dashboard-server`                                                            | `packages/cli/tests/architecture.test.ts`: heavy modules (`playwright`, `dashboard-server`, `@clack/prompts`) load lazily through `import()` |
 | `@framelia/dashboard`        | `contracts` only (schemas and types)                                                                 |                                                                                                                                              |
 
-When a boundary test fails, move the code; extend the test's allow-list only when the new edge is a deliberate architecture decision (record it as an ADR in `docs/adr/`).
+How packages import each other (only through `exports` entry points, no cycles) is enforced by `pnpm lint:boundaries`; see `packages/README.md`. When a boundary check fails, move the code; extend the test's allow-list only when the new edge is a deliberate architecture decision (record it as an ADR in `docs/adr/`).
 
 ## Public surface
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canonicalJson, canonicalJsonDigest } from "../src/canonical-json.ts";
+import { canonicalJson, canonicalJsonDigest } from "../src/index.ts";
 
 describe("canonical JSON identity", () => {
   it("sorts object keys recursively while preserving array order", () => {

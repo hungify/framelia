@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Dashboard JS",
+    "path": "packages/dashboard-server/dist/dashboard/assets/*.js",
+    "limit": "195 kB"
+  },
+  {
+    "name": "Dashboard CSS",
+    "path": "packages/dashboard-server/dist/dashboard/assets/*.css",
+    "limit": "28 kB"
+  }
+]

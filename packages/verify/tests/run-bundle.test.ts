@@ -21,7 +21,8 @@ import {
 import { PNG } from "pngjs";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { canonicalJsonDigest } from "../src/canonical-json.ts";
+import { canonicalJsonDigest } from "../src/index.ts";
+import { AppError } from "../src/index.ts";
 import { resolveProjectPolicy } from "../src/project-policy.ts";
 import {
   computeAttemptId,
@@ -37,7 +38,6 @@ import {
   startRunRecord,
 } from "../src/run-bundle/index.ts";
 import { makeSolidPng } from "../src/testing.ts";
-import { AppError } from "../src/types.ts";
 
 const A_DIGEST = `sha256:${"a".repeat(64)}`;
 const EXPECTED_DIGEST =

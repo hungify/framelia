@@ -31,6 +31,29 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @framelia/verify exec playwright install --with-deps chromium
       - run: pnpm validate
+      - name: Check Stryker still runs tests per mutant
+        run: pnpm test:mutation:smoke
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # Gitleaks scans every commit of the branch, not only the final tree.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.18.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Audit dependencies for high and critical advisories (triage in pnpm-workspace.yaml)
+        run: pnpm audit --audit-level high
+      - name: Scan git history for secrets (allowlist in .gitleaks.toml)
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.30.1
+          git . --redact --no-banner
 
   pack:
     runs-on: ubuntu-latest
@@ -48,6 +71,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build release assets from the clean checkout
         run: pnpm run build
+      - name: Check dashboard bundle budgets (.size-limit.json)
+        run: pnpm exec size-limit
       - name: Pack release artifacts
         shell: bash
         run: |
@@ -95,7 +120,7 @@ jobs:
           --install-browser
 
   publish:
-    needs: [validate, consumer]
+    needs: [validate, audit, consumer]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

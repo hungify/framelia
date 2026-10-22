@@ -17,13 +17,13 @@ describe("targetUrlMessage", () => {
   });
 
   it("allows plaintext http anywhere when no session is carried into the page", () => {
-    expect(targetUrlMessage("http://staging.example.com/", "--target-url", WITHOUT_STATE)).toBe(
-      undefined,
-    );
+    expect(
+      targetUrlMessage("http://staging.example.com/", "--target-url", WITHOUT_STATE),
+    ).toBeUndefined();
   });
 
   it("allows https anywhere when a session is carried", () => {
-    expect(targetUrlMessage("https://example.com/", "--target-url", WITH_STATE)).toBe(undefined);
+    expect(targetUrlMessage("https://example.com/", "--target-url", WITH_STATE)).toBeUndefined();
   });
 
   it("blocks plaintext http to a routable host when a session is carried", () => {
@@ -45,7 +45,7 @@ describe("targetUrlMessage", () => {
     "http://[0:0:0:0:0:0:0:1]:3000/login",
     "http://[0000:0000:0000:0000:0000:0000:0000:0001]:3000/login",
   ])("allows plaintext http to loopback %s when a session is carried", (url) => {
-    expect(targetUrlMessage(url, "--target-url", WITH_STATE)).toBe(undefined);
+    expect(targetUrlMessage(url, "--target-url", WITH_STATE)).toBeUndefined();
   });
 
   it("does not treat a routable host that merely starts with 'localhost' as loopback", () => {
@@ -74,7 +74,7 @@ describe("viewportPairMessage", () => {
   });
 
   it("accepts both set or both omitted", () => {
-    expect(viewportPairMessage(1280, 720)).toBe(undefined);
-    expect(viewportPairMessage(undefined, undefined)).toBe(undefined);
+    expect(viewportPairMessage(1280, 720)).toBeUndefined();
+    expect(viewportPairMessage(undefined, undefined)).toBeUndefined();
   });
 });

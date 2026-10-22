@@ -54,6 +54,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation": "stryker run ../../stryker.config.mjs",
     "test:smoke": "pnpm --filter @framelia/playwright... build && playwright test --config=playwright.config.ts",
     "test:smoke:define-figma-tests": "pnpm --filter @framelia/playwright... build && playwright test --config=playwright.define-figma-tests.config.ts",
     "test:smoke:run-bundle": "pnpm --filter @framelia/playwright... build && node scripts/verify-run-bundle-smoke.mjs",

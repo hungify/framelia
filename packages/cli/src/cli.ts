@@ -1,88 +1,26 @@
-import * as fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { loadProjectEnv } from "@framelia/verify/env";
 import { discoverProjectConfig } from "@framelia/verify/project-policy";
-import {
-  buildApplication,
-  buildRouteMap,
-  help,
-  run as runApplication,
-  version,
-} from "@stricli/core";
+import { run as runApplication } from "@stricli/core";
 
-import { applicationText } from "./application-text.ts";
-import { authCommand } from "./commands/auth.ts";
-import { baselineRoutes } from "./commands/baseline.ts";
-import { captureCommand } from "./commands/capture.ts";
-import { checkCommand } from "./commands/check.ts";
-import { compareCommand } from "./commands/compare.ts";
-import { contractRoutes } from "./commands/contract.ts";
-import { dashboardCommand, openCommand, reportCommand } from "./commands/dashboard.ts";
-import { doneGateCommand } from "./commands/done-gate.ts";
-import { initCommand } from "./commands/init.ts";
-import { schemaCommand } from "./commands/schema.ts";
-import { statusCommand } from "./commands/status.ts";
+import { app, PACKAGE_VERSION } from "./app.ts";
 import { buildContext } from "./context.ts";
-import { determineExitCode, normalizeStricliExitCode } from "./exit.ts";
+import type { CliAdapters, EnvironmentOverrides } from "./environment.ts";
+import { normalizeStricliExitCode } from "./exit.ts";
 import type { CliRuntime } from "./runtime-types.ts";
 
-const PACKAGE_VERSION = (
-  JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-    version: string;
-  }
-).version;
+/**
+ * Routes that must never see the project's .env: done-gate's trust inputs (signing key path,
+ * job identity, audience) have to come from the protected job runtime, not the project, and
+ * completion edits the user's shell profile, which no project setting may steer.
+ */
+const ROUTES_WITHOUT_PROJECT_ENV = new Set(["done-gate", "completion"]);
 
-const rootRoutes = buildRouteMap({
-  routes: {
-    check: checkCommand,
-    dashboard: dashboardCommand,
-    open: openCommand,
-    report: reportCommand,
-    "done-gate": doneGateCommand,
-    status: statusCommand,
-    schema: schemaCommand,
-    init: initCommand,
-    auth: authCommand,
-    contract: contractRoutes,
-    baseline: baselineRoutes,
-    capture: captureCommand,
-    compare: compareCommand,
-  },
-  defaultCommand: "dashboard",
-  aliases: { "fetch-gold": "capture", diff: "compare" },
-  docs: {
-    brief: "CLI-first visual verification for Figma-to-web and web-to-web workflows.",
-    fullDescription:
-      "CLI-first visual verification for Figma-to-web and web-to-web workflows.\n\nExample:\n  framelia contract create",
-  },
-});
+const HELP_FLAGS = new Set(["--help", "-h", "--help-all", "--version", "-V"]);
 
-const app = buildApplication(
-  rootRoutes,
-  {
-    name: "framelia",
-    scanner: { caseStyle: "allow-kebab-for-camel" },
-    localization: { text: applicationText },
-    determineExitCode,
-  },
-  {
-    help: help({
-      brief: "Print help for a command.",
-      defaultForRouteMap: true,
-      formatting: {
-        useAliasInUsageLine: false,
-        onlyRequiredInUsageLine: false,
-        caseStyle: "convert-camel-to-kebab",
-      },
-    }),
-    version: version({
-      brief: "Print the current version.",
-      alias: "V",
-      info: { currentVersion: PACKAGE_VERSION },
-    }),
-  },
-);
+/** Bare `framelia` lists durable runs: the one useful, side-effect-free starting point. */
+const BARE_INVOCATION = ["runs", "list"];
 
 function explicitProjectRoot(argv: readonly string[]): string | undefined {
   for (let index = 0; index < argv.length; index += 1) {
@@ -94,19 +32,28 @@ function explicitProjectRoot(argv: readonly string[]): string | undefined {
 }
 
 export async function run(
-  argv: string[] = process.argv.slice(2),
-  options: { process?: CliRuntime; loadProjectEnv?: boolean } = {},
+  rawArgv: string[] = process.argv.slice(2),
+  options: {
+    process?: CliRuntime;
+    loadProjectEnv?: boolean;
+    adapters?: Partial<CliAdapters>;
+    overrides?: EnvironmentOverrides;
+  } = {},
 ): Promise<void> {
-  const context = buildContext({ process: options.process, version: PACKAGE_VERSION });
+  const argv = rawArgv.length === 0 ? BARE_INVOCATION : rawArgv;
+  const context = buildContext({
+    process: options.process,
+    version: PACKAGE_VERSION,
+    ...(options.adapters ? { adapters: options.adapters } : {}),
+    ...(options.overrides ? { overrides: options.overrides } : {}),
+  });
   // Resolve the selected application root before reading any environment file. Loading
   // cwd first would let an unrelated parent/sibling .env permanently win over an
   // explicit --project-root because process environment has highest precedence.
   if (
     options.loadProjectEnv !== false &&
-    argv[0] !== "done-gate" &&
-    !argv.includes("--help") &&
-    !argv.includes("--version") &&
-    !argv.includes("-V")
+    !ROUTES_WITHOUT_PROJECT_ENV.has(argv[0] ?? "") &&
+    !argv.some((argument) => HELP_FLAGS.has(argument))
   ) {
     let root: string | undefined;
     try {

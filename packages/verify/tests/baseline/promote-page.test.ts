@@ -90,6 +90,28 @@ describe("captureAndPromotePageBaseline", () => {
     });
   }, 30_000);
 
+  it("refuses to promote a page whose back-to-back captures differ", async () => {
+    const outDir = tempDir();
+    // A JS-driven counter repaints faster than two screenshots can be taken, so the
+    // stability samples cannot hash identically (CSS animation freezing does not stop it).
+    const unstable = `${PAGE_HTML}<p id="tick">0</p><script>
+      let n = 0;
+      const tick = () => { document.getElementById("tick").textContent = String(++n); requestAnimationFrame(tick); };
+      tick();
+    </script>`;
+    await withTestServer(unstable, async (url) => {
+      const result = await captureAndPromotePageBaseline({
+        url,
+        outDir,
+        promotedBy: "alice@example.com",
+        headless: true,
+      });
+      expect(result).toMatchObject({ ok: false, error: "CAPTURE_UNSTABLE" });
+    });
+    expect(readPageBaselineMeta(outDir)).toBeNull();
+    expect(fs.existsSync(pageBaselineImagePath(outDir, 1))).toBe(false);
+  }, 30_000);
+
   it("reports a structured failure when the page never becomes ready to capture", async () => {
     const outDir = tempDir();
     const result = await captureAndPromotePageBaseline({

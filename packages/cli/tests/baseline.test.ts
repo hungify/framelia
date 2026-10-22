@@ -1,12 +1,13 @@
 import type { captureAndPromotePageBaseline } from "@framelia/verify/cli";
 import { describe, expect, it, vi } from "vitest";
 
-import { UsageError } from "../src/exit.ts";
+import { EXIT_USAGE_ERROR } from "../src/exit.ts";
 import {
   baselinePromoteCommand,
   type BaselinePromoteOptions,
 } from "../src/internal/baseline-promote.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 function fakeRuntime(overrides: Partial<CliRuntime> = {}): CliRuntime {
   return {
@@ -48,87 +49,120 @@ const okCapture = vi.fn<typeof captureAndPromotePageBaseline>().mockResolvedValu
   },
 });
 
-async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-  } catch (error) {
-    return error;
-  }
-  throw new Error("expected promise to reject");
+/** The one diagnostic of a structured exit-2 outcome; validation never throws to stderr. */
+async function rejectionOf(
+  promise: Promise<{ exitCode?: number; body: unknown }>,
+): Promise<{ code: string; message: string }> {
+  const result = await promise;
+  expect(result.exitCode).toBe(EXIT_USAGE_ERROR);
+  const body = result.body as { diagnostics: { code: string; message: string }[] };
+  return body.diagnostics[0]!;
 }
 
 describe("baselinePromoteCommand: validation", () => {
   it("rejects a malformed --key with the exact historical message", async () => {
     const error = await rejectionOf(
-      baselinePromoteCommand(baseOptions({ key: "Home Desktop" }), fakeRuntime(), {
-        captureAndPromote: okCapture,
-      }),
+      baselinePromoteCommand(
+        baseOptions({ key: "Home Desktop" }),
+        testEnvironment(fakeRuntime(), {
+          browser: {
+            captureAndPromote: okCapture,
+          },
+        }),
+      ),
     );
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as Error).message).toBe(
+    expect(error.code).toBe("INVALID_INPUT");
+    expect(error.message).toBe(
       "--key must use lowercase letters, numbers, dots, or hyphens, e.g. home.desktop.",
     );
   });
 
   it("rejects a non-http(s) --target-url with the exact historical message", async () => {
     const error = await rejectionOf(
-      baselinePromoteCommand(baseOptions({ targetUrl: "ftp://example.com" }), fakeRuntime(), {
-        captureAndPromote: okCapture,
-      }),
+      baselinePromoteCommand(
+        baseOptions({ targetUrl: "ftp://example.com" }),
+        testEnvironment(fakeRuntime(), {
+          browser: {
+            captureAndPromote: okCapture,
+          },
+        }),
+      ),
     );
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as Error).message).toBe("--target-url must use http:// or https://.");
+    expect(error.code).toBe("INVALID_INPUT");
+    expect(error.message).toBe("--target-url must use http:// or https://.");
   });
 
   it("rejects a lone --viewport-width with the exact historical pairing message", async () => {
     const error = await rejectionOf(
-      baselinePromoteCommand(baseOptions({ viewportWidth: 1280 }), fakeRuntime(), {
-        captureAndPromote: okCapture,
-      }),
+      baselinePromoteCommand(
+        baseOptions({ viewportWidth: 1280 }),
+        testEnvironment(fakeRuntime(), {
+          browser: {
+            captureAndPromote: okCapture,
+          },
+        }),
+      ),
     );
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as Error).message).toBe(
-      "--viewport-width and --viewport-height must be supplied together.",
-    );
+    expect(error.code).toBe("INVALID_INPUT");
+    expect(error.message).toBe("--viewport-width and --viewport-height must be supplied together.");
   });
 
   it("rejects a lone --viewport-height the same way", async () => {
     await expect(
-      baselinePromoteCommand(baseOptions({ viewportHeight: 720 }), fakeRuntime(), {
-        captureAndPromote: okCapture,
-      }),
-    ).rejects.toBeInstanceOf(UsageError);
+      baselinePromoteCommand(
+        baseOptions({ viewportHeight: 720 }),
+        testEnvironment(fakeRuntime(), {
+          browser: {
+            captureAndPromote: okCapture,
+          },
+        }),
+      ),
+    ).resolves.toMatchObject({ exitCode: EXIT_USAGE_ERROR });
   });
 
   it("rejects a non-positive viewport dimension", async () => {
     await expect(
       baselinePromoteCommand(
         baseOptions({ viewportWidth: -1, viewportHeight: 720 }),
-        fakeRuntime(),
-        { captureAndPromote: okCapture },
+        testEnvironment(fakeRuntime(), { browser: { captureAndPromote: okCapture } }),
       ),
-    ).rejects.toBeInstanceOf(UsageError);
+    ).resolves.toMatchObject({ exitCode: EXIT_USAGE_ERROR });
   });
 
   it("collects multiple simultaneous violations into one message", async () => {
     await expect(
       baselinePromoteCommand(
         baseOptions({ key: "Bad Key", targetUrl: "not-a-url" }),
-        fakeRuntime(),
-        { captureAndPromote: okCapture },
+        testEnvironment(fakeRuntime(), { browser: { captureAndPromote: okCapture } }),
       ),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining("; "),
+    ).resolves.toMatchObject({
+      body: { diagnostics: [{ message: expect.stringContaining("; ") }] },
     });
   });
 
   it("accepts a valid paired viewport and does not throw", async () => {
     const result = await baselinePromoteCommand(
       baseOptions({ viewportWidth: 1280, viewportHeight: 720 }),
-      fakeRuntime(),
-      { captureAndPromote: okCapture },
+      testEnvironment(fakeRuntime(), { browser: { captureAndPromote: okCapture } }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("exits 2, not the visual-mismatch 1, when capture fails", async () => {
+    const failedCapture = vi.fn<typeof captureAndPromotePageBaseline>().mockResolvedValue({
+      ok: false,
+      error: "CAPTURE_NAVIGATION_FAILED",
+      message: "navigation failed",
+    });
+    const result = await baselinePromoteCommand(
+      baseOptions(),
+      testEnvironment(fakeRuntime(), {
+        browser: {
+          captureAndPromote: failedCapture,
+        },
+      }),
+    );
+    expect(result).toMatchObject({ ok: false, exitCode: EXIT_USAGE_ERROR });
   });
 });
 
@@ -142,8 +176,9 @@ describe("baselinePromoteCommand: defaultPromotedBy precedence", () => {
     });
     await baselinePromoteCommand(
       baseOptions({ promotedBy: "explicit" }),
-      fakeRuntime({ env: { FRAMELIA_PROMOTED_BY: "env-var", USER: "user" } }),
-      { captureAndPromote: capture },
+      testEnvironment(fakeRuntime({ env: { FRAMELIA_PROMOTED_BY: "env-var", USER: "user" } }), {
+        browser: { captureAndPromote: capture },
+      }),
     );
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ promotedBy: "explicit" }));
   });
@@ -157,15 +192,17 @@ describe("baselinePromoteCommand: defaultPromotedBy precedence", () => {
     });
     await baselinePromoteCommand(
       baseOptions(),
-      fakeRuntime({
-        env: {
-          FRAMELIA_PROMOTED_BY: "framelia-var",
-          GIT_AUTHOR_EMAIL: "git@example.com",
-          USER: "user",
-          USERNAME: "username",
-        },
-      }),
-      { captureAndPromote: capture },
+      testEnvironment(
+        fakeRuntime({
+          env: {
+            FRAMELIA_PROMOTED_BY: "framelia-var",
+            GIT_AUTHOR_EMAIL: "git@example.com",
+            USER: "user",
+            USERNAME: "username",
+          },
+        }),
+        { browser: { captureAndPromote: capture } },
+      ),
     );
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ promotedBy: "framelia-var" }));
   });
@@ -179,10 +216,12 @@ describe("baselinePromoteCommand: defaultPromotedBy precedence", () => {
     });
     await baselinePromoteCommand(
       baseOptions(),
-      fakeRuntime({
-        env: { GIT_AUTHOR_EMAIL: "git@example.com", USER: "user", USERNAME: "username" },
-      }),
-      { captureAndPromote: capture },
+      testEnvironment(
+        fakeRuntime({
+          env: { GIT_AUTHOR_EMAIL: "git@example.com", USER: "user", USERNAME: "username" },
+        }),
+        { browser: { captureAndPromote: capture } },
+      ),
     );
     expect(capture).toHaveBeenCalledWith(
       expect.objectContaining({ promotedBy: "git@example.com" }),
@@ -198,10 +237,11 @@ describe("baselinePromoteCommand: defaultPromotedBy precedence", () => {
     });
     await baselinePromoteCommand(
       baseOptions(),
-      fakeRuntime({ env: { USER: "user", USERNAME: "username" } }),
-      {
-        captureAndPromote: capture,
-      },
+      testEnvironment(fakeRuntime({ env: { USER: "user", USERNAME: "username" } }), {
+        browser: {
+          captureAndPromote: capture,
+        },
+      }),
     );
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ promotedBy: "user" }));
   });
@@ -213,9 +253,14 @@ describe("baselinePromoteCommand: defaultPromotedBy precedence", () => {
       metaPath: "/x.json",
       meta: { current: { version: 1, promotedAt: "t", promotedBy: "x" }, history: [] },
     });
-    await baselinePromoteCommand(baseOptions(), fakeRuntime({ env: { USERNAME: "username" } }), {
-      captureAndPromote: capture,
-    });
+    await baselinePromoteCommand(
+      baseOptions(),
+      testEnvironment(fakeRuntime({ env: { USERNAME: "username" } }), {
+        browser: {
+          captureAndPromote: capture,
+        },
+      }),
+    );
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ promotedBy: "username" }));
   });
 
@@ -226,9 +271,14 @@ describe("baselinePromoteCommand: defaultPromotedBy precedence", () => {
       metaPath: "/x.json",
       meta: { current: { version: 1, promotedAt: "t", promotedBy: "x" }, history: [] },
     });
-    await baselinePromoteCommand(baseOptions(), fakeRuntime({ env: {} }), {
-      captureAndPromote: capture,
-    });
+    await baselinePromoteCommand(
+      baseOptions(),
+      testEnvironment(fakeRuntime({ env: {} }), {
+        browser: {
+          captureAndPromote: capture,
+        },
+      }),
+    );
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ promotedBy: "unknown" }));
   });
 });
@@ -247,8 +297,7 @@ describe("baselinePromoteCommand: result shape", () => {
     });
     const result = await baselinePromoteCommand(
       baseOptions({ key: "home.desktop", promotedBy: "alice" }),
-      fakeRuntime(),
-      { captureAndPromote: capture },
+      testEnvironment(fakeRuntime(), { browser: { captureAndPromote: capture } }),
     );
     expect(result.ok).toBe(true);
     expect(result.body).toMatchObject({
@@ -267,11 +316,28 @@ describe("baselinePromoteCommand: result shape", () => {
       error: "capture-failed",
       message: "Could not load the target URL.",
     });
-    const result = await baselinePromoteCommand(baseOptions(), fakeRuntime(), {
-      captureAndPromote: capture,
-    });
+    const result = await baselinePromoteCommand(
+      baseOptions(),
+      testEnvironment(fakeRuntime(), {
+        browser: {
+          captureAndPromote: capture,
+        },
+      }),
+    );
     expect(result.ok).toBe(false);
     expect(result.body).toEqual({
+      formatVersion: 1,
+      kind: "framelia.baseline-promote-outcome",
+      command: "baseline promote",
+      executionState: "error",
+      exitCode: 2,
+      diagnostics: [
+        {
+          code: "capture-failed",
+          stage: "baseline-promote",
+          message: "Could not load the target URL.",
+        },
+      ],
       key: "home.desktop",
       error: "capture-failed",
       message: "Could not load the target URL.",
@@ -285,9 +351,14 @@ describe("baselinePromoteCommand: result shape", () => {
       metaPath: "/x.json",
       meta: { current: { version: 1, promotedAt: "t", promotedBy: "x" }, history: [] },
     });
-    await baselinePromoteCommand(baseOptions(), fakeRuntime({ cwd: () => "/injected/root" }), {
-      captureAndPromote: capture,
-    });
+    await baselinePromoteCommand(
+      baseOptions(),
+      testEnvironment(fakeRuntime({ cwd: () => "/injected/root" }), {
+        browser: {
+          captureAndPromote: capture,
+        },
+      }),
+    );
     expect(capture).toHaveBeenCalledWith(
       expect.objectContaining({ outDir: expect.stringMatching(/^\/injected\/root/) }),
     );

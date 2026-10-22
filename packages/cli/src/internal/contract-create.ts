@@ -4,46 +4,28 @@ import {
   CONTRACT_FORMAT_VERSION,
   authoredContractSchema,
   type Diagnostic,
+  type NextOperation,
 } from "@framelia/contracts/workflow";
 import {
-  AppError,
   assertProjectRelativePath,
-  assertRawFileState,
-  canonicalJsonDigest,
-  publishBaselineSnapshot,
+  portableErrorMessage,
   readRawFileState,
-  stageFigmaBaseline,
-  withAuthoringLock,
-  writeAuthoredContract,
-  type CanonicalJsonValue,
-  type FetchBaselineFn,
 } from "@framelia/verify";
-import {
-  inspectAuthoredContracts,
-  type DiscoveredAuthoredContract,
-  type InvalidAuthoredContract,
-} from "@framelia/verify/project-policy";
+import type { DiscoveredAuthoredContract } from "@framelia/verify/project-policy";
 
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliRuntime } from "../runtime-types.ts";
-import {
-  collectContractAnswers,
-  type ContractCreateOptions,
-  type ContractInterviewDependencies,
-} from "./contract-interview.ts";
-import { contractListCommand } from "./contract-list.ts";
-import { optionalFigmaToken } from "./figma-token.ts";
-import type { PlaywrightTransportDependencies } from "./playwright-collection.ts";
+import { registrationRecipe } from "./binding-reconciliation.ts";
+import { collectContractAnswers, type ContractCreateOptions } from "./contract-interview.ts";
+import { listContractBindings } from "./contract-list.ts";
+import { openContractPinning } from "./contract-pinning.ts";
+import { explainFigmaFailure, optionalFigmaToken } from "./figma-token.ts";
+import { failureDiagnostic, failureOutcome, frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
-import type { PromptAdapter } from "./prompts.ts";
 
 export type { ContractCreateOptions } from "./contract-interview.ts";
 
 const AUTHORING_OUTCOME_FORMAT_VERSION = 1 as const;
-
-export interface ContractCreateDependencies
-  extends Partial<ContractInterviewDependencies>, PlaywrightTransportDependencies {
-  fetchBaseline?: FetchBaselineFn;
-}
 
 export interface ContractCreateOutcome {
   readonly formatVersion: typeof AUTHORING_OUTCOME_FORMAT_VERSION;
@@ -66,7 +48,7 @@ export interface ContractCreateOutcome {
     status: "unbound" | "collection-blocked";
     recipe: string;
   };
-  readonly next?: { command: string; argv: string[] };
+  readonly next?: NextOperation;
 }
 
 export interface ContractCreateResult {
@@ -79,36 +61,20 @@ function portablePath(root: string, filePath: string): string {
   return path.relative(root, filePath).split(path.sep).join("/");
 }
 
-function diagnostic(error: unknown): Diagnostic {
-  const code = error instanceof AppError ? error.code : "CONTRACT_AUTHORING_FAILED";
-  return {
-    code,
+function failed(
+  error: unknown,
+  runtime: CliRuntime,
+  projectRoot: string | undefined,
+): ContractCreateResult {
+  const failure = failureOutcome({
+    kind: "framelia.contract-create-outcome",
+    command: "contract create",
+    error: explainFigmaFailure(error, runtime),
+    fallbackCode: "CONTRACT_AUTHORING_FAILED",
     stage: "authoring",
-    message: error instanceof Error ? error.message : String(error),
-  };
-}
-
-function failed(error: unknown): ContractCreateResult {
-  return {
-    ok: false,
-    exitCode: 2,
-    body: {
-      formatVersion: AUTHORING_OUTCOME_FORMAT_VERSION,
-      kind: "framelia.contract-create-outcome",
-      command: "contract create",
-      executionState: "error",
-      exitCode: 2,
-      authored: false,
-      runnable: false,
-      diagnostics: [diagnostic(error)],
-    },
-  };
-}
-
-function assertInspectionValid(invalid: readonly InvalidAuthoredContract[]): void {
-  if (invalid.length === 0) return;
-  const details = invalid.map((entry) => `${entry.code}: ${entry.message}`).join("; ");
-  throw new Error(`Contract discovery must be repaired before authoring: ${details}`);
+    projectRoot,
+  });
+  return { ...failure, body: { ...failure.body, authored: false, runnable: false } };
 }
 
 function selectTarget(
@@ -132,53 +98,26 @@ function selectTarget(
   return requestedAbsolute;
 }
 
-function registrationRecipe(contractPath: string): string {
-  return [
-    'import path from "node:path";',
-    'import { defineFigmaTests } from "@framelia/playwright";',
-    'import { test } from "@playwright/test";',
-    `defineFigmaTests(test, { contracts: path.join(process.cwd(), ${JSON.stringify(contractPath)}),`,
-    "  async prepare({ page }, { target }) {",
-    "    await page.goto(target.path);",
-    "    // Await this application's real scenario readiness before returning.",
-    "  },",
-    "});",
-  ].join("\n");
-}
-
 /** Resolves every input and acquires a complete snapshot before the first project write. */
 export async function contractCreateCommand(
   options: ContractCreateOptions,
-  prompts: PromptAdapter,
-  runtime: CliRuntime,
-  dependencies: ContractCreateDependencies = {},
+  env: CommandEnvironment,
 ): Promise<ContractCreateResult> {
+  const runtime = env.process;
+  const prompts = await env.adapters.prompts(runtime);
   prompts.intro("Create Framelia visual contract");
   try {
     const project = openProject(options.projectRoot, runtime);
     const policy = await project.loadConfig();
-    const inspection = await inspectAuthoredContracts(policy);
-    const configBefore = policy.configPath ? readRawFileState(policy.configPath) : undefined;
-    assertInspectionValid(inspection.invalid);
+    const pinning = await openContractPinning(policy);
 
-    const interviewDependencies =
-      dependencies.resolveNodeSpec && dependencies.deriveExpectStyle
-        ? {
-            resolveNodeSpec: dependencies.resolveNodeSpec,
-            deriveExpectStyle: dependencies.deriveExpectStyle,
-          }
-        : undefined;
-    const interview = await collectContractAnswers(
-      options,
-      prompts,
-      runtime,
-      interviewDependencies,
-    );
+    const figma = await env.adapters.figma();
+    const interview = await collectContractAnswers(options, prompts, runtime, figma);
     if (interview.kind === "cancelled") {
       throw new Error("Contract authoring was cancelled.");
     }
 
-    const existing = inspection.contracts.find(
+    const existing = pinning.contracts.find(
       (entry) => entry.contract.id === interview.answers.contractId,
     );
     if (existing && !options.force) {
@@ -187,8 +126,7 @@ export async function contractCreateCommand(
       );
     }
     const outputPath = selectTarget(project.root, options, existing, interview.answers.contractId);
-    const before = readRawFileState(outputPath);
-    if (before.exists && !existing) {
+    if (readRawFileState(outputPath).exists && !existing) {
       throw new Error(
         `${portablePath(project.root, outputPath)} already exists but does not own contract ${interview.answers.contractId}; it is never overwritten, even with --force.`,
       );
@@ -207,51 +145,38 @@ export async function contractCreateCommand(
       baseline: { snapshotDigest: `sha256:${"0".repeat(64)}` },
       required: existing?.contract.required ?? true,
     });
-    const staged = await stageFigmaBaseline({
+    const {
+      contract,
+      digest: contractDigest,
+      snapshotDigest,
+    } = await pinning.pin({
+      contractPath: outputPath,
+      existing,
+      draft: provisional,
       source: interview.answers.baseline,
-      viewport: provisional.viewport,
-      scope: provisional.scope,
       token: optionalFigmaToken(runtime),
-      ...(dependencies.fetchBaseline ? { fetchBaseline: dependencies.fetchBaseline } : {}),
-    });
-    const contract = authoredContractSchema.parse({
-      ...provisional,
-      baseline: { snapshotDigest: staged.snapshotDigest },
-    });
-    const contractDigest = canonicalJsonDigest(contract as CanonicalJsonValue);
-
-    await withAuthoringLock(project.root, async () => {
-      assertRawFileState(outputPath, before);
-      if (policy.configPath && configBefore) {
-        assertRawFileState(policy.configPath, configBefore);
-      }
-      const latest = await inspectAuthoredContracts(policy);
-      assertInspectionValid(latest.invalid);
-      const latestOwner = latest.contracts.find((entry) => entry.contract.id === contract.id);
-      if (existing) {
-        if (
-          latestOwner?.file !== existing.file ||
-          latestOwner.digest !== existing.digest ||
-          portablePath(project.root, outputPath) !== existing.file
-        ) {
-          throw new AppError(
-            "AUTHORING_CONFLICT",
-            `Contract ${contract.id} changed while baseline acquisition was in progress.`,
-          );
-        }
-      } else if (latestOwner) {
-        throw new AppError(
-          "AUTHORING_CONFLICT",
-          `Contract ${contract.id} was created concurrently at ${latestOwner.file}.`,
-        );
-      }
-      await publishBaselineSnapshot(project.root, contract, staged);
-      writeAuthoredContract(outputPath, contract);
+      fetchBaseline: figma.fetchBaseline,
     });
 
     const relativePath = portablePath(project.root, outputPath);
-    const listed = await contractListCommand({ projectRoot: project.root }, runtime, dependencies);
-    const bindings = listed.body.contracts.filter((entry) => entry.contractId === contract.id);
+    // The contract is already authored; a binding-inspection failure only blocks `runnable`.
+    const bindings = await listContractBindings(policy, env).then(
+      (listed) => listed.entries.filter((entry) => entry.contractId === contract.id),
+      (error: unknown) => [
+        {
+          contractPath: relativePath,
+          status: "invalid" as const,
+          diagnostics: [
+            failureDiagnostic(
+              error,
+              "CONTRACT_LIST_FAILED",
+              "binding",
+              portableErrorMessage(error, project.root),
+            ),
+          ],
+        },
+      ],
+    );
     const runnable =
       bindings.length > 0 && bindings.every((entry) => entry.status === "executable");
     const bindingDiagnostics = runnable
@@ -266,7 +191,7 @@ export async function contractCreateCommand(
             },
           ];
     const unbound = bindingDiagnostics.some((entry) => entry.code === "CONTRACT_UNBOUND");
-    prompts.note(`Wrote ${relativePath} and pinned ${staged.snapshotDigest}.`, "Contract authored");
+    prompts.note(`Wrote ${relativePath} and pinned ${snapshotDigest}.`, "Contract authored");
     prompts.outro(
       runnable
         ? "The application scenario is registered and executable."
@@ -288,7 +213,7 @@ export async function contractCreateCommand(
           path: relativePath,
           digest: contractDigest,
           revision: contract.revision,
-          snapshotDigest: staged.snapshotDigest,
+          snapshotDigest: snapshotDigest,
         },
         outcome: existing ? "replaced" : "created",
         diagnostics: bindingDiagnostics,
@@ -300,27 +225,13 @@ export async function contractCreateCommand(
               },
             }
           : {}),
-        next: runnable
-          ? {
-              command: "framelia",
-              argv: [
-                "check",
-                "--contract",
-                contract.id,
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            }
-          : {
-              command: "framelia",
-              argv: [
-                "contract",
-                "list",
-                ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
-              ],
-            },
+        next: frameliaNext(
+          runnable ? ["check", "--contract", contract.id] : ["contract", "list"],
+          options.projectRoot,
+        ),
       },
     };
   } catch (error) {
-    return failed(error);
+    return failed(error, runtime, options.projectRoot);
   }
 }

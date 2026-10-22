@@ -17,8 +17,11 @@ import { fileHash } from "@framelia/verify/project-policy";
 import { finalizeRunRecord, readRunRecord } from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runCheck, type CheckDependencies } from "../src/internal/check.ts";
+import type { CommandEnvironment } from "../src/environment.ts";
+import { runCheck } from "../src/internal/check.ts";
+import type { PlaywrightTransportDependencies } from "../src/internal/playwright-transport.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 const roots: string[] = [];
 
@@ -174,7 +177,7 @@ function immediateChild(): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["-e", ""], { stdio: ["pipe", "pipe", "pipe"] });
 }
 
-const failedCollectionChild: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+const failedCollectionChild: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
   _executable,
   _argv,
   options,
@@ -195,14 +198,10 @@ describe("runCheck command-lifetime finalization", () => {
     const spawnPlaywright = failedCollectionChild;
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright },
+      }),
     );
 
     expect(outcome.exitCode).toBe(2);
@@ -218,14 +217,13 @@ describe("runCheck command-lifetime finalization", () => {
     const fixture = coordinatorProject();
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright: immediateChild,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: {
+          playwrightCli: "/unused/local/playwright-cli.js",
+          spawnPlaywright: immediateChild,
+        },
+      }),
     );
 
     expect(outcome.exitCode).toBe(2);
@@ -238,7 +236,7 @@ describe("runCheck command-lifetime finalization", () => {
   it("retains the reporter's blocked reason when execute manifest validation fails later", async () => {
     const fixture = coordinatorProject();
     const reporterReason = "Visual project setup failed before any selected test could run.";
-    const spawnPlaywright: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+    const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
       _executable,
       _argv,
       options,
@@ -265,14 +263,10 @@ describe("runCheck command-lifetime finalization", () => {
     };
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright },
+      }),
     );
 
     expect(outcome.exitCode).toBe(2);
@@ -298,7 +292,7 @@ describe("runCheck command-lifetime finalization", () => {
       finalizeCalls.push(runId);
       return finalizeRunRecord(root, runId, options);
     };
-    const spawnPlaywright: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+    const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
       _executable,
       _argv,
       options,
@@ -323,13 +317,13 @@ describe("runCheck command-lifetime finalization", () => {
     };
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: signals as unknown as NonNullable<CheckDependencies["signalProcess"]>,
-        finalizeRun,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(
+        runtime(fixture.root),
+        { playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright } },
+        { signals: signals as unknown as CommandEnvironment["signals"] },
+      ),
+      { finalizeRun },
     );
 
     expect(invocation).toBe(2);
@@ -356,7 +350,7 @@ describe("runCheck command-lifetime finalization", () => {
       finalizeCalls.push(runId);
       return finalizeRunRecord(root, runId, options);
     };
-    const spawnPlaywright: NonNullable<CheckDependencies["spawnPlaywright"]> = (
+    const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
       _executable,
       _argv,
       options,
@@ -393,15 +387,11 @@ describe("runCheck command-lifetime finalization", () => {
     };
 
     const outcome = await runCheck(
-      { contract: [], all: true, project: [], runtime: runtime(fixture.root) },
-      {
-        playwrightCli: "/unused/local/playwright-cli.js",
-        spawnPlaywright,
-        signalProcess: new EventEmitter() as unknown as NonNullable<
-          CheckDependencies["signalProcess"]
-        >,
-        finalizeRun,
-      },
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright },
+      }),
+      { finalizeRun },
     );
 
     expect(finalizeCalls).toHaveLength(1);
@@ -410,5 +400,164 @@ describe("runCheck command-lifetime finalization", () => {
       "FRAMELIA_EXECUTION_TRANSPORT",
     );
     expect(readRunRecord(fixture.root, outcome.runId!).status).toBe("error");
+  });
+});
+
+describe("runCheck failure codes and follow-ups", () => {
+  it("reports an unknown contract id with its own code and points at contract list", async () => {
+    const fixture = coordinatorProject();
+    const outcome = await runCheck(
+      { contract: ["missing.visual"], project: [], projectRoot: fixture.root },
+      testEnvironment(runtime(fixture.root)),
+    );
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.diagnostics[0]?.code).toBe("UNKNOWN_CONTRACT_ID");
+    expect(outcome.next).toEqual({
+      command: "framelia",
+      argv: ["contract", "list", "--project-root", fixture.root],
+    });
+  });
+
+  it("points a missing reporter at init", async () => {
+    const fixture = coordinatorProject();
+    const outcome = await runCheck(
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root), {
+        playwright: {
+          playwrightCli: "/unused/local/playwright-cli.js",
+          spawnPlaywright: immediateChild,
+        },
+      }),
+    );
+    expect(outcome.diagnostics[0]?.code).toBe("FRAMELIA_REPORTER_MISSING");
+    expect(outcome.next).toEqual({ command: "framelia", argv: ["init"] });
+  });
+
+  it("keeps an invalid project config's own code instead of FRAMELIA_CHECK_FAILED", async () => {
+    const fixture = coordinatorProject();
+    fs.writeFileSync(
+      path.join(fixture.root, "framelia.config.mjs"),
+      "export default { totallyMadeUpOption: true };\n",
+    );
+    const outcome = await runCheck(
+      { contract: [], all: true, project: [] },
+      testEnvironment(runtime(fixture.root)),
+    );
+    expect(outcome.diagnostics[0]?.code).toBe("INVALID_PROJECT_CONFIG");
+    expect(outcome.next).toEqual({ command: "framelia", argv: ["status"] });
+  });
+});
+
+describe("runCheck interrupts", () => {
+  it("exits on a second interrupt while no Playwright child is running", async () => {
+    const fixture = coordinatorProject();
+    const signals = new EventEmitter();
+    const exits: number[] = [];
+    const pending = runCheck(
+      { contract: [], all: true, project: [] },
+      testEnvironment(
+        runtime(fixture.root),
+        {},
+        {
+          signals: signals as unknown as CommandEnvironment["signals"],
+          exit: (code) => void exits.push(code),
+        },
+      ),
+    );
+    signals.emit("SIGINT");
+    expect(exits).toEqual([]);
+    signals.emit("SIGINT");
+    expect(exits).toEqual([2]);
+    const outcome = await pending;
+    expect(outcome.diagnostics[0]?.code).toBe("CHECK_CANCELLED");
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "forwards SIGINT first, then SIGTERM, never SIGKILL while the child stops gracefully",
+    async () => {
+      const fixture = coordinatorProject();
+      const signals = new EventEmitter();
+      const sent: NodeJS.Signals[] = [];
+      const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
+        _executable,
+        _argv,
+        options,
+      ) => {
+        const context = JSON.parse(
+          fs.readFileSync(options.env.FRAMELIA_RUN_CONTEXT!, "utf8"),
+        ) as RunContext;
+        if (context.mode === "collect") {
+          collectionTransport(context, fixture.contractDigest, fixture.specDigest);
+          return immediateChild();
+        }
+        // Ignores SIGINT (like a Playwright run still tearing down) but stops on SIGTERM.
+        const child = spawn(
+          process.execPath,
+          [
+            "-e",
+            'process.on("SIGINT", () => {}); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);',
+          ],
+          { stdio: ["pipe", "pipe", "pipe"] },
+        );
+        const kill = child.kill.bind(child);
+        child.kill = ((signal?: NodeJS.Signals | number) => {
+          if (typeof signal === "string") sent.push(signal);
+          return kill(signal);
+        }) as typeof child.kill;
+        child.stdout.once("data", () => {
+          signals.emit("SIGINT");
+          setTimeout(() => signals.emit("SIGINT"), 100);
+        });
+        return child;
+      };
+
+      const outcome = await runCheck(
+        { contract: [], all: true, project: [] },
+        testEnvironment(
+          runtime(fixture.root),
+          { playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright } },
+          { signals: signals as unknown as CommandEnvironment["signals"] },
+        ),
+      );
+
+      expect(sent).toEqual(["SIGINT", "SIGTERM"]);
+      expect(outcome.executionState).toBe("incomplete");
+      expect(outcome.runId).toBeDefined();
+    },
+  );
+});
+
+describe("runCheck run ID export", () => {
+  it("writes --run-id-file and appends run-id to $GITHUB_OUTPUT once the run starts", async () => {
+    const fixture = coordinatorProject();
+    const githubOutput = path.join(fixture.root, "github-output.txt");
+    fs.writeFileSync(githubOutput, "existing=1\n");
+    const spawnPlaywright: NonNullable<PlaywrightTransportDependencies["spawnPlaywright"]> = (
+      _executable,
+      _argv,
+      options,
+    ) => {
+      const context = JSON.parse(
+        fs.readFileSync(options.env.FRAMELIA_RUN_CONTEXT!, "utf8"),
+      ) as RunContext;
+      if (context.mode === "collect") {
+        collectionTransport(context, fixture.contractDigest, fixture.specDigest);
+      }
+      return immediateChild();
+    };
+    const processRuntime = { ...runtime(fixture.root), env: { GITHUB_OUTPUT: githubOutput } };
+
+    const outcome = await runCheck(
+      { contract: [], all: true, project: [], runIdFile: "run-id.txt" },
+      testEnvironment(processRuntime, {
+        playwright: { playwrightCli: "/unused/local/playwright-cli.js", spawnPlaywright },
+      }),
+    );
+
+    expect(outcome.runId).toBeDefined();
+    expect(fs.readFileSync(path.join(fixture.root, "run-id.txt"), "utf8")).toBe(
+      `${outcome.runId}\n`,
+    );
+    expect(fs.readFileSync(githubOutput, "utf8")).toBe(`existing=1\nrun-id=${outcome.runId}\n`);
   });
 });

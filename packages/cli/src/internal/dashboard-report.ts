@@ -1,10 +1,9 @@
 import * as path from "node:path";
 
-import { AppError } from "@framelia/verify";
-
 import { exportDashboardReport } from "../dashboard/report.ts";
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
+import { failureDiagnostic, frameliaNext, runExitCode } from "./outcome.ts";
 import { openProject } from "./project.ts";
 import { nextForRun, readRunProjection, type RunProjection } from "./run-projection.ts";
 
@@ -40,15 +39,17 @@ function portableRelative(from: string, target: string): string {
   return path.relative(from, target).split(path.sep).join("/") || ".";
 }
 
-export interface ReportCommandDependencies {
+/** Test seam: where the bundled dashboard client is copied from. */
+export interface ReportCommandSeams {
   readonly clientRoot?: string;
 }
 
 export async function reportCommand(
   options: ReportOptions,
-  runtime: CliRuntime,
-  dependencies: ReportCommandDependencies = {},
+  env: Pick<CommandEnvironment, "process">,
+  seams: ReportCommandSeams = {},
 ): Promise<CliResult<ReportOutcome | ReportFailureOutcome>> {
+  const runtime = env.process;
   try {
     if (!options.run || !options.output) {
       throw new Error("report requires --run <id> and --output <directory>.");
@@ -59,14 +60,12 @@ export async function reportCommand(
       projectRoot: project.root,
       runId: options.run,
       outputDirectory: path.resolve(runtime.cwd(), options.output),
-      ...(dependencies.clientRoot ? { clientRoot: dependencies.clientRoot } : {}),
+      ...(seams.clientRoot ? { clientRoot: seams.clientRoot } : {}),
     });
-    const exitCode =
-      projection.executionState !== "completed"
-        ? 2
-        : projection.visualVerdict === "mismatched"
-          ? 1
-          : 0;
+    const exitCode = runExitCode(
+      projection.executionState === "completed",
+      projection.visualVerdict,
+    );
     return {
       ok: exitCode === 0,
       exitCode,
@@ -91,24 +90,17 @@ export async function reportCommand(
         executionState: "error",
         visualVerdict: "not-evaluated",
         exitCode: 2,
-        diagnostics: [
-          {
-            code: error instanceof AppError ? error.code : "REPORT_FAILED",
-            stage: "report",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ],
-        next: {
-          command: "framelia",
-          argv: [
+        diagnostics: [failureDiagnostic(error, "REPORT_FAILED", "report")],
+        next: frameliaNext(
+          [
             "report",
             "--run",
             options.run ?? "<run-id>",
             "--output",
             options.output ?? "framelia-report",
-            ...(options.projectRoot ? ["--project-root", options.projectRoot] : []),
           ],
-        },
+          options.projectRoot,
+        ),
       },
     };
   }

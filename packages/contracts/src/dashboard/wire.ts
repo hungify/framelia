@@ -1,5 +1,16 @@
 import * as z from "zod";
 
+import {
+  checkFormatVersion,
+  describeSchemaIssues,
+  formatVersionMismatchMessage,
+  formatVersionSchema,
+} from "../format-version.ts";
+
+/** The one `DashboardRun.schemaVersion` this build of the wire format reads and writes. */
+export const DASHBOARD_RUN_SCHEMA_VERSION = 2;
+const DASHBOARD_RUN_RECORD = "Dashboard run";
+
 /**
  * The dashboard's wire format. `DashboardRun`/`DashboardEvent` in types.ts are the
  * TypeScript view of the same shape; these schemas are what actually validates a payload
@@ -81,6 +92,7 @@ const dashboardContractResultSchema = z
     status: dashboardVerdictSchema,
     phase: dashboardPhaseSchema,
     baselineKind: z.enum(["figma", "page"]),
+    baselineKey: z.string().min(1).optional(),
     capture: z.object({ kind: z.enum(["viewport", "element"]) }).loose(),
     blockers: z.array(z.object({ code: z.string(), message: z.string() }).loose()),
     finishedAt: z.string().optional(),
@@ -89,7 +101,7 @@ const dashboardContractResultSchema = z
 
 export const dashboardRunSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: formatVersionSchema(DASHBOARD_RUN_SCHEMA_VERSION, DASHBOARD_RUN_RECORD),
     runId: z.string().min(1),
     coverage: z
       .object({
@@ -118,3 +130,26 @@ export const dashboardRunSchema = z
 
 export type DashboardEventShape = z.infer<typeof dashboardEventSchema>;
 export type DashboardRunShape = z.infer<typeof dashboardRunSchema>;
+
+export type DashboardRunParseResult =
+  | { success: true; data: DashboardRunShape }
+  | { success: false; error: string };
+
+/**
+ * Validates a dashboard run payload for display: a `schemaVersion` skew is reported on its
+ * own (with an upgrade/downgrade hint) before the full schema runs, and any other
+ * validation failure comes back as readable `path: message` lines rather than a bare
+ * "does not match".
+ */
+export function parseDashboardRun(payload: unknown): DashboardRunParseResult {
+  const mismatch = checkFormatVersion(payload, {
+    record: DASHBOARD_RUN_RECORD,
+    supported: DASHBOARD_RUN_SCHEMA_VERSION,
+    field: "schemaVersion",
+  });
+  if (mismatch) return { success: false, error: formatVersionMismatchMessage(mismatch) };
+  const result = dashboardRunSchema.safeParse(payload);
+  return result.success
+    ? { success: true, data: result.data }
+    : { success: false, error: describeSchemaIssues(result.error) };
+}

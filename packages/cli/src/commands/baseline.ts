@@ -9,7 +9,7 @@ const promoteCommand = buildCommand({
   loader: async () => {
     const { baselinePromoteCommand } = await import("../internal/baseline-promote.ts");
     return async function (this: CliContext, flags: BaselinePromoteOptions) {
-      emitResult(this, await baselinePromoteCommand(flags, this.process));
+      emitResult(this, await baselinePromoteCommand(flags, this));
     };
   },
   parameters: {
@@ -73,7 +73,7 @@ const promoteCommand = buildCommand({
         kind: "parsed",
         parse: identityParser,
         optional: true,
-        brief: "Playwright storage-state file for an authenticated capture",
+        brief: "storage-state file (default: the recorded storageStatePath)",
         placeholder: "path",
       },
       headed: {
@@ -83,16 +83,11 @@ const promoteCommand = buildCommand({
       },
     },
     aliases: {
-      k: "key",
       t: "targetUrl",
       r: "projectRoot",
-      c: "selector",
-      f: "fullPage",
       w: "viewportWidth",
       H: "viewportHeight",
-      b: "promotedBy",
       i: "runId",
-      n: "note",
       s: "storageState",
       e: "headed",
     },
@@ -100,6 +95,13 @@ const promoteCommand = buildCommand({
   docs: {
     brief:
       "Capture the target URL's current state and accept it as the new toMatchPageBaseline baseline.",
+    fullDescription: [
+      "Capture the target URL and accept it as the new toMatchPageBaseline baseline.",
+      "--storage-state defaults to the recorded storageStatePath (https/loopback only).",
+      "",
+      "Example:",
+      "  framelia baseline promote --key home.desktop --target-url https://localhost:3000/",
+    ].join("\n"),
   },
 });
 

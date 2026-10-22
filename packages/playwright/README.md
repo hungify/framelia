@@ -131,12 +131,28 @@ await expect(page).toMatchUrl("http://127.0.0.1:3000/reference");
 Matchers never own caller page navigation, authentication, or browser setup. `toMatchUrl` only
 creates a page in the received page's browser context and navigates that URL.
 
-Options support `selector`, `fullPage`, `masks`, `profile`, font policy, and animation policy.
+Options support `selector`, `fullPage`, `masks`, `profile`, font policy, animation policy, and a
+per-call `timeout` (ms) that overrides the expect timeout for that one call.
 Figma region captures may provide `expectSize`; this becomes part of persisted contract evidence.
 Page-scope calls (no `selector`) may provide `styleChecks`, one style comparison per declared
 check-point against its own baked `expectStyle`; results are tagged with the check-point's
 selector and merged into `topIssues` the same non-blocking way region scope's own style
 comparison is.
+
+A failed comparison's message lists each metric next to the threshold it failed against
+(`matchRatio`, `ssim`, `avgDeltaE`, `diffPixels`, size and `areaGap`), whether the diff cluster
+check failed, and the first blocking issue. Each `toMatchFigma` call gets its own attachment
+names and work directory, so two calls for the same node in one test keep separate evidence.
+
+`.not` only inverts a real visual verdict. When a comparison cannot run at all (no file key, a
+failed Figma fetch or capture, a navigation failure, no promoted baseline), the matcher throws
+under `.not` instead of reporting a pass.
+
+`toMatchPageBaseline(key)` follows Playwright's `--update-snapshots`. With `missing` it promotes
+the capture when no baseline is promoted yet. With `changed` it also promotes on a mismatch.
+With `all` it always promotes. Promotion goes through the same versioned `promotePageBaseline`
+as `framelia baseline promote`, recorded as `playwright --update-snapshots`, so earlier versions
+stay recoverable. `.not` never promotes.
 
 ## Pinned Figma contracts (`defineFigmaTests`)
 
@@ -225,6 +241,11 @@ defineFigmaTests(test, {
 By the time `prepare` runs, `page` is already the fixture's fully-prepared page; capture
 only ever happens after `prepare` resolves, so a modal/auth/readiness wait inside
 `prepare` genuinely gates the screenshot.
+
+The capture deadline (`timeoutMs`) defaults to what remains of the test's own timeout once
+capture starts, measured from the start of the test body and minus a 1s margin, so a slow
+`prepare` cannot push capture past Playwright's own test timeout. A test timeout of `0`
+(unlimited) falls back to 60s.
 
 ## Scaling to many pages
 
@@ -322,10 +343,70 @@ Reporter reads matcher score/image attachments from Playwright's main process bo
 matcher call gets its own evidence directory. Passing calls attach expected/actual/diff images so
 Reporter can persist the same evidence required by `framelia done-gate`.
 
+Images are attached as bytes (`body`), not file paths. Playwright deletes a test's `outputDir`
+after it ends unless `preserveOutput` keeps it, so path attachments would lose passing-test
+evidence under `preserveOutput: "failures-only"` or `"never"`. The HTML report still shows the
+images in its diff viewer.
+
+A low-level `toMatchFigma({ contractId })` result is stored under that contract's evidence
+directory. When the config has more than one project, the directory name also gets the project
+name, and a `repeatEachIndex` above 0 adds `-r<n>`, so projects and repeats cannot overwrite each
+other. A single-project, non-repeated run keeps the plain directory. Each run removes any stale
+diff or score left in the directory by an earlier run. In a suite that mixes annotated contract
+tests with low-level matchers, the live dashboard shows both. Low-level results are never part of
+the recorded run.
+
 A reporter invocation knows only Playwright's selected tests, so its run plan is always marked as
 a subset and never claims to be the complete required matrix. Protected signed requirements
 supply the authoritative full matrix to `framelia done-gate`. Attempt publication failures are
 persisted on the final run record and shown in the dashboard; a run with one cannot pass the gate.
 
+Only contract/project pairs the contract applies to are planned: the contract's own `projects`
+if set, otherwise the policy's `playwright.projects`. A direct `playwright test` run fails
+(`onEnd` returns `failed`) when its annotated tests cannot be recorded, for example when no
+`framelia.config.*` exists, when an attempt publication fails, or when finalization fails. The
+run status and each global error message go into the final run record. An interrupted or
+timed-out run, or one whose selected cases have no accepted attempt, is sealed `incomplete`,
+never `finalized`.
+
+`framelia check` is the supported path for authoritative runs.
+
 Web-to-web matcher results remain runtime/dashboard evidence. Contract and done-gate artifacts are
 Figma-baselined after schema-v4 pivot.
+
+### Sharded runs
+
+Every shard of a sharded direct run (`npx playwright test --shard=N/M`) records into one shared
+run when all shards get the same run ID: set `FRAMELIA_RUN_ID` (or the reporter's `runId`
+option) to one value per CI run, for example `${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}`. A run is
+immutable, so a re-run needs a new ID.
+
+A shard only sees its own tests, so no shard knows the whole plan. Each shard publishes its case
+plans as an immutable plan fragment, publishes its attempts as usual, and on exit records a
+completion marker with its Playwright result status and global errors. The last shard to complete
+composes the run's frozen plan from every fragment and finalizes the run once. The run status uses
+the worst shard result: an interrupted or timed-out shard leaves the run `incomplete`. Until then
+the run is in progress: `framelia runs list` shows which shards it is waiting for, and `open`,
+`report` and `done-gate` refuse it with `RUN_BUNDLE_SHARDS_PENDING`.
+
+```text
+.framelia/runs/<slug(run-id)>/
+├── shards/<N>-of-<M>/plan/fragment.json         # shard N's case plans
+├── shards/<N>-of-<M>/completion/completion.json # shard N's result status and global errors
+├── cases/<slug(case-id)>/attempts/...           # attempts, as for any run
+├── plan/                                         # composed once every shard completed
+└── run.json                                      # written once, when the run is finalized
+```
+
+Shards that share one machine (and one project root) finalize the run themselves. When each shard
+runs on its own CI runner, collect every shard's `.framelia/runs/<slug(run-id)>` directory into one
+checkout of the same commit and run `framelia runs finalize --run <run-id>` there. Shard files are
+keyed by shard and attempts by case, so the directories merge without collisions. The command
+exits `2` and lists the missing shards until every shard is present. See the
+[CLI CI example](../cli/README.md#ci-example).
+
+Shards must agree on the shard total, the project policy and the retry policy, and must not plan
+the same case. Finalization rejects a conflict (`RUN_BUNDLE_SHARD_CONFLICT`) and a plan fragment
+that changed after its shard completed. A sharded run without a shared run ID falls back to one
+bundle per shard, with runId `<generated-id>-shard-<N>-of-<M>`, and the reporter warns how to set
+`FRAMELIA_RUN_ID`. `framelia check` is not sharded.

@@ -30,6 +30,8 @@ const paths = {
   checkout: {
     baseline: "mock/checkout-baseline.svg",
     actual: "mock/checkout-actual.svg",
+    /** An earlier retry's own capture, so the inspector's attempt picker has a visible effect. */
+    actualRetry0: "mock/checkout-actual-attempt-0.svg",
     diff: "mock/checkout-diff.svg",
   },
   header: {
@@ -45,6 +47,7 @@ const HEADER_SIZE = { width: 390, height: 844 };
 export const dashboardMockArtifacts: Record<string, string> = {
   [paths.checkout.baseline]: screen(CHECKOUT_SIZE.width, CHECKOUT_SIZE.height, "#4979d1"),
   [paths.checkout.actual]: screen(CHECKOUT_SIZE.width, CHECKOUT_SIZE.height, "#4979d1", 8),
+  [paths.checkout.actualRetry0]: screen(CHECKOUT_SIZE.width, CHECKOUT_SIZE.height, "#d64f58", 24),
   [paths.checkout.diff]: screen(CHECKOUT_SIZE.width, CHECKOUT_SIZE.height, "#d64f58", 8),
   [paths.header.baseline]: screen(HEADER_SIZE.width, HEADER_SIZE.height, "#4979d1"),
   [paths.header.actual]: screen(HEADER_SIZE.width, HEADER_SIZE.height, "#4979d1"),
@@ -87,7 +90,7 @@ const contracts: DashboardContractResult[] = [
         visualVerdict: "mismatched",
         evidence: {
           expected: { availability: "available", path: paths.checkout.baseline },
-          actual: { availability: "available", path: paths.checkout.actual },
+          actual: { availability: "available", path: paths.checkout.actualRetry0 },
           diff: { availability: "available", path: paths.checkout.diff },
           score: { availability: "available", path: "mock/checkout-score-0.json" },
         },
@@ -252,7 +255,8 @@ const contracts: DashboardContractResult[] = [
     id: "checkout.mobile",
     name: "Checkout · Mobile",
     tags: ["checkout", "mobile"],
-    status: "passed",
+    // A failed page-baseline result: exercises the "copy promote command" affordance.
+    status: "failed",
     phase: "complete",
     baselineKind: "page",
     baseline: {
@@ -302,7 +306,7 @@ export const dashboardMockRun: DashboardRun = {
   runId: "dashboard-mock",
   suiteName: "Checkout",
   status: "failed",
-  summary: { total: 4, queued: 0, running: 0, passed: 2, failed: 1, blocked: 1 },
+  summary: { total: 4, queued: 0, running: 0, passed: 1, failed: 2, blocked: 1 },
   contracts,
   startedAt: now,
   updatedAt: now,

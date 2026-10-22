@@ -75,11 +75,23 @@ export {
 } from "./profiles.ts";
 
 export {
+  DASHBOARD_RUN_SCHEMA_VERSION,
   dashboardEventSchema,
   type DashboardEventShape,
+  type DashboardRunParseResult,
   dashboardRunSchema,
   type DashboardRunShape,
+  parseDashboardRun,
 } from "./dashboard/wire.ts";
+
+export {
+  checkFormatVersion,
+  describeSchemaIssues,
+  type FormatVersionField,
+  type FormatVersionMismatch,
+  formatVersionMismatchMessage,
+  formatVersionSchema,
+} from "./format-version.ts";
 
 export { httpUrlSchema, nonEmptyTrimmed } from "./primitives.ts";
 

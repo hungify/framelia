@@ -27,32 +27,48 @@ const dashboardServerFlags = {
     kind: "boolean",
     default: false,
     withNegated: false,
-    brief: "do not open dashboard in browser",
+    brief: "do not open dashboard in browser (never opened when CI is set)",
   },
 } as const;
+
+// Deliberately parser-optional: a missing run is one structured JSON outcome pointing at
+// `framelia runs list`, not a Stricli usage error on stderr.
+const runFlag = {
+  kind: "parsed",
+  parse: identityParser,
+  optional: true,
+  brief: "explicit durable run ID (see `framelia runs list`)",
+  placeholder: "id",
+} as const;
+
+const dashboardAliases = { r: "projectRoot", R: "run" } as const;
 
 export const dashboardCommand = buildCommand({
   loader: async () => {
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: DashboardOptions) {
-      return dashboardDevserverCommand({ ...flags, command: "dashboard" }, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "dashboard" }, this);
     };
   },
   parameters: {
-    flags: {
-      run: {
-        kind: "parsed",
-        parse: identityParser,
-        brief: "explicit durable run ID",
-        placeholder: "id",
-      },
-      projectRoot: projectRootFlag,
-      ...dashboardServerFlags,
-    },
-    aliases: { r: "projectRoot", R: "run", H: "host", p: "port", o: "noOpen" },
+    flags: { run: runFlag, projectRoot: projectRootFlag, ...dashboardServerFlags },
+    aliases: dashboardAliases,
   },
-  docs: { brief: "Open dashboard for one selected durable run." },
+  docs: {
+    brief: "Serve the dashboard for one selected durable run.",
+    fullDescription: [
+      "Serve the dashboard for one selected durable run until Ctrl+C.",
+      "",
+      "Once listening it writes one framelia.open-ready JSON record to stdout; logs go to",
+      "stderr. A browser opens unless --no-open is passed or CI is set.",
+      "",
+      "Examples:",
+      "  framelia runs list",
+      "  framelia dashboard --run <run-id>",
+      "  framelia dashboard --run <run-id> --host --port 4000 --no-open",
+    ].join("\n"),
+  },
 });
 
 export const openCommand = buildCommand({
@@ -60,23 +76,23 @@ export const openCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; dashboard-server is startup-heavy.
     const { dashboardDevserverCommand } = await import("../internal/dashboard-devserver.ts");
     return function (this: CliContext, flags: OpenDashboardOptions) {
-      return dashboardDevserverCommand({ ...flags, command: "open" }, this.process);
+      return dashboardDevserverCommand({ ...flags, command: "open" }, this);
     };
   },
   parameters: {
-    flags: {
-      projectRoot: projectRootFlag,
-      run: {
-        kind: "parsed",
-        parse: identityParser,
-        brief: "explicit durable run ID",
-        placeholder: "id",
-      },
-      ...dashboardServerFlags,
-    },
-    aliases: { r: "projectRoot", R: "run", H: "host", p: "port", o: "noOpen" },
+    flags: { projectRoot: projectRootFlag, run: runFlag, ...dashboardServerFlags },
+    aliases: dashboardAliases,
   },
-  docs: { brief: "Open dashboard for one selected durable run." },
+  docs: {
+    brief: "Open the dashboard for one selected durable run without rerunning it.",
+    fullDescription: [
+      "Open the dashboard for one selected durable run without rerunning it.",
+      "",
+      "Examples:",
+      "  framelia open --run <run-id>",
+      "  framelia open --run <run-id> --no-open",
+    ].join("\n"),
+  },
 });
 
 export const reportCommand = buildCommand({
@@ -84,7 +100,7 @@ export const reportCommand = buildCommand({
     // Stricli's loader is the intentional lazy boundary; report projection is startup-heavy.
     const { reportCommand: runReportCommand } = await import("../internal/dashboard-report.ts");
     return async function (this: CliContext, flags: ReportOptions) {
-      emitResult(this, await runReportCommand(flags, this.process));
+      emitResult(this, await runReportCommand(flags, this));
     };
   },
   parameters: {
@@ -92,13 +108,7 @@ export const reportCommand = buildCommand({
       projectRoot: projectRootFlag,
       // Deliberately parser-optional: finite commands own missing semantic input so
       // automation receives one versioned JSON outcome instead of Stricli stderr.
-      run: {
-        kind: "parsed",
-        parse: identityParser,
-        brief: "explicit durable run ID",
-        optional: true,
-        placeholder: "id",
-      },
+      run: runFlag,
       // See --run above. reportCommand validates the required pair together.
       output: {
         kind: "parsed",
@@ -110,5 +120,16 @@ export const reportCommand = buildCommand({
     },
     aliases: { r: "projectRoot", R: "run", o: "output" },
   },
-  docs: { brief: "Export one selected durable run as a static dashboard report." },
+  docs: {
+    brief: "Export one selected durable run as a static dashboard report.",
+    fullDescription: [
+      "Export one selected durable run as a relocatable static dashboard report.",
+      "",
+      "An existing previous Framelia report directory is replaced only after the new report",
+      "is complete. Serve the output over HTTP; browsers block file:// JSON loading.",
+      "",
+      "Example:",
+      "  framelia report --run <run-id> --output ./framelia-report",
+    ].join("\n"),
+  },
 });

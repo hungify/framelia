@@ -8,6 +8,9 @@ import { captureReadyPage } from "../capture/core.ts";
 import { DEFAULT_CAPTURE_TIMEOUT_MS } from "../constants.ts";
 import { promotePageBaseline, type PromotePageBaselineResult } from "./page.ts";
 
+/** Back-to-back captures that must hash identically before a state may be promoted. */
+const STABILITY_SAMPLES = 2;
+
 export interface CaptureAndPromotePageBaselineOptions {
   url: string;
   outDir: string;
@@ -64,11 +67,23 @@ export async function captureAndPromotePageBaseline(
         ? { kind: "region", selector: options.selector }
         : { kind: "page", fullPage: options.fullPage ?? false },
       screenshot: {},
-      stabilitySamples: 2,
+      stabilitySamples: STABILITY_SAMPLES,
       timeoutMs,
     });
     if (!captured.ok) {
       return { ok: false, error: captured.error, message: captured.message };
+    }
+    // The second sample exists only to prove the page had settled: promoting a frame that
+    // differs from its immediate neighbour would pin a baseline later runs cannot reproduce.
+    if (
+      captured.screenshotHashes.length < STABILITY_SAMPLES ||
+      new Set(captured.screenshotHashes).size !== 1
+    ) {
+      return {
+        ok: false,
+        error: "CAPTURE_UNSTABLE",
+        message: `${options.url} rendered differently across ${captured.screenshotHashes.length} back-to-back captures; refusing to promote an unstable baseline. Mask or freeze the changing content and retry.`,
+      };
     }
 
     const promoted = promotePageBaseline({

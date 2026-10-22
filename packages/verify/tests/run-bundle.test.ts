@@ -6,24 +6,19 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  ATTEMPT_FORMAT_VERSION,
-  ATTEMPT_SCORE_FORMAT_VERSION,
   authoredContractSchema,
-  baselineSnapshotSchema,
   CASE_PLAN_FORMAT_VERSION,
-  casePlanSchema,
   contractBindingSchema,
   RUN_PLAN_FORMAT_VERSION,
-  type AttemptRecord,
   type CasePlan,
   type RunPlan,
 } from "@framelia/contracts/workflow";
 import { PNG } from "pngjs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { canonicalJsonDigest } from "../src/canonical-json.ts";
-import { resolveProjectPolicy } from "../src/project-policy.ts";
 import {
+  cacheSelectedRunProjection,
   computeAttemptId,
   computeCaseId,
   finalizeRunRecord,
@@ -33,13 +28,20 @@ import {
   readRunBundle,
   readSelectedRun,
   readRunRecord,
+  runDir,
   runRecordPath,
   startRunRecord,
 } from "../src/run-bundle/index.ts";
+import type { SelectedRun } from "../src/run-bundle/index.ts";
 import { makeSolidPng } from "../src/testing.ts";
 import { AppError } from "../src/types.ts";
+import {
+  A_DIGEST,
+  attemptFixture,
+  completeEvidence,
+  realCasePlanFixture,
+} from "./support/run-bundle-fixtures.ts";
 
-const A_DIGEST = `sha256:${"a".repeat(64)}`;
 const EXPECTED_DIGEST =
   `sha256:${crypto.createHash("sha256").update("expected").digest("hex")}` as const;
 
@@ -120,108 +122,6 @@ function casePlanFixture(
   return { ...base, ...overrides, contract: { ...base.contract, ...overrides.contract } };
 }
 
-/**
- * A case plan whose every digest-bearing input genuinely exists on disk under `root` and
- * matches what's recorded -- `finalizeRunRecord`'s own input reconciliation reports this
- * as fully consistent. Used by the handful of tests that actually exercise selection
- * logic (`selectFinalAttempt`) or reconciliation itself, where a synthetic, always-
- * "changed" fixture would mask what's really being tested.
- */
-async function realCasePlanFixture(
-  root: string,
-  options: { contractId?: string; projectName?: string; repeatIndex?: number } = {},
-): Promise<CasePlan> {
-  const contractId = options.contractId ?? "login.desktop";
-  const projectName = options.projectName ?? "chromium";
-  const repeatIndex = options.repeatIndex ?? 0;
-
-  fs.writeFileSync(path.join(root, "framelia.config.mjs"), "export default {};\n");
-  const policy = await resolveProjectPolicy({
-    cwd: root,
-    projectRoot: root,
-    allowUninitialized: true,
-  });
-
-  const viewport = { width: 10, height: 10 };
-  const imageBytes = PNG.sync.write(makeSolidPng(viewport.width, viewport.height, [1, 2, 3, 255]));
-  const imageDigest: `sha256:${string}` = `sha256:${crypto.createHash("sha256").update(imageBytes).digest("hex")}`;
-  const snapshot = baselineSnapshotSchema.parse({
-    formatVersion: 1,
-    kind: "framelia.baseline-snapshot",
-    source: { kind: "figma", fileKey: "file-key", nodeId: "1:2" },
-    rendering: { viewport: { preset: "desktop", ...viewport }, deviceScaleFactor: 1 },
-    expected: {
-      kind: "page",
-      image: { path: `${contractId}.png`, digest: imageDigest, ...viewport },
-    },
-  });
-  const snapshotDigest = canonicalJsonDigest(snapshot);
-  const snapshotDir = path.join(root, ".framelia", "baselines", snapshotDigest.slice(7));
-  fs.mkdirSync(snapshotDir, { recursive: true });
-  fs.writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(snapshot));
-  fs.writeFileSync(path.join(root, `${contractId}.png`), imageBytes);
-
-  const contract = authoredContractSchema.parse({
-    formatVersion: 1,
-    kind: "framelia.contract",
-    id: contractId,
-    name: contractId,
-    revision: 1,
-    target: { path: `/${contractId}` },
-    viewport: { preset: "desktop", ...viewport },
-    scope: { kind: "page", pageReason: "fixture" },
-    baseline: { snapshotDigest },
-  });
-  const contractDigest = canonicalJsonDigest(contract);
-  const contractFile = `contracts/${contractId}.json`;
-  fs.mkdirSync(path.join(root, "contracts"), { recursive: true });
-  fs.writeFileSync(path.join(root, contractFile), JSON.stringify(contract));
-
-  const binding = contractBindingSchema.parse({
-    formatVersion: 1,
-    kind: "framelia.contract-binding",
-    contractId,
-    contractFile,
-    contractDigest,
-  });
-
-  const specFile = `specs/${contractId}.spec.ts`;
-  fs.mkdirSync(path.join(root, "specs"), { recursive: true });
-  fs.writeFileSync(path.join(root, specFile), "// fixture spec\n");
-  const specFileDigest: `sha256:${string}` = `sha256:${crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(path.join(root, specFile)))
-    .digest("hex")}`;
-
-  return casePlanSchema.parse({
-    formatVersion: CASE_PLAN_FORMAT_VERSION,
-    kind: "framelia.case-plan",
-    runId: "pending-test-run",
-    caseId: computeCaseId({ contractId, projectName, repeatIndex }),
-    contract: { id: contractId, file: contractFile, digest: contractDigest, authored: contract },
-    expectedDigest: imageDigest,
-    expectedSize: viewport,
-    baselineSource: snapshot.source,
-    maxMaskedAreaRatio: 0.25,
-    stabilitySamples: 2,
-    snapshotDigest,
-    policyDigest: policy.policyDigest!,
-    bindingDigest: canonicalJsonDigest(binding),
-    binding,
-    registration: {
-      specFile,
-      specDigest: specFileDigest,
-      titlePath: [projectName, specFile, contractId],
-    },
-    specFile,
-    specFileDigest,
-    project: { name: projectName, runtimeDigest: A_DIGEST },
-    repeatIndex,
-    retryAcceptance: "require-first-attempt",
-    source: {},
-  });
-}
-
 function runPlanFixture(runId: string, casePlans: readonly CasePlan[]): RunPlan {
   for (const casePlan of casePlans) casePlan.runId = runId;
   const planned = casePlans.map((casePlan) => ({
@@ -258,94 +158,6 @@ function runPlanFixture(runId: string, casePlans: readonly CasePlan[]): RunPlan 
   };
 }
 
-function attemptFixture(
-  casePlan: CasePlan,
-  retryIndex: number,
-  overrides: Partial<Omit<AttemptRecord, "evidence">> = {},
-): Omit<AttemptRecord, "evidence"> {
-  return {
-    formatVersion: ATTEMPT_FORMAT_VERSION,
-    kind: "framelia.attempt",
-    attemptId: computeAttemptId(casePlan.caseId, retryIndex),
-    runId: casePlan.runId,
-    caseId: casePlan.caseId,
-    casePlanDigest: canonicalJsonDigest(casePlan),
-    retryIndex,
-    executionState: "completed",
-    visualVerdict: "passed",
-    startedAt: "2026-09-14T12:00:00.000Z",
-    completedAt: "2026-09-14T12:00:01.000Z",
-    diagnostics: [],
-    ...overrides,
-  };
-}
-
-function completeEvidence(actual: Buffer): {
-  expected: Buffer;
-  actual: Buffer;
-  score: Buffer;
-} {
-  return {
-    expected: Buffer.from("expected"),
-    actual,
-    score: Buffer.from(
-      JSON.stringify({
-        formatVersion: ATTEMPT_SCORE_FORMAT_VERSION,
-        kind: "framelia.attempt-score",
-        pass: true,
-        runType: "final",
-        matchRatio: 1,
-        ssim: 1,
-        avgDeltaE: 0,
-        diffPixels: 0,
-        baselineSize: { width: 10, height: 10 },
-        actualSize: { width: 10, height: 10 },
-        targetUrl: "https://example.test/login",
-        baseline: {
-          snapshotDigest: A_DIGEST,
-          kind: "figma",
-          fileKey: "fixture",
-          nodeId: "1:2",
-        },
-        attachmentBaseName: "fixture",
-        resolvedThreshold: {
-          name: "page",
-          minMatch: 0.99,
-          maxDiffPixels: null,
-          minSSIM: 0.97,
-          maxAvgDeltaE: 4,
-          maxAreaGapPercent: 5,
-          cluster: true,
-          stabilityMaxDiffRatio: 0.002,
-          gateEligible: true,
-          styleGateEligible: false,
-        },
-        profile: "page",
-        scope: { kind: "page", fullPage: true },
-        captureEvidence: {
-          finalUrl: "https://example.test/login",
-          startedAt: "2026-09-14T12:00:00.000Z",
-          finishedAt: "2026-09-14T12:00:01.000Z",
-          capturedAt: "2026-09-14T12:00:01.000Z",
-          viewport: { width: 10, height: 10 },
-          scope: { kind: "page", fullPage: true },
-          elementRect: null,
-          readiness: { status: "passed" },
-          fonts: { supported: true, status: "loaded", failed: [] },
-          screenshotHashes: [A_DIGEST, A_DIGEST],
-          warnings: [],
-          actions: [],
-        },
-        stability: "stable",
-        stabilitySampleCount: 2,
-        topIssues: [],
-        diagnostics: [],
-        warnings: [],
-      }),
-    ),
-  };
-}
-
 function setUpRun(root: string, runId: string, casePlans: readonly CasePlan[]): RunPlan {
   const plan = runPlanFixture(runId, casePlans);
   freezeRunPlan(root, plan, casePlans);
@@ -357,10 +169,16 @@ function setUpRun(root: string, runId: string, casePlans: readonly CasePlan[]): 
 // "cross-process lock" describe block below): those workers are genuinely separate OS
 // processes coordinating through a real filesystem lock -- there is no fake-timer or
 // in-process event to await instead, since neither process runs inside this test's own
-// event loop. A short, real sleep is the only way to give the publish worker a reliable
-// head start before the finalize worker starts.
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// event loop. Polling the filesystem for the lock is the only way to know the publish
+// worker holds it before the finalize worker starts; a fixed head start is not, because
+// spawning a worker can take longer than any short sleep on a loaded machine.
+async function waitForPath(target: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(target)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${target}`);
+    // eslint-disable-next-line no-await-in-loop -- polling another process's progress
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe("publishAttempt", () => {
@@ -611,6 +429,58 @@ describe("finalizeRunRecord", () => {
     });
     expect(allowRetry.cases[0]?.selectedAttemptId).toBe(computeAttemptId(casePlan.caseId, 1));
     expect(allowRetry.cases[0]?.attemptIds).toHaveLength(2);
+  });
+
+  it("seals a failed finalization as error and keeps the original failure", async () => {
+    const root = temporaryRoot();
+    const casePlan = casePlanFixture();
+    const runId = "run-finalize-sealed";
+    setUpRun(root, runId, [casePlan]);
+    await expect(
+      finalizeRunRecord(root, runId, { retryAcceptance: "allow-passed-after-retry" }),
+    ).rejects.toThrow(/does not match frozen run policy/);
+    expect(readRunRecord(root, runId)).toMatchObject({
+      status: "error",
+      diagnostics: [expect.objectContaining({ code: "run-finalization-failed" })],
+    });
+  });
+
+  it("rethrows the original failure when the error seal itself cannot read run.json", async () => {
+    const root = temporaryRoot();
+    const casePlan = casePlanFixture();
+    const runId = "run-finalize-corrupt-record";
+    setUpRun(root, runId, [casePlan]);
+    fs.writeFileSync(runRecordPath(root, runId), "{ corrupt");
+    await expect(
+      finalizeRunRecord(root, runId, { retryAcceptance: "allow-passed-after-retry" }),
+    ).rejects.toThrow(/does not match frozen run policy/);
+  });
+
+  it("does not seal the run on lock contention, so the caller can retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = temporaryRoot();
+      const casePlan = casePlanFixture();
+      const runId = "run-finalize-lock-timeout";
+      setUpRun(root, runId, [casePlan]);
+      // Held by a live process (our parent) on this host: never reclaimed as stale.
+      const lockDir = path.join(path.dirname(runRecordPath(root, runId)), "lock");
+      fs.mkdirSync(lockDir);
+      fs.writeFileSync(
+        path.join(lockDir, "owner.json"),
+        JSON.stringify({ pid: process.ppid, hostname: os.hostname(), startedAt: "x" }),
+      );
+      const finalized = finalizeRunRecord(root, runId, {
+        retryAcceptance: "require-first-attempt",
+      }).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(11_000);
+      const error = await finalized;
+      expect(error).toBeInstanceOf(AppError);
+      expect((error as AppError).code).toBe("RUN_BUNDLE_LOCK_TIMEOUT");
+      expect(readRunRecord(root, runId).status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("finalizes with status finalized and finalizedAt regardless of prior running state", async () => {
@@ -1006,6 +876,55 @@ describe("freezeRunPlan", () => {
   });
 });
 
+describe("cacheSelectedRunProjection", () => {
+  it("projects once per run change and picks up newly published attempts and finalization", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-cached-projection";
+    setUpRun(root, runId, [casePlan]);
+    const project = vi.fn<(selected: SelectedRun) => { selected: SelectedRun }>((selected) => ({
+      selected,
+    }));
+    const read = cacheSelectedRunProjection(root, runId, project);
+
+    const empty = read();
+    expect(read()).toBe(empty);
+    expect(project).toHaveBeenCalledTimes(1);
+    expect(empty.selected.cases[0]?.attempts).toHaveLength(0);
+
+    // Attempt publication never rewrites run.json; a running run still sees it.
+    await publishAttempt(
+      root,
+      runId,
+      attemptFixture(casePlan, 0, { visualVerdict: "mismatched" }),
+      completeEvidence(Buffer.from("attempt-0")),
+    );
+    const published = read();
+    expect(published).not.toBe(empty);
+    expect(published.selected.cases[0]?.attempts).toHaveLength(1);
+    expect(read()).toBe(published);
+    expect(project).toHaveBeenCalledTimes(2);
+
+    await finalizeRunRecord(root, runId, { retryAcceptance: "require-first-attempt" });
+    const finalized = read();
+    expect(finalized.selected.record.status).toBe("finalized");
+    expect(read()).toBe(finalized);
+    expect(project).toHaveBeenCalledTimes(3);
+  });
+
+  it("never caches a failed read", async () => {
+    const root = temporaryRoot();
+    const casePlan = await realCasePlanFixture(root);
+    const runId = "run-cached-not-started";
+    const plan = runPlanFixture(runId, [casePlan]);
+    freezeRunPlan(root, plan, [casePlan]);
+    const read = cacheSelectedRunProjection(root, runId, (selected) => selected);
+    expect(() => read()).toThrow(/No run record/);
+    startRunRecord(root, plan, "2026-09-14T12:00:00.000Z");
+    expect(read().record.status).toBe("running");
+  });
+});
+
 describe("readRunBundle tamper detection", () => {
   it("throws when an evidence file's bytes no longer match its recorded digest", async () => {
     const root = temporaryRoot();
@@ -1194,12 +1113,12 @@ describe("cross-process lock", () => {
 
     // The publish worker holds the lock for 300ms once it acquires it (see attempt.ts's
     // own test-only FRAMELIA_TEST_ATTEMPT_HOLD_MS seam) -- long enough that a finalize
-    // worker started shortly after is virtually guaranteed to still be waiting for the
-    // lock when the publish is mid-flight, the exact window the fix closes.
+    // worker started once the lock exists is still waiting for it while the publish is
+    // mid-flight, the exact window the fix closes.
     const publishPromise = runWorker(["publish", root, runId, publishPayload], {
       FRAMELIA_TEST_ATTEMPT_HOLD_MS: "300",
     });
-    await sleep(50);
+    await waitForPath(path.join(runDir(root, runId), "lock"));
     const finalizePromise = runWorker(["finalize", root, runId, finalizePayload]);
 
     const [publishResult, finalizeResult] = await Promise.all([publishPromise, finalizePromise]);
@@ -1210,8 +1129,7 @@ describe("cross-process lock", () => {
     // exact-membership check (see read.ts) is exactly what would catch a torn state
     // where attempt-1 landed on disk after finalization already sealed the run without
     // it. Because finalize necessarily waited for the still-lock-holding publish to
-    // finish first (the 50ms head start plus a 300ms hold make any other ordering
-    // implausible), both attempts end up correctly reflected in the finalized record.
+    // finish first (it only starts once the publish holds the lock), both attempts end up correctly reflected in the finalized record.
     const bundle = readRunBundle(root, runId);
     expect(bundle.record.status).toBe("finalized");
     const caseRecord = bundle.record.cases[0]!;

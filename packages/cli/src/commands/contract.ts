@@ -15,18 +15,10 @@ import { emitResult } from "../output.ts";
 
 const createCommand = buildCommand({
   loader: async () => {
-    // Stricli's loader is the intentional lazy boundary; keep prompt/browser dependencies off startup.
-    const [{ contractCreateCommand }, { createClackPrompts }] = await Promise.all([
-      import("../internal/contract-create.ts"),
-      import("../internal/clack-prompts.ts"),
-    ]);
+    // Stricli's loader is the intentional lazy boundary; prompts and Figma load through this.adapters.
+    const { contractCreateCommand } = await import("../internal/contract-create.ts");
     return async function (this: CliContext, flags: ContractCreateOptions) {
-      const result = await contractCreateCommand(
-        flags,
-        createClackPrompts(this.process),
-        this.process,
-      );
-      emitResult(this, result);
+      emitResult(this, await contractCreateCommand(flags, this));
     };
   },
   parameters: {
@@ -176,11 +168,21 @@ const createCommand = buildCommand({
       n: "nodeId",
       N: "name",
       v: "viewport",
-      s: "scope",
     },
   },
   docs: {
     brief: "Author a pinned Figma visual contract; prompts only on an interactive TTY.",
+    fullDescription: [
+      "Author one pinned Figma visual contract. Interactive terminals are prompted for",
+      "missing inputs; otherwise every required flag must be given. Needs",
+      "FIGMA_ACCESS_TOKEN.",
+      "",
+      "Examples:",
+      "  framelia contract create",
+      "  framelia contract create --target-path /login --contract-id login.desktop \\",
+      "    --figma-url <figma-design-url> --viewport desktop --scope page \\",
+      '    --page-reason "The frame is the complete page."',
+    ].join("\n"),
   },
 });
 
@@ -188,14 +190,23 @@ const listCommand = buildCommand({
   loader: async () => {
     const { contractListCommand } = await import("../internal/contract-list.ts");
     return async function (this: CliContext, flags: ContractListOptions) {
-      emitResult(this, await contractListCommand(flags, this.process));
+      emitResult(this, await contractListCommand(flags, this));
     };
   },
   parameters: {
     flags: { projectRoot: projectRootFlag },
     aliases: { r: "projectRoot" },
   },
-  docs: { brief: "Reconcile authored contracts with collected Playwright bindings." },
+  docs: {
+    brief: "Reconcile authored contracts with collected Playwright bindings.",
+    fullDescription: [
+      "Classify every authored contract/project case as configured, executable, unbound",
+      "or invalid. Unbound entries carry their defineFigmaTests registration recipe.",
+      "",
+      "Example:",
+      "  framelia contract list",
+    ].join("\n"),
+  },
 });
 
 const refreshBaselineCommand = buildCommand({
@@ -203,7 +214,7 @@ const refreshBaselineCommand = buildCommand({
     const { contractRefreshBaselineCommand } =
       await import("../internal/contract-refresh-baseline.ts");
     return async function (this: CliContext, flags: ContractRefreshBaselineOptions) {
-      emitResult(this, await contractRefreshBaselineCommand(flags, this.process));
+      emitResult(this, await contractRefreshBaselineCommand(flags, this));
     };
   },
   parameters: {
@@ -219,7 +230,16 @@ const refreshBaselineCommand = buildCommand({
     },
     aliases: { r: "projectRoot", c: "contract" },
   },
-  docs: { brief: "Explicitly reacquire and atomically repin one Figma baseline." },
+  docs: {
+    brief: "Explicitly reacquire and atomically repin one Figma baseline.",
+    fullDescription: [
+      "Reacquire one contract's Figma baseline and repin it atomically; the old",
+      "snapshot stays usable on any failure. Needs FIGMA_ACCESS_TOKEN.",
+      "",
+      "Example:",
+      "  framelia contract refresh-baseline --contract login.desktop",
+    ].join("\n"),
+  },
 });
 
 const suggestMasksCommand = buildCommand({
@@ -228,7 +248,7 @@ const suggestMasksCommand = buildCommand({
     const { suggestMasksCommand: runSuggestMasksCommand } =
       await import("../internal/contract-suggest-masks.ts");
     return async function (this: CliContext, flags: SuggestMasksOptions) {
-      emitResult(this, await runSuggestMasksCommand(flags));
+      emitResult(this, await runSuggestMasksCommand(flags, this));
     };
   },
   parameters: {
@@ -239,6 +259,7 @@ const suggestMasksCommand = buildCommand({
         brief: "page URL to scan",
         placeholder: "url",
       },
+      projectRoot: projectRootFlag,
       viewportWidth: {
         kind: "parsed",
         parse: numberParser,
@@ -257,7 +278,7 @@ const suggestMasksCommand = buildCommand({
         kind: "parsed",
         parse: identityParser,
         optional: true,
-        brief: "Playwright storage-state file for an authenticated scan",
+        brief: "storage-state file (default: the recorded storageStatePath)",
         placeholder: "path",
       },
       headed: {
@@ -268,6 +289,7 @@ const suggestMasksCommand = buildCommand({
     },
     aliases: {
       t: "targetUrl",
+      r: "projectRoot",
       w: "viewportWidth",
       H: "viewportHeight",
       s: "storageState",
@@ -277,6 +299,14 @@ const suggestMasksCommand = buildCommand({
   docs: {
     brief:
       "Scan a live page for common dynamic-content signals and propose mask selectors. Proposals only -- never writes to a contract.",
+    fullDescription: [
+      "Scan a live page for dynamic content and propose mask selectors. Never writes a",
+      "contract. --storage-state defaults to the recorded storageStatePath",
+      "(https/loopback only).",
+      "",
+      "Example:",
+      "  framelia contract suggest-masks --target-url https://localhost:3000/",
+    ].join("\n"),
   },
 });
 

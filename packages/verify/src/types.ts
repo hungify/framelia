@@ -58,6 +58,8 @@ export type AppErrorCode =
   | "RUN_BUNDLE_INVALID"
   | "RUN_BUNDLE_DIGEST_MISMATCH"
   | "RUN_BUNDLE_LOCK_TIMEOUT"
+  | "RUN_BUNDLE_SHARDS_PENDING"
+  | "RUN_BUNDLE_SHARD_CONFLICT"
   | "BASELINE_ACQUISITION_FAILED"
   | "AUTHORING_LOCKED"
   | "AUTHORING_CONFLICT";
@@ -189,6 +191,12 @@ export interface CompareOptions {
    * areaGap is computed from the raw baseline/actual sizes before masking and is unaffected.
    */
   maskBounds?: MaskBounds[];
+  /**
+   * `#rrggbb` background both images are alpha-flattened onto before any metric runs
+   * (normally the baseline's canvasFill). Unset: the baseline's border color when it is
+   * opaque, otherwise white.
+   */
+  canvasFill?: string;
 }
 
 export interface CompareOutcome {

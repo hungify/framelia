@@ -1,16 +1,19 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import type { SuggestMasksForUrlOptions, SuggestMasksForUrlOutcome } from "@framelia/verify/cli";
 import { describe, expect, it, vi } from "vitest";
 
-import { UsageError } from "../src/exit.ts";
-import {
-  suggestMasksCommand,
-  type SuggestMasksDependencies,
-} from "../src/internal/contract-suggest-masks.ts";
+import type { CommandEnvironment } from "../src/environment.ts";
+import { EXIT_USAGE_ERROR } from "../src/exit.ts";
+import { suggestMasksCommand } from "../src/internal/contract-suggest-masks.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 function depsWith(
   suggestMasksForUrl: (options: SuggestMasksForUrlOptions) => Promise<SuggestMasksForUrlOutcome>,
-): SuggestMasksDependencies {
-  return { suggestMasksForUrl };
+): CommandEnvironment {
+  return testEnvironment(process, { browser: { suggestMasksForUrl } });
 }
 
 describe("suggestMasksCommand", () => {
@@ -28,7 +31,10 @@ describe("suggestMasksCommand", () => {
         },
         depsWith(mock),
       ),
-    ).rejects.toThrow(UsageError);
+    ).resolves.toMatchObject({
+      exitCode: EXIT_USAGE_ERROR,
+      body: { diagnostics: [{ code: "INVALID_INPUT" }] },
+    });
     expect(mock).not.toHaveBeenCalled();
   });
 
@@ -46,7 +52,10 @@ describe("suggestMasksCommand", () => {
         },
         depsWith(mock),
       ),
-    ).rejects.toThrow(/must use https:\/\//);
+    ).resolves.toMatchObject({
+      exitCode: EXIT_USAGE_ERROR,
+      body: { diagnostics: [{ message: expect.stringMatching(/must use https:\/\//) }] },
+    });
     expect(mock).not.toHaveBeenCalled();
   });
 
@@ -86,7 +95,18 @@ describe("suggestMasksCommand", () => {
         },
         depsWith(mock),
       ),
-    ).rejects.toThrow(/--viewport-width and --viewport-height must be supplied together/);
+    ).resolves.toMatchObject({
+      exitCode: EXIT_USAGE_ERROR,
+      body: {
+        diagnostics: [
+          {
+            message: expect.stringMatching(
+              /--viewport-width and --viewport-height must be supplied together/,
+            ),
+          },
+        ],
+      },
+    });
     expect(mock).not.toHaveBeenCalled();
   });
 
@@ -149,6 +169,7 @@ describe("suggestMasksCommand", () => {
     );
 
     expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(result.body).toMatchObject({ error: "CAPTURE_NAVIGATION_FAILED" });
   });
 
@@ -178,5 +199,39 @@ describe("suggestMasksCommand", () => {
         headless: false,
       }),
     );
+  });
+});
+
+describe("suggestMasksCommand: default storage state", () => {
+  it("uses the project's recorded storageStatePath, but never sends it over plain remote http", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-suggest-state-"));
+    try {
+      fs.writeFileSync(
+        path.join(root, "framelia.config.mjs"),
+        'export default { storageStatePath: ".framelia/auth/user.json" };\n',
+      );
+      fs.mkdirSync(path.join(root, ".framelia", "auth"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".framelia", "auth", "user.json"), "{}");
+      const mock = vi
+        .fn<(options: SuggestMasksForUrlOptions) => Promise<SuggestMasksForUrlOutcome>>()
+        .mockResolvedValue({ ok: true, url: "https://example.test/", suggestions: [] });
+      const options = {
+        projectRoot: root,
+        viewportWidth: undefined,
+        viewportHeight: undefined,
+        storageState: undefined,
+        headed: undefined,
+      };
+
+      await suggestMasksCommand({ ...options, targetUrl: "https://example.test/" }, depsWith(mock));
+      expect(mock.mock.calls[0]?.[0].storageStatePath).toBe(
+        path.join(root, ".framelia", "auth", "user.json"),
+      );
+
+      await suggestMasksCommand({ ...options, targetUrl: "http://example.test/" }, depsWith(mock));
+      expect(mock.mock.calls[1]?.[0].storageStatePath).toBeUndefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

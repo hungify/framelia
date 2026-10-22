@@ -2,8 +2,12 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { signedAuthoritativeRunRequirementsSchema } from "@framelia/contracts/workflow";
-import { canonicalJson, type CanonicalJsonValue } from "@framelia/verify";
+import {
+  signedAuthoritativeRunRequirementsSchema,
+  type Diagnostic,
+  type NextOperation,
+} from "@framelia/contracts/workflow";
+import { canonicalJson, portableErrorMessage, type CanonicalJsonValue } from "@framelia/verify";
 import {
   evaluateAuthoritativeRun,
   type AuthoritativeRunVerdict,
@@ -16,8 +20,9 @@ import {
   PROTECTED_JOB_IDENTITY_ENV,
   TRUSTED_REQUIREMENTS_PUBLIC_KEY_ENV,
 } from "../cli-constants.ts";
+import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import type { CliRuntime } from "../runtime-types.ts";
+import { failureDiagnostic, frameliaNext, nextForFailureCode } from "./outcome.ts";
 import { openProject } from "./project.ts";
 import { readRunProjection, type RunProjection } from "./run-projection.ts";
 
@@ -40,8 +45,10 @@ interface IncompleteGateVerdict {
   executionState: "incomplete";
   visualVerdict: "not-evaluated";
   exitCode: 2;
+  diagnostics: Diagnostic[];
+  /** @deprecated Same entries as `diagnostics`, without `stage`; kept for existing gates. */
   issues: Array<{ code: string; message: string }>;
-  next: { command: string; argv: string[] };
+  next?: NextOperation;
 }
 
 export type DoneGateResult = CliResult<
@@ -59,6 +66,7 @@ export type DoneGateResult = CliResult<
         jobIdentity: string;
         audience: string;
       };
+      readonly diagnostics: Diagnostic[];
       readonly verifier: {
         algorithm: "Ed25519";
         trustRoot: "external-to-project";
@@ -68,7 +76,25 @@ export type DoneGateResult = CliResult<
   | IncompleteGateVerdict
 >;
 
-function incomplete(code: string, message: string): DoneGateResult {
+/** Failures only the protected job's operator can repair (trust root, signature, identity). */
+const OPERATOR_ONLY_PREFIXES = ["SIGNED_REQUIREMENTS_", "TRUST_ROOT_", "PROTECTED_"];
+
+/** The follow-up for a gate that could not evaluate, keeping the caller's `--project-root`. */
+function gateNext(code: string, projectRoot: string | undefined): NextOperation | undefined {
+  if (OPERATOR_ONLY_PREFIXES.some((prefix) => code.startsWith(prefix))) return undefined;
+  if (code === "DONE_GATE_OPTIONS_INVALID") return frameliaNext(["runs", "list"], projectRoot);
+  return (
+    nextForFailureCode(code, projectRoot) ??
+    (code.startsWith("RUN_BUNDLE_") ? frameliaNext(["check", "--all"], projectRoot) : undefined)
+  );
+}
+
+function incompleteGate(
+  code: string,
+  message: string,
+  projectRoot: string | undefined,
+): DoneGateResult {
+  const next = gateNext(code, projectRoot);
   return {
     ok: false,
     exitCode: 2,
@@ -79,8 +105,9 @@ function incomplete(code: string, message: string): DoneGateResult {
       executionState: "incomplete",
       visualVerdict: "not-evaluated",
       exitCode: 2,
+      diagnostics: [{ code, stage: "done-gate", message }],
       issues: [{ code, message }],
-      next: { command: "framelia", argv: ["check", "--all"] },
+      ...(next ? { next } : {}),
     },
   };
 }
@@ -97,9 +124,12 @@ function decodeSignature(value: string): Buffer {
 
 export async function doneGateCommand(
   options: DoneGateOptions,
-  runtime: CliRuntime,
-  now: () => Date = () => new Date(),
+  env: Pick<CommandEnvironment, "process" | "now">,
 ): Promise<DoneGateResult> {
+  const runtime = env.process;
+  const projectRoot = options.projectRoot;
+  const incomplete = (code: string, message: string): DoneGateResult =>
+    incompleteGate(code, message, projectRoot);
   const parsed = doneGateOptionsSchema.safeParse(options);
   if (!parsed.success) {
     return incomplete("DONE_GATE_OPTIONS_INVALID", parsed.error.message);
@@ -116,14 +146,13 @@ export async function doneGateCommand(
   try {
     project = openProject(parsed.data.projectRoot, runtime);
   } catch (error) {
-    const code =
-      error !== null &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof error.code === "string"
-        ? error.code
-        : "PROJECT_CONFIGURATION_INVALID";
-    return incomplete(code, "The selected project root or Framelia configuration is invalid.");
+    const failure = failureDiagnostic(
+      error,
+      "PROJECT_CONFIGURATION_INVALID",
+      "done-gate",
+      `The selected project root or Framelia configuration is invalid: ${portableErrorMessage(error, runtime.cwd())}`,
+    );
+    return incomplete(failure.code, failure.message);
   }
   const requirementsPath = path.resolve(runtime.cwd(), parsed.data.requirements);
   let envelopeValue: unknown;
@@ -189,7 +218,7 @@ export async function doneGateCommand(
       `Signed requirements name run "${payload.runId}", not requested run "${parsed.data.run}".`,
     );
   }
-  const currentTime = now().getTime();
+  const currentTime = env.now().getTime();
   const issuedAt = Date.parse(payload.issuedAt);
   const expiresAt = Date.parse(payload.expiresAt);
   if (expiresAt - issuedAt > MAX_SIGNED_REQUIREMENTS_VALIDITY_MS) {
@@ -264,19 +293,20 @@ export async function doneGateCommand(
           keyFingerprint,
         },
         ...verdict,
+        diagnostics: verdict.issues.map((issue) => ({
+          code: issue.code,
+          stage: "done-gate",
+          message: issue.message,
+        })),
       },
     };
   } catch (error) {
-    const code =
-      error !== null &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof error.code === "string"
-        ? error.code
-        : "RUN_BUNDLE_INVALID";
-    return incomplete(
-      code,
-      "The selected run bundle could not be evaluated. Inspect its portable integrity diagnostics.",
+    const failure = failureDiagnostic(
+      error,
+      "RUN_BUNDLE_INVALID",
+      "done-gate",
+      `The selected run bundle could not be evaluated: ${portableErrorMessage(error, project.root)}`,
     );
+    return incomplete(failure.code, failure.message);
   }
 }

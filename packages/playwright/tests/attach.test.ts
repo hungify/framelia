@@ -1,3 +1,7 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as nodePath from "node:path";
+
 import type { TestInfo } from "@playwright/test";
 import { describe, expect, it } from "vitest";
 
@@ -34,16 +38,26 @@ function fakeTestInfo(): {
 }
 
 describe("buildAttachContext", () => {
-  it("attach() forwards name/path with an image/png content type and resolves void", async () => {
+  it("attach() forwards the file's bytes as an image/png body and resolves void", async () => {
     const { testInfo, calls } = fakeTestInfo();
     const { attach } = buildAttachContext(testInfo);
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "framelia-attach-"));
+    const imagePath = nodePath.join(dir, "expected.png");
+    fs.writeFileSync(imagePath, Buffer.from([1, 2, 3]));
 
-    const result = await attach("expected", "/tmp/expected.png");
+    try {
+      const result = await attach("expected", imagePath);
+      // The body is a detached copy: deleting the source (as Playwright's worker does to
+      // outputDir under preserveOutput "failures-only"/"never") cannot lose evidence.
+      fs.rmSync(dir, { recursive: true, force: true });
 
-    expect(result).toBeUndefined();
-    expect(calls).toEqual([
-      { name: "expected", options: { path: "/tmp/expected.png", contentType: "image/png" } },
-    ]);
+      expect(result).toBeUndefined();
+      expect(calls).toEqual([
+        { name: "expected", options: { body: Buffer.from([1, 2, 3]), contentType: "image/png" } },
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("attachJson() serializes data with an application/json content type and resolves void", async () => {
@@ -68,15 +82,11 @@ describe("buildAttachContext", () => {
     const first = fakeTestInfo();
     const second = fakeTestInfo();
 
-    await buildAttachContext(first.testInfo).attach("a", "/tmp/a.png");
-    await buildAttachContext(second.testInfo).attach("b", "/tmp/b.png");
+    await buildAttachContext(first.testInfo).attachJson("a", { side: "a" });
+    await buildAttachContext(second.testInfo).attachJson("b", { side: "b" });
 
-    expect(first.calls).toEqual([
-      { name: "a", options: { path: "/tmp/a.png", contentType: "image/png" } },
-    ]);
-    expect(second.calls).toEqual([
-      { name: "b", options: { path: "/tmp/b.png", contentType: "image/png" } },
-    ]);
+    expect(first.calls.map((call) => call.name)).toEqual(["a"]);
+    expect(second.calls.map((call) => call.name)).toEqual(["b"]);
   });
 });
 

@@ -5,6 +5,8 @@
 export { publishAttempt } from "./attempt.ts";
 export type { AttemptEvidenceFiles } from "./attempt.ts";
 export { readCasePlans } from "./case-plans.ts";
+export { buildDirectRunPlan } from "./direct-plan.ts";
+export type { DirectRunPlanInput } from "./direct-plan.ts";
 export { computeExecutionGraphDigest } from "./execution-graph.ts";
 export {
   ATTEMPT_EVIDENCE_FILE,
@@ -16,13 +18,19 @@ export {
   computeAttemptId,
   computeCaseId,
   planDir,
+  planFragmentPath,
   runDir,
   runPlanPath,
   runRecordPath,
+  shardCompletionPath,
+  shardDir,
+  shardsDir,
   slug,
   toProjectRelative,
 } from "./layout.ts";
 export type { CaseIdentity } from "./layout.ts";
+export { listRuns } from "./list.ts";
+export type { InvalidRunEntry, RunListing, RunShardProgress, RunSummary } from "./list.ts";
 export { buildCasePlanForCollectedCase } from "./planner.ts";
 export type { CollectedCasePlanContext } from "./planner.ts";
 export { reconcileCasePlan } from "./reconcile.ts";
@@ -30,6 +38,7 @@ export type { CasePlanReconciliation } from "./reconcile.ts";
 export { readRunBundle } from "./read.ts";
 export type { RunBundle } from "./read.ts";
 export { evaluateAuthoritativeRun, readSelectedRun } from "./selected-run.ts";
+export { cacheSelectedRunProjection } from "./selected-run-cache.ts";
 export type {
   AuthoritativeCaseVerdict,
   AuthoritativeRunIssue,
@@ -41,12 +50,23 @@ export type {
   SelectedRun,
 } from "./selected-run.ts";
 export {
+  inspectShardedRun,
+  publishPlanFragment,
+  publishShardCompletion,
+  readPlanFragment,
+} from "./shard-records.ts";
+export type { MissingShard, ShardedRunState, ShardPart, ShardRecords } from "./shard-records.ts";
+export { finalizeShardedRun } from "./sharded-run.ts";
+export type { ShardedRunFinalization } from "./sharded-run.ts";
+export {
   finalizeRunRecord,
   freezeRunPlan,
+  globalErrorDiagnostics,
   publishRunRecord,
   readRunPlan,
   readRunRecord,
   startRunRecord,
 } from "./run.ts";
+export type { FinalizeRunOptions } from "./run.ts";
 export { publishBundleUnit } from "./staged-write.ts";
 export type { StagedFile } from "./staged-write.ts";

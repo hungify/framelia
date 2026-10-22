@@ -3,15 +3,13 @@ import { buildCommand } from "@stricli/core";
 import { identityParser, projectRootFlag } from "../cli-constants.ts";
 import type { CliContext } from "../context.ts";
 import type { AuthOptions } from "../internal/auth.ts";
+import { emitResult } from "../output.ts";
 
 export const authCommand = buildCommand({
   loader: async () => {
-    const [{ authCommand: runAuthCommand }, { createClackPrompts }] = await Promise.all([
-      import("../internal/auth.ts"),
-      import("../internal/clack-prompts.ts"),
-    ]);
-    return function (this: CliContext, flags: AuthOptions) {
-      return runAuthCommand(flags, createClackPrompts(this.process), this.process);
+    const { authCommand: runAuthCommand } = await import("../internal/auth.ts");
+    return async function (this: CliContext, flags: AuthOptions) {
+      emitResult(this, await runAuthCommand(flags, this));
     };
   },
   parameters: {
@@ -26,5 +24,14 @@ export const authCommand = buildCommand({
     },
     aliases: { u: "url", r: "projectRoot", y: "yes" },
   },
-  docs: { brief: "Open Playwright for login and save browser session state." },
+  docs: {
+    brief: "Open Playwright for login and save browser session state.",
+    fullDescription: [
+      "Open a headed browser, wait for you to log in, and save the session to the",
+      "configured storageStatePath (owner-only). Needs an interactive terminal.",
+      "",
+      "Example:",
+      "  framelia auth --url https://app.example.com/login",
+    ].join("\n"),
+  },
 });

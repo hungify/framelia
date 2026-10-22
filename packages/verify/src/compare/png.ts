@@ -95,7 +95,21 @@ export function parseHexRgb(hex: string): [number, number, number] {
 }
 
 export function compositeOnCanvas(src: PNG, canvasHex: string): PNG {
-  const [cr, cg, cb] = parseHexRgb(canvasHex);
+  return compositeOnRgb(src, parseHexRgb(canvasHex));
+}
+
+/**
+ * Like compositeOnCanvas, but returns `src` itself when it is already fully opaque --
+ * the common case for browser screenshots, where copying a large image buys nothing.
+ */
+export function flattenAlpha(src: PNG, background: [number, number, number]): PNG {
+  for (let o = 3; o < src.data.length; o += 4) {
+    if ((src.data[o] as number) !== 255) return compositeOnRgb(src, background);
+  }
+  return src;
+}
+
+function compositeOnRgb(src: PNG, [cr, cg, cb]: [number, number, number]): PNG {
   const out = new PNG({ width: src.width, height: src.height });
   for (let i = 0; i < src.width * src.height; i++) {
     const o = i << 2;

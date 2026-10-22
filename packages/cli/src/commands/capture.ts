@@ -9,7 +9,7 @@ export const captureCommand = buildCommand({
   loader: async () => {
     const { captureCommand: runCaptureCommand } = await import("../internal/capture.ts");
     return async function (this: CliContext, flags: CaptureOptions) {
-      emitResult(this, await runCaptureCommand(flags, this.process));
+      emitResult(this, await runCaptureCommand(flags, this));
     };
   },
   parameters: {
@@ -42,7 +42,16 @@ export const captureCommand = buildCommand({
         placeholder: "color",
       },
     },
-    aliases: { k: "fileKey", n: "nodeId", o: "out", s: "scale", c: "canvasFill" },
+    aliases: { k: "fileKey", n: "nodeId", o: "out" },
   },
-  docs: { brief: "Capture a Figma node baseline image." },
+  docs: {
+    brief: "Capture a Figma node baseline image.",
+    fullDescription: [
+      "Fetch one Figma node render as a PNG for diagnosis (alias: fetch-gold).",
+      "Needs FIGMA_ACCESS_TOKEN.",
+      "",
+      "Example:",
+      "  framelia capture --file-key abc123 --node-id 153:5181 --out figma.png",
+    ].join("\n"),
+  },
 });

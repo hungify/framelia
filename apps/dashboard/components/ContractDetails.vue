@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import type { DashboardContractResult } from "@framelia/contracts";
-import { computed } from "vue";
+import type { DashboardAttempt, DashboardContractResult } from "@framelia/contracts";
+import { computed, ref, watch } from "vue";
 
+import { isDefaultAttempt } from "../lib/attempt-evidence";
 import {
   groupPixelAttributions,
   groupStyleMismatches,
@@ -9,11 +10,44 @@ import {
   styleMismatchGateLabel,
 } from "../lib/contract-evidence";
 import { formatRatio } from "../lib/format";
+import { promoteCommand } from "../lib/promote-command";
 import StatusBadge from "./StatusBadge.vue";
 
 const props = defineProps<{
   contract: DashboardContractResult;
+  /** The non-selected attempt whose evidence the inspector shows, if any. */
+  inspectedAttemptId?: string;
 }>();
+
+const emit = defineEmits<{
+  /** `undefined` returns the inspector to the selected attempt. */
+  inspectAttempt: [attemptId: string | undefined];
+}>();
+
+function isInspected(attempt: DashboardAttempt): boolean {
+  return props.inspectedAttemptId
+    ? attempt.attemptId === props.inspectedAttemptId
+    : isDefaultAttempt(props.contract, attempt);
+}
+
+function inspect(attempt: DashboardAttempt): void {
+  emit("inspectAttempt", isDefaultAttempt(props.contract, attempt) ? undefined : attempt.attemptId);
+}
+
+const promote = computed(() => promoteCommand(props.contract));
+const copyState = ref<"idle" | "copied" | "failed">("idle");
+watch(promote, () => (copyState.value = "idle"));
+
+/** Copies only; the dashboard never runs the promotion itself. */
+async function copyPromoteCommand(): Promise<void> {
+  if (!promote.value) return;
+  try {
+    await navigator.clipboard.writeText(promote.value);
+    copyState.value = "copied";
+  } catch {
+    copyState.value = "failed";
+  }
+}
 
 const reviewNotice = computed(() => {
   if (!props.contract.diagnostics?.length && props.contract.status !== "blocked") return null;
@@ -101,6 +135,36 @@ const resolvedThresholdTooltip = computed(() => {
     >
       <strong class="block text-amber">{{ reviewNotice.title }}</strong>
       <span class="text-text-soft">{{ reviewNotice.message }}</span>
+    </div>
+    <div
+      v-if="promote"
+      class="mx-3.5 mb-3 border border-line-soft rounded-sm px-2.5 py-2 text-xs"
+      data-testid="promote-command"
+    >
+      <div class="flex items-center justify-between gap-2">
+        <strong class="text-text">Accept as new baseline?</strong>
+        <UButton
+          color="neutral"
+          variant="soft"
+          size="xs"
+          aria-label="Copy baseline promote command"
+          @click="copyPromoteCommand"
+          >{{
+            copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"
+          }}</UButton
+        >
+      </div>
+      <code class="block mt-1.5 break-all font-mono text-text-soft select-all">{{ promote }}</code>
+      <p class="m-0 mt-1.5 text-muted">
+        Recaptures the target and promotes it. Review the diff first<span
+          v-if="!contract.baselineKey"
+          data-testid="promote-key-caveat"
+          >, and check <code>--key</code> matches the <code>toMatchPageBaseline</code> key</span
+        >.
+      </p>
+      <span class="sr-only" role="status">{{
+        copyState === "copied" ? "Command copied to clipboard" : ""
+      }}</span>
     </div>
     <dl
       class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-2.5 gap-y-3 w-full min-w-0 m-0 px-3.5 pb-3.5"
@@ -265,6 +329,16 @@ const resolvedThresholdTooltip = computed(() => {
           <code>{{ attempt.attemptId }}</code>
           <strong>{{ attempt.selected ? "selected" : `retry ${attempt.retryIndex}` }}</strong>
         </div>
+        <UButton
+          class="mt-1.5 text-xs"
+          color="neutral"
+          :variant="isInspected(attempt) ? 'soft' : 'ghost'"
+          size="xs"
+          :aria-pressed="isInspected(attempt)"
+          data-testid="inspect-attempt"
+          @click="inspect(attempt)"
+          >{{ isInspected(attempt) ? "Shown in inspector" : "Show in inspector" }}</UButton
+        >
         <div class="mt-1 text-muted">
           Execution {{ attempt.executionState }} · Visual {{ attempt.visualVerdict }}
         </div>

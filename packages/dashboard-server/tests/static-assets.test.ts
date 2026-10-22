@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   assertClientBuildExists,
+  DASHBOARD_HOST_META_NAME,
+  injectServerHead,
+  isClientRoute,
   mountArtifactRoute,
   mountClientRoutes,
 } from "../src/static-assets.ts";
@@ -84,10 +87,52 @@ describe("mountClientRoutes", () => {
 
     const response = await app.request(encodedTraversal);
     const body = await response.text();
-    // Never returns the escaped file's contents -- serveStatic's traversal
-    // guard makes it fall through to the SPA-fallback route instead.
+    // Never returns the escaped file's contents -- serveStatic's traversal guard makes it
+    // fall through, and a file-looking path then 404s rather than getting the shell.
     expect(body).not.toContain("top secret");
-    expect(body).toContain("Framelia");
+    expect(response.status).toBe(404);
+  });
+
+  it("injects <base href='/'> and the server-host marker into the shell", async () => {
+    const { app } = await buildClientApp();
+    const routes = ["/", "/index.html", "/contracts/checkout.desktop@chromium%230"];
+    const responses = await Promise.all(routes.map((route) => app.request(route)));
+    const pages = await Promise.all(responses.map((response) => response.text()));
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+    for (const html of pages) {
+      expect(html).toContain('<base href="/" />');
+      expect(html).toContain(`<meta name="${DASHBOARD_HOST_META_NAME}" content="server" />`);
+    }
+  });
+
+  it("serves the shell for a dotted contract deep link but 404s missing files", async () => {
+    const { app } = await buildClientApp();
+    expect((await app.request("/contracts/checkout.desktop")).status).toBe(200);
+    // A missing chunk must fail loudly, never "load" the HTML shell as JavaScript.
+    expect((await app.request("/assets/index-missing.js")).status).toBe(404);
+    expect((await app.request("/favicon.ico")).status).toBe(404);
+    expect((await app.request("/api/unknown")).status).toBe(404);
+  });
+});
+
+describe("isClientRoute", () => {
+  it("treats extensionless paths and every /contracts/ path as client routes", () => {
+    expect(isClientRoute("/")).toBe(true);
+    expect(isClientRoute("/some/client/route")).toBe(true);
+    expect(isClientRoute("/contracts/a.b.c")).toBe(true);
+    expect(isClientRoute("/assets/app")).toBe(false);
+    expect(isClientRoute("/artifacts/x")).toBe(false);
+    expect(isClientRoute("/events")).toBe(false);
+    expect(isClientRoute("/robots.txt")).toBe(false);
+  });
+});
+
+describe("injectServerHead", () => {
+  it("inserts right after <head>, keeping attributes, and prepends without one", () => {
+    expect(injectServerHead('<html><head lang="en"><title>x</title></head></html>')).toMatch(
+      /^<html><head lang="en"><base href="\/" \/><meta [^>]+\/><title>/,
+    );
+    expect(injectServerHead("<main>x</main>")).toMatch(/^<base href="\/" \/><meta [^>]+\/><main>/);
   });
 });
 
@@ -110,6 +155,48 @@ describe("mountArtifactRoute", () => {
 
     const rejected = await app.request("/artifacts/not-allowlisted.png");
     expect(rejected.status).toBe(404);
+  });
+
+  it("streams with no-cache + ETag and answers a matching If-None-Match with 304", async () => {
+    const evidenceDir = await tempDir("framelia-static-evidence-");
+    const actualPath = path.join(evidenceDir, "actual.png");
+    await fs.writeFile(actualPath, Buffer.from([1, 2, 3]));
+    const app = buildArtifactApp(new Map([["contracts/home/actual.png", actualPath]]));
+
+    const first = await app.request("/artifacts/contracts/home/actual.png");
+    expect(first.status).toBe(200);
+    expect(first.headers.get("cache-control")).toBe("no-cache");
+    expect(first.headers.get("content-length")).toBe("3");
+    expect(new Uint8Array(await first.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    const etag = first.headers.get("etag");
+    expect(etag).toMatch(/^"[0-9a-f-]+"$/);
+
+    const revalidated = await app.request("/artifacts/contracts/home/actual.png", {
+      headers: { "if-none-match": `W/${etag}` },
+    });
+    expect(revalidated.status).toBe(304);
+    expect(revalidated.headers.get("etag")).toBe(etag);
+
+    // A retry rewrites the same name in place: the validator must change with it.
+    await fs.writeFile(actualPath, Buffer.from([4, 5, 6, 7]));
+    const rewritten = await app.request("/artifacts/contracts/home/actual.png", {
+      headers: { "if-none-match": etag! },
+    });
+    expect(rewritten.status).toBe(200);
+    expect(rewritten.headers.get("etag")).not.toBe(etag);
+    expect(new Uint8Array(await rewritten.arrayBuffer())).toEqual(new Uint8Array([4, 5, 6, 7]));
+  });
+
+  it("404s (not 500s) on a malformed percent-escape", async () => {
+    const app = buildArtifactApp(new Map());
+    const response = await app.request("/artifacts/contracts/bad%zz.png");
+    expect(response.status).toBe(404);
+  });
+
+  it("404s when the allowlisted path is a directory", async () => {
+    const evidenceDir = await tempDir("framelia-static-evidence-");
+    const app = buildArtifactApp(new Map([["contracts/home", evidenceDir]]));
+    expect((await app.request("/artifacts/contracts/home")).status).toBe(404);
   });
 
   it("404s when the allowlisted path points at a file that no longer exists", async () => {

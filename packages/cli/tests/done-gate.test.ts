@@ -8,7 +8,7 @@ import {
   type AuthoritativeRunRequirements,
 } from "@framelia/contracts/workflow";
 import { canonicalJson, type CanonicalJsonValue } from "@framelia/verify";
-import { evaluateAuthoritativeRun } from "@framelia/verify/run-bundle";
+import { evaluateAuthoritativeRun, publishPlanFragment, runDir } from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -25,6 +25,7 @@ import {
   FIXTURE_JOB_IDENTITY,
   FIXTURE_SERVED_ORIGIN,
 } from "./selected-run-fixture.ts";
+import { testEnvironment } from "./test-environment.ts";
 
 function validAuthorityNow(): Date {
   return new Date("2026-09-21T12:02:00.000Z");
@@ -341,7 +342,7 @@ describe("signed done-gate authority boundary", () => {
           requirements: signed.requirements,
           projectRoot: root,
         },
-        runtime(root, keyEnv(signed.publicKey)),
+        testEnvironment(runtime(root, keyEnv(signed.publicKey))),
       );
       expect(result.exitCode).toBe(0);
       expect(result.body).toMatchObject({
@@ -392,8 +393,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         { ...options, requirements: anotherRun.requirements },
-        runtime(root, keyEnv(anotherRun.publicKey)),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(anotherRun.publicKey)),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -402,8 +406,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey)),
-        () => new Date("2026-09-21T11:59:59.000Z"),
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey)),
+          {},
+          { now: () => new Date("2026-09-21T11:59:59.000Z") },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -416,8 +423,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         { ...options, requirements: longWindow.requirements },
-        runtime(root, keyEnv(longWindow.publicKey)),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(longWindow.publicKey)),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -426,8 +436,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey)),
-        () => new Date("2026-09-21T12:05:00.000Z"),
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey)),
+          {},
+          { now: () => new Date("2026-09-21T12:05:00.000Z") },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -436,8 +449,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey, { [PROTECTED_JOB_IDENTITY_ENV]: "other-job" })),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey, { [PROTECTED_JOB_IDENTITY_ENV]: "other-job" })),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -446,8 +462,11 @@ describe("signed done-gate authority boundary", () => {
     await expect(
       doneGateCommand(
         options,
-        runtime(root, keyEnv(signed.publicKey, { [AUTHORITY_AUDIENCE_ENV]: "other-audience" })),
-        validAuthorityNow,
+        testEnvironment(
+          runtime(root, keyEnv(signed.publicKey, { [AUTHORITY_AUDIENCE_ENV]: "other-audience" })),
+          {},
+          { now: validAuthorityNow },
+        ),
       ),
     ).resolves.toMatchObject({
       exitCode: 2,
@@ -468,7 +487,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(signed.publicKey)),
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
     );
     expect(result).toMatchObject({
       exitCode: 2,
@@ -484,7 +503,7 @@ describe("signed done-gate authority boundary", () => {
     const trusted = signedRequirements(root, fixture.requirements);
     const unsignedResult = await doneGateCommand(
       { run: "run-selected", requirements: unsigned, projectRoot: root },
-      runtime(root, keyEnv(trusted.publicKey)),
+      testEnvironment(runtime(root, keyEnv(trusted.publicKey))),
     );
     expect(unsignedResult).toMatchObject({
       exitCode: 2,
@@ -498,7 +517,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: trusted.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(wrong.publicKey)),
+      testEnvironment(runtime(root, keyEnv(wrong.publicKey))),
     );
     expect(wrongKeyResult).toMatchObject({
       exitCode: 2,
@@ -512,7 +531,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: inside.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(inside.publicKey)),
+      testEnvironment(runtime(root, keyEnv(inside.publicKey))),
     );
     expect(insideResult).toMatchObject({
       exitCode: 2,
@@ -530,7 +549,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root),
+      testEnvironment(runtime(root)),
     );
     expect(missingKey).toMatchObject({
       exitCode: 2,
@@ -545,7 +564,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(signed.publicKey)),
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
     );
     expect(partial).toMatchObject({
       exitCode: 2,
@@ -583,7 +602,7 @@ describe("signed done-gate authority boundary", () => {
         requirements: signed.requirements,
         projectRoot: root,
       },
-      runtime(root, keyEnv(signed.publicKey)),
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
     );
 
     expect(result).toMatchObject({
@@ -594,6 +613,91 @@ describe("signed done-gate authority boundary", () => {
           expect.objectContaining({ code: "visual-mismatch" }),
           expect.objectContaining({ code: "attempt-record-invalid" }),
         ]),
+      },
+    });
+  });
+});
+
+describe("done-gate outcome diagnostics and follow-ups", () => {
+  it("reports diagnostics beside the deprecated issues alias and omits next for operator-only failures", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root);
+    const signed = signedRequirements(root, fixture.requirements);
+    const missingKey = await doneGateCommand(
+      { run: "run-selected", requirements: signed.requirements, projectRoot: root },
+      testEnvironment(runtime(root)),
+    );
+    expect(missingKey.body).toMatchObject({
+      diagnostics: [{ code: "TRUST_ROOT_MISSING", stage: "done-gate" }],
+      issues: [{ code: "TRUST_ROOT_MISSING" }],
+    });
+    expect(missingKey.body).not.toHaveProperty("next");
+  });
+
+  it("points missing options at runs list, keeping --project-root", async () => {
+    const root = temporaryRoot();
+    const result = await doneGateCommand(
+      { run: undefined, requirements: undefined, projectRoot: root },
+      testEnvironment(runtime(root)),
+    );
+    expect(result.body).toMatchObject({
+      diagnostics: [{ code: "DONE_GATE_OPTIONS_INVALID" }],
+      next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
+    });
+  });
+
+  it("includes the sanitized cause when the selected run bundle cannot be evaluated", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root);
+    const signed = signedRequirements(root, fixture.requirements);
+    fs.rmSync(path.join(root, ".framelia", "runs"), { recursive: true, force: true });
+    const result = await doneGateCommand(
+      { run: "run-selected", requirements: signed.requirements, projectRoot: root },
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
+    );
+    expect(result.exitCode).toBe(2);
+    const body = result.body as { diagnostics: { code: string; message: string }[] };
+    expect(body.diagnostics[0]?.code).toBe("RUN_BUNDLE_MISSING");
+    expect(body.diagnostics[0]?.message).toContain("run-selected");
+    expect(body.diagnostics[0]?.message).not.toContain(root);
+    expect(result.body).toMatchObject({
+      next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
+    });
+  });
+
+  it("treats a sharded run that is not composed yet as incomplete", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root);
+    const signed = signedRequirements(root, fixture.requirements);
+    fs.rmSync(runDir(root, "run-selected"), { recursive: true });
+    await publishPlanFragment(root, {
+      formatVersion: 1,
+      kind: "framelia.run-plan-fragment",
+      runId: "run-selected",
+      shard: { current: 1, total: 2 },
+      policyDigest: fixture.casePlan.policyDigest,
+      retryAcceptance: fixture.casePlan.retryAcceptance,
+      createdAt: "2026-09-15T00:00:00.000Z",
+      casePlans: [fixture.casePlan],
+    });
+
+    const result = await doneGateCommand(
+      { run: "run-selected", requirements: signed.requirements, projectRoot: root },
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
+    );
+
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        executionState: "incomplete",
+        visualVerdict: "not-evaluated",
+        diagnostics: [
+          {
+            code: "RUN_BUNDLE_SHARDS_PENDING",
+            message: expect.stringContaining("framelia runs finalize --run run-selected"),
+          },
+        ],
+        next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
       },
     });
   });

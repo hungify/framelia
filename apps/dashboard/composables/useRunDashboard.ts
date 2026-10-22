@@ -1,34 +1,80 @@
 import type { DashboardContractResult } from "@framelia/contracts";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from "vue-router";
 
 import { useRunArtifact } from "../data-source";
 import { resolveArtifactMode } from "../lib/artifact-mode";
+import { contractForAttempt, inspectedAttempt } from "../lib/attempt-evidence";
 import {
   buildContractTree,
   filterContracts,
   findContractTreeItem,
+  flattenContractTree,
+  parseStatusFilter,
   resolveSelectedContract,
+  stepContract,
   type ContractStatusFilter,
 } from "../lib/contract-tree";
 import { isTypingTarget } from "../lib/dom";
 
-/** Wraps `direction` steps from `currentIndex` within a list of `length` items. */
-export function nextSelectionIndex(
-  currentIndex: number,
-  direction: number,
-  length: number,
-): number {
-  return (((currentIndex + direction) % length) + length) % length;
+const CONTRACT_ROUTE = "/(dashboard)/contracts/[...id]";
+
+/**
+ * The URL query for a search/status filter, keeping any unrelated keys. Empty search and
+ * the `all` status are omitted so the default view keeps a clean URL.
+ */
+export function filterQuery(
+  current: LocationQuery,
+  search: string,
+  status: ContractStatusFilter,
+): LocationQueryRaw {
+  const { q: _q, status: _status, ...rest } = current;
+  return {
+    ...rest,
+    ...(search ? { q: search } : {}),
+    ...(status === "all" ? {} : { status }),
+  };
+}
+
+function queryString(value: LocationQuery[string] | undefined): string {
+  return typeof value === "string" ? value : "";
 }
 
 export function useRunDashboard() {
   const route = useRoute();
   const router = useRouter();
-  const { run, loading, error, staticMode, liveMode, mockMode, artifactUrl } = useRunArtifact();
+  const {
+    run,
+    loading,
+    error,
+    refreshError,
+    staticMode,
+    liveMode,
+    mockMode,
+    connection,
+    artifactUrl,
+  } = useRunArtifact();
 
-  const query = ref("");
-  const status = ref<ContractStatusFilter>("all");
+  // Search and status filter live in the URL query, so a filtered view survives reloads
+  // and can be shared; the refs follow back/forward navigation too.
+  const query = ref(queryString(route.query.q));
+  const status = ref<ContractStatusFilter>(parseStatusFilter(route.query.status));
+  watch(
+    () => [route.query.q, route.query.status] as const,
+    ([q, nextStatus]) => {
+      query.value = queryString(q);
+      status.value = parseStatusFilter(nextStatus);
+    },
+  );
+  watch([query, status], ([search, nextStatus]) => {
+    if (
+      search === queryString(route.query.q) &&
+      nextStatus === parseStatusFilter(route.query.status)
+    )
+      return;
+    void router.replace({ query: filterQuery(route.query, search, nextStatus) });
+  });
+
   const railOpen = ref(true);
   const detailsOpen = ref(true);
 
@@ -40,9 +86,11 @@ export function useRunDashboard() {
     }),
   );
 
-  const contracts = computed(() =>
-    filterContracts(run.value?.contracts ?? [], query.value, status.value),
-  );
+  const allContracts = computed(() => run.value?.contracts ?? []);
+  const contracts = computed(() => filterContracts(allContracts.value, query.value, status.value));
+  const contractTree = computed(() => buildContractTree(contracts.value, run.value?.suiteName));
+  /** The rail's contracts in the order the tree displays them. */
+  const displayedContracts = computed(() => flattenContractTree(contractTree.value));
 
   const selectedId = computed(() => {
     if (!("id" in route.params)) return undefined;
@@ -50,36 +98,50 @@ export function useRunDashboard() {
     return typeof id === "string" && id.length > 0 ? id : undefined;
   });
 
-  const selected = computed(() => resolveSelectedContract(contracts.value, selectedId.value));
-
-  watch(
-    () => {
-      if (!run.value || loading.value || error.value || !selectedId.value) return null;
-      const contract = selected.value;
-      if (!contract || contract.id === selectedId.value) return null;
-      return contract.id;
-    },
-    (nextId) => {
-      if (!nextId) return;
-      void router.replace({ name: "/contracts/[...id]", params: { id: nextId } });
-    },
+  // Selection comes from the URL alone; the filter never changes or rewrites it.
+  const selected = computed(() =>
+    resolveSelectedContract(allContracts.value, displayedContracts.value, selectedId.value),
+  );
+  /** A URL id that names no contract in this run (after loading finished). */
+  const missingContractId = computed(() =>
+    run.value && !selected.value && selectedId.value ? selectedId.value : undefined,
+  );
+  /** The selected contract is excluded by the current search/status filter. */
+  const selectionFiltered = computed(
+    () =>
+      Boolean(selected.value) &&
+      !displayedContracts.value.some((contract) => contract.id === selected.value?.id),
   );
 
-  const contractTree = computed(() => buildContractTree(contracts.value, run.value?.suiteName));
   const selectedTreeItem = computed(() =>
     findContractTreeItem(contractTree.value, selected.value?.id),
   );
 
-  function selectContract(contract: DashboardContractResult) {
-    if (contract.id === selectedId.value) return;
-    void router.push({ name: "/contracts/[...id]", params: { id: contract.id } });
+  // Retry evidence: which attempt the inspector shows. Undefined = the selected attempt.
+  const attemptId = ref<string>();
+  watch(
+    () => selected.value?.id,
+    () => {
+      attemptId.value = undefined;
+    },
+  );
+  const inspectedContract = computed(() =>
+    selected.value ? contractForAttempt(selected.value, attemptId.value) : undefined,
+  );
+  const inspectedRetry = computed(() =>
+    selected.value ? inspectedAttempt(selected.value, attemptId.value) : undefined,
+  );
+  function inspectAttempt(id: string | undefined) {
+    attemptId.value = id;
   }
 
-  function moveSelection(direction: number) {
-    if (!selected.value || contracts.value.length === 0) return;
-    const index = contracts.value.findIndex((contract) => contract.id === selected.value?.id);
-    if (index < 0) return;
-    const next = contracts.value[nextSelectionIndex(index, direction, contracts.value.length)];
+  function selectContract(contract: DashboardContractResult) {
+    if (contract.id === selectedId.value) return;
+    void router.push({ name: CONTRACT_ROUTE, params: { id: contract.id }, query: route.query });
+  }
+
+  function moveSelection(direction: 1 | -1) {
+    const next = stepContract(displayedContracts.value, selected.value?.id, direction);
     if (next) selectContract(next);
   }
 
@@ -97,6 +159,8 @@ export function useRunDashboard() {
     run,
     loading,
     error,
+    refreshError,
+    connection,
     artifactMode,
     artifactUrl,
     query,
@@ -105,6 +169,11 @@ export function useRunDashboard() {
     detailsOpen,
     contracts,
     selected,
+    missingContractId,
+    selectionFiltered,
+    inspectedContract,
+    inspectedRetry,
+    inspectAttempt,
     contractTree,
     selectedTreeItem,
     selectContract,

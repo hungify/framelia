@@ -501,21 +501,6 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
           { contractId: "check.pass", status: "executable" },
         ],
       );
-      // contract migrate is a standalone, previewable command with no fixture of its
-      // own here; this proves the packed dist lazily loads and wires its route/flags
-      // correctly without risking the shared check.pass/check.mismatch fixture flow.
-      const migrateDryRun = runOutcome(
-        process.execPath,
-        [cli, "contract", "migrate", "--project-root", project, "--dry-run"],
-        nestedCwd,
-        [0],
-      );
-      const migrateOutcome = JSON.parse(migrateDryRun.stdout);
-      assert.equal(migrateOutcome.kind, "framelia.contract-migrate-outcome");
-      assert.equal(migrateOutcome.dryRun, true);
-      assert.equal(migrateOutcome.executionState, "completed");
-      assert.deepEqual(migrateOutcome.migrated, []);
-      assert.deepEqual(migrateOutcome.unresolved, []);
       const refreshContract = path.join(project, "contracts", "check-pass.json");
       const refreshPointerBefore = readFileSync(refreshContract);
       const refresh = runOutcome(
@@ -532,7 +517,7 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
         nestedCwd,
         [2],
       );
-      assert.equal(JSON.parse(refresh.stdout).diagnostics[0].code, "BASELINE_ACQUISITION_FAILED");
+      assert.equal(JSON.parse(refresh.stdout).diagnostics[0].code, "FIGMA_TOKEN_MISSING");
       assert.deepEqual(
         readFileSync(refreshContract),
         refreshPointerBefore,

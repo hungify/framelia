@@ -9,7 +9,7 @@ export const doneGateCommand = buildCommand({
   loader: async () => {
     const { doneGateCommand: runDoneGateCommand } = await import("../internal/done-gate.ts");
     return async function (this: CliContext, flags: DoneGateOptions) {
-      emitResult(this, await runDoneGateCommand(flags, this.process));
+      emitResult(this, await runDoneGateCommand(flags, this));
     };
   },
   parameters: {
@@ -32,5 +32,15 @@ export const doneGateCommand = buildCommand({
     },
     aliases: { r: "projectRoot", R: "run", q: "requirements" },
   },
-  docs: { brief: "Evaluate one selected run against protected trusted requirements." },
+  docs: {
+    brief: "Evaluate one selected run against protected trusted requirements.",
+    fullDescription: [
+      "Evaluate one selected run against an Ed25519-signed requirements envelope.",
+      "Trust inputs come only from the protected job environment; project .env files",
+      "are never loaded for this command.",
+      "",
+      "Example:",
+      "  framelia done-gate --run <run-id> --requirements ./requirements.signed.json",
+    ].join("\n"),
+  },
 });

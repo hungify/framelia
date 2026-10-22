@@ -12,7 +12,7 @@ export const compareCommand = buildCommand({
   loader: async () => {
     const { compareCommand: runCompareCommand } = await import("../internal/compare.ts");
     return function (this: CliContext, flags: CompareOptions) {
-      emitResult(this, runCompareCommand(flags, this.process));
+      emitResult(this, runCompareCommand(flags, this));
     };
   },
   parameters: {
@@ -38,7 +38,16 @@ export const compareCommand = buildCommand({
         brief: "comparison profile",
       },
     },
-    aliases: { b: "baseline", a: "actual", o: "outDir", p: "profile" },
+    aliases: { b: "baseline", a: "actual", o: "outDir" },
   },
-  docs: { brief: "Compare baseline and actual PNG files." },
+  docs: {
+    brief: "Compare baseline and actual PNG files.",
+    fullDescription: [
+      "Compare two existing PNG files (alias: diff). Exit 0 match, 1 visual mismatch,",
+      "2 when either file is missing or unreadable.",
+      "",
+      "Example:",
+      "  framelia compare --baseline figma.png --actual actual.png --out-dir ./diff",
+    ].join("\n"),
+  },
 });

@@ -17,14 +17,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   contractCreateCommand,
   type ContractCreateOptions,
-  type ContractCreateDependencies,
 } from "../src/internal/contract-create.ts";
 import { parseFigmaDesignUrl } from "../src/internal/contract-interview.ts";
 import { contractListCommand } from "../src/internal/contract-list.ts";
 import { contractRefreshBaselineCommand } from "../src/internal/contract-refresh-baseline.ts";
 import { openProject } from "../src/internal/project.ts";
-import { nonInteractivePrompts } from "../src/internal/prompts.ts";
 import type { CliRuntime } from "../src/runtime-types.ts";
+import { testEnvironment, type TestAdapters } from "./test-environment.ts";
 
 const PNG_10_BY_10 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAH0lEQVR4nOTJQQ0AAAwCMbLMv+VDARig3z6g7FSttgEAAP//iF8rAQAAAAZJREFUAwCphQMUUAhjNAAAAABJRU5ErkJggg==",
@@ -120,77 +119,82 @@ function immediateChild(): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["-e", ""], { stdio: ["pipe", "pipe", "pipe"] });
 }
 
-function executableCollection(root: string, repeatEach = 1): ContractCreateDependencies {
+function executableCollection(root: string, repeatEach = 1, bound = true): TestAdapters {
   return {
-    fetchBaseline: fakeFetch(),
-    playwrightCli: "/unused/local/playwright-cli.js",
-    spawnPlaywright: (_executable, _argv, options) => {
-      const context = JSON.parse(
-        fs.readFileSync(options.env.FRAMELIA_RUN_CONTEXT!, "utf8"),
-      ) as RunContext;
-      const contractPath = path.join(
-        root,
-        ".framelia/contracts/account.profile/visual-contract.json",
-      );
-      const contract = JSON.parse(fs.readFileSync(contractPath, "utf8")) as Record<string, unknown>;
-      const contractDigest = canonicalJsonDigest(contract as CanonicalJsonValue);
-      const runtimeDigest = `sha256:${"b".repeat(64)}` as const;
-      const specDigest = `sha256:${"c".repeat(64)}` as const;
-      fs.writeFileSync(
-        context.manifestPath,
-        JSON.stringify({
-          formatVersion: 2,
-          kind: "framelia.collection",
-          runId: context.runId,
-          projectRoot: context.projectRoot,
-          policyDigest: context.policyDigest,
-          projects: [
-            {
-              name: "chromium",
-              runtimeDigest,
-              dependencies: [],
-              repeatEach,
-              retries: 0,
-              testDir: "tests",
-            },
-          ],
-          visualCases: Array.from({ length: repeatEach }, (_, repeatIndex) => ({
-            formatVersion: 1,
-            kind: "framelia.collected-case",
-            binding: {
+    figma: { fetchBaseline: fakeFetch() },
+    playwright: {
+      playwrightCli: "/unused/local/playwright-cli.js",
+      spawnPlaywright: (_executable, _argv, options) => {
+        const context = JSON.parse(
+          fs.readFileSync(options.env.FRAMELIA_RUN_CONTEXT!, "utf8"),
+        ) as RunContext;
+        const contractPath = path.join(
+          root,
+          ".framelia/contracts/account.profile/visual-contract.json",
+        );
+        const contract = JSON.parse(fs.readFileSync(contractPath, "utf8")) as Record<
+          string,
+          unknown
+        >;
+        const contractDigest = canonicalJsonDigest(contract as CanonicalJsonValue);
+        const runtimeDigest = `sha256:${"b".repeat(64)}` as const;
+        const specDigest = `sha256:${"c".repeat(64)}` as const;
+        fs.writeFileSync(
+          context.manifestPath,
+          JSON.stringify({
+            formatVersion: 2,
+            kind: "framelia.collection",
+            runId: context.runId,
+            projectRoot: context.projectRoot,
+            policyDigest: context.policyDigest,
+            projects: [
+              {
+                name: "chromium",
+                runtimeDigest,
+                dependencies: [],
+                repeatEach,
+                retries: 0,
+                testDir: "tests",
+              },
+            ],
+            visualCases: Array.from({ length: bound ? repeatEach : 0 }, (_, repeatIndex) => ({
               formatVersion: 1,
-              kind: "framelia.contract-binding",
-              contractId: "account.profile",
-              contractFile: ".framelia/contracts/account.profile/visual-contract.json",
-              contractDigest,
-            },
-            project: "chromium",
-            projectRuntimeDigest: runtimeDigest,
-            specFile: "tests/visual.spec.ts",
-            testListFile: "visual.spec.ts",
-            specFileDigest: specDigest,
-            location: { line: 1, column: 0 },
-            testTitlePath: ["account profile"],
-            repeatIndex,
-          })),
-          setupCases: [],
-        }),
-      );
-      fs.writeFileSync(
-        context.statusPath,
-        JSON.stringify({
-          formatVersion: 1,
-          kind: "framelia.transport-status",
-          writerVersion: "test",
-          phase: "collection",
-          mode: "collect",
-          projectRoot: context.projectRoot,
-          runId: context.runId,
-          state: "completed",
-          diagnostics: [],
-        }),
-      );
-      return immediateChild();
+              kind: "framelia.collected-case",
+              binding: {
+                formatVersion: 1,
+                kind: "framelia.contract-binding",
+                contractId: "account.profile",
+                contractFile: ".framelia/contracts/account.profile/visual-contract.json",
+                contractDigest,
+              },
+              project: "chromium",
+              projectRuntimeDigest: runtimeDigest,
+              specFile: "tests/visual.spec.ts",
+              testListFile: "visual.spec.ts",
+              specFileDigest: specDigest,
+              location: { line: 1, column: 0 },
+              testTitlePath: ["account profile"],
+              repeatIndex,
+            })),
+            setupCases: [],
+          }),
+        );
+        fs.writeFileSync(
+          context.statusPath,
+          JSON.stringify({
+            formatVersion: 1,
+            kind: "framelia.transport-status",
+            writerVersion: "test",
+            phase: "collection",
+            mode: "collect",
+            projectRoot: context.projectRoot,
+            runId: context.runId,
+            state: "completed",
+            diagnostics: [],
+          }),
+        );
+        return immediateChild();
+      },
     },
   };
 }
@@ -229,9 +233,7 @@ describe("contract authoring workflow", () => {
         scope: undefined,
         pageReason: undefined,
       }),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
 
     expect(result).toMatchObject({
@@ -253,9 +255,7 @@ describe("contract authoring workflow", () => {
     const root = temporaryProject();
     const result = await contractCreateCommand(
       createOptions(root),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
 
     expect(result).toMatchObject({
@@ -303,14 +303,15 @@ describe("contract authoring workflow", () => {
     const dependencies = executableCollection(root, 2);
     const created = await contractCreateCommand(
       createOptions(root),
-      nonInteractivePrompts,
-      runtime(root),
-      dependencies,
+      testEnvironment(runtime(root), dependencies),
     );
     expect(created.body.runnable).toBe(true);
     expect(created.body.registration).toBeUndefined();
 
-    const listed = await contractListCommand({ projectRoot: root }, runtime(root), dependencies);
+    const listed = await contractListCommand(
+      { projectRoot: root },
+      testEnvironment(runtime(root), dependencies),
+    );
     expect(listed).toMatchObject({
       exitCode: 0,
       body: {
@@ -335,32 +336,24 @@ describe("contract authoring workflow", () => {
     fs.writeFileSync(foreignPath, "foreign bytes\n");
     const refused = await contractCreateCommand(
       createOptions(root, { output: "custom/contract.json", force: true }),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
     expect(refused.exitCode).toBe(2);
     expect(fs.readFileSync(foreignPath, "utf8")).toBe("foreign bytes\n");
 
     const first = await contractCreateCommand(
       createOptions(root),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
     expect(first.exitCode).toBe(0);
     const sibling = await contractCreateCommand(
       createOptions(root, { contractId: "account.mobile", name: "Account mobile" }),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
     expect(sibling.exitCode).toBe(0);
     const replaced = await contractCreateCommand(
       createOptions(root, { name: "Profile reviewed", force: true }),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch("#00ff00ff") },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch("#00ff00ff") } }),
     );
     expect(replaced).toMatchObject({ body: { outcome: "replaced", contract: { revision: 2 } } });
     expect(
@@ -377,9 +370,7 @@ describe("contract authoring workflow", () => {
     const root = temporaryProject();
     const created = await contractCreateCommand(
       createOptions(root),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
     expect(created.exitCode).toBe(0);
     const contractPath = path.join(
@@ -389,15 +380,16 @@ describe("contract authoring workflow", () => {
     let concurrentBytes = "";
     const refresh = await contractRefreshBaselineCommand(
       { projectRoot: root, contract: "account.profile" },
-      runtime(root),
-      {
-        fetchBaseline: fakeFetch("#00ff00ff", () => {
-          const contract = JSON.parse(fs.readFileSync(contractPath, "utf8"));
-          contract.name = "Concurrent edit";
-          concurrentBytes = `${JSON.stringify(contract, null, 2)}\n`;
-          fs.writeFileSync(contractPath, concurrentBytes);
-        }),
-      },
+      testEnvironment(runtime(root), {
+        figma: {
+          fetchBaseline: fakeFetch("#00ff00ff", () => {
+            const contract = JSON.parse(fs.readFileSync(contractPath, "utf8"));
+            contract.name = "Concurrent edit";
+            concurrentBytes = `${JSON.stringify(contract, null, 2)}\n`;
+            fs.writeFileSync(contractPath, concurrentBytes);
+          }),
+        },
+      }),
     );
     expect(refresh).toMatchObject({
       exitCode: 2,
@@ -410,9 +402,7 @@ describe("contract authoring workflow", () => {
     const root = temporaryProject();
     const created = await contractCreateCommand(
       createOptions(root),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
     expect(created.exitCode).toBe(0);
     const contractPath = path.join(
@@ -425,9 +415,8 @@ describe("contract authoring workflow", () => {
 
     const failed = await contractRefreshBaselineCommand(
       { projectRoot: root, contract: "account.profile" },
-      runtime(root),
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch("#00ff00ff") } }),
       {
-        fetchBaseline: fakeFetch("#00ff00ff"),
         afterSnapshotPublished: () => {
           throw new Error("simulated pointer failure");
         },
@@ -449,9 +438,7 @@ describe("contract authoring workflow", () => {
     const root = temporaryProject();
     const created = await contractCreateCommand(
       createOptions(root),
-      nonInteractivePrompts,
-      runtime(root),
-      { fetchBaseline: fakeFetch() },
+      testEnvironment(runtime(root), { figma: { fetchBaseline: fakeFetch() } }),
     );
     expect(created.exitCode).toBe(0);
     const original = path.join(root, ".framelia/contracts/account.profile/visual-contract.json");
@@ -462,7 +449,7 @@ describe("contract authoring workflow", () => {
     fs.copyFileSync(original, duplicate);
     fs.writeFileSync(malformed, "{\n");
 
-    const listed = await contractListCommand({ projectRoot: root }, runtime(root));
+    const listed = await contractListCommand({ projectRoot: root }, testEnvironment(runtime(root)));
     expect(listed.exitCode).toBe(2);
     expect(
       listed.body.contracts.filter((entry) => entry.contractId === "account.profile"),
@@ -481,13 +468,80 @@ describe("contract authoring workflow", () => {
     const root = temporaryProject();
     fs.writeFileSync(path.join(root, "framelia.config.ts"), "export default {};\n");
 
-    await expect(contractListCommand({ projectRoot: root }, runtime(root))).resolves.toMatchObject({
+    await expect(
+      contractListCommand({ projectRoot: root }, testEnvironment(runtime(root))),
+    ).resolves.toMatchObject({
       exitCode: 2,
       body: {
         kind: "framelia.contract-list-outcome",
         executionState: "error",
         diagnostics: [{ code: "MULTIPLE_PROJECT_CONFIGS" }],
       },
+    });
+  });
+});
+
+describe("contract command follow-ups", () => {
+  it("gives each unbound contract its registration recipe and all-bound lists a check", async () => {
+    const root = temporaryProject(true);
+    await contractCreateCommand(
+      createOptions(root),
+      testEnvironment(runtime(root), executableCollection(root)),
+    );
+
+    const unbound = await contractListCommand(
+      { projectRoot: root },
+      testEnvironment(runtime(root), executableCollection(root, 1, false)),
+    );
+    expect(unbound.body).toMatchObject({
+      contracts: [{ status: "unbound", recipe: expect.stringContaining("defineFigmaTests") }],
+      next: { command: "framelia", argv: ["contract", "list", "--project-root", root] },
+    });
+
+    const bound = await contractListCommand(
+      { projectRoot: root },
+      testEnvironment(runtime(root), executableCollection(root)),
+    );
+    expect(bound.body).toMatchObject({
+      exitCode: 0,
+      next: { command: "framelia", argv: ["check", "--all", "--project-root", root] },
+    });
+  });
+
+  it("reports a Figma failure without a token as FIGMA_TOKEN_MISSING and points at status", async () => {
+    const root = temporaryProject();
+    const result = await contractCreateCommand(
+      createOptions(root),
+      testEnvironment(runtime(root), {
+        figma: {
+          fetchBaseline: async () => ({
+            ok: false,
+            fetched: false,
+            errorClass: "auth",
+            message: "No Figma token found (set FIGMA_ACCESS_TOKEN).",
+          }),
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        authored: false,
+        diagnostics: [{ code: "FIGMA_TOKEN_MISSING" }],
+        next: { command: "framelia", argv: ["status", "--project-root", root] },
+      },
+    });
+  });
+
+  it("points refresh-baseline without --contract at contract list", async () => {
+    const root = temporaryProject();
+    const result = await contractRefreshBaselineCommand(
+      { projectRoot: root, contract: undefined },
+      testEnvironment(runtime(root)),
+    );
+    expect(result.body).toMatchObject({
+      diagnostics: [{ code: "CONTRACT_REQUIRED" }],
+      next: { command: "framelia", argv: ["contract", "list", "--project-root", root] },
     });
   });
 });

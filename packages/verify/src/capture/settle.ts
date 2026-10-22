@@ -13,27 +13,84 @@ const NO_ANIMATION_CSS = `
 }
 `;
 
+/** Marks the freeze <style> settle() injects, so it is injected once and removable after. */
+const FREEZE_STYLE_ATTRIBUTE = "data-framelia-freeze";
+/**
+ * Share of the capture's remaining time budget the font wait may use. The rest is left
+ * for selector/mask resolution and the screenshots, so a stuck web font ends in the
+ * capture's own fontPolicy verdict ("required" rejects, "warn" warns) instead of the
+ * caller's outer matcher timeout firing first with a generic message.
+ */
+export const FONT_READY_BUDGET_FRACTION = 0.5;
+
+export function fontReadyTimeoutMs(remainingBudgetMs: number): number {
+  return Math.max(0, Math.floor(remainingBudgetMs * FONT_READY_BUDGET_FRACTION));
+}
+
+/**
+ * Share of the capture's remaining time budget the network-idle wait may use, never more
+ * than NETWORK_IDLE_BEST_EFFORT_MS. A short matcher `timeout` must not be spent almost
+ * entirely on this best-effort wait and then end in a generic matcher timeout.
+ */
+export const NETWORK_IDLE_BUDGET_FRACTION = 0.25;
+
+export function networkIdleTimeoutMs(remainingBudgetMs: number): number {
+  return Math.max(
+    0,
+    Math.min(
+      NETWORK_IDLE_BEST_EFFORT_MS,
+      Math.floor(remainingBudgetMs * NETWORK_IDLE_BUDGET_FRACTION),
+    ),
+  );
+}
+
+/**
+ * @param captureBudgetMs the capture's remaining time budget when settle() starts; the
+ *   network-idle wait gets NETWORK_IDLE_BUDGET_FRACTION of it (at most
+ *   NETWORK_IDLE_BEST_EFFORT_MS), and the font wait gets FONT_READY_BUDGET_FRACTION of
+ *   whatever is left after network idle.
+ */
 export async function settle(
   page: Page,
   warnings: string[],
   devtoolsSelector: string | undefined,
   animationPolicy: "freeze" | "allow",
-  fontReadyTimeoutMs: number,
+  captureBudgetMs: number,
 ): Promise<FontReadiness> {
-  await page
-    .waitForLoadState("networkidle", { timeout: NETWORK_IDLE_BEST_EFFORT_MS })
-    .catch(() =>
-      warnings.push(
-        `network did not become idle within ${NETWORK_IDLE_BEST_EFFORT_MS}ms; capture may include pending requests.`,
-      ),
-    );
+  const startedMs = Date.now();
+  const idleTimeoutMs = networkIdleTimeoutMs(captureBudgetMs);
+  const cutShort =
+    idleTimeoutMs < NETWORK_IDLE_BEST_EFFORT_MS
+      ? ` (cut short by the ${Math.max(0, Math.floor(captureBudgetMs))}ms capture budget; the best-effort wait is ${NETWORK_IDLE_BEST_EFFORT_MS}ms)`
+      : "";
+  const networkIdleWarning = `network did not become idle within ${idleTimeoutMs}ms${cutShort}; capture may include pending requests.`;
+  // Playwright treats `timeout: 0` as "no timeout", so an exhausted budget skips the wait.
+  if (idleTimeoutMs > 0) {
+    await page
+      .waitForLoadState("networkidle", { timeout: idleTimeoutMs })
+      .catch(() => warnings.push(networkIdleWarning));
+  } else {
+    warnings.push(networkIdleWarning);
+  }
   if (animationPolicy === "freeze") {
     try {
-      await page.addStyleTag({ content: NO_ANIMATION_CSS });
+      // Tagged and idempotent: repeated captures on one caller-owned page never stack
+      // duplicate tags, and releaseAnimationFreeze() can remove it afterwards.
+      await page.evaluate(
+        ({ css, attribute }) => {
+          if (document.querySelector(`style[${attribute}]`)) return;
+          const style = document.createElement("style");
+          style.setAttribute(attribute, "");
+          style.textContent = css;
+          (document.head ?? document.documentElement).append(style);
+        },
+        { css: NO_ANIMATION_CSS, attribute: FREEZE_STYLE_ATTRIBUTE },
+      );
     } catch {
       warnings.push("could not inject no-animation CSS.");
     }
   }
+  const fontTimeoutMs = fontReadyTimeoutMs(captureBudgetMs - (Date.now() - startedMs));
   const fonts = await page
     .evaluate(async (timeoutMs) => {
       if (!("fonts" in document))
@@ -53,7 +110,7 @@ export async function settle(
           .filter((font) => font.status === "error")
           .map((font) => font.family),
       };
-    }, fontReadyTimeoutMs)
+    }, fontTimeoutMs)
     .catch(() => ({ supported: false, status: "unknown" as const, failed: [] as string[] }));
   if (devtoolsSelector) {
     try {
@@ -71,6 +128,23 @@ export async function settle(
   }
   await page.waitForTimeout(NETWORK_IDLE_BUFFER_MS);
   return fonts;
+}
+
+/**
+ * Removes the freeze <style> settle() injected, restoring the caller's page: capture
+ * functions that screenshot a caller-owned Page must not leave animations disabled for
+ * whatever the caller does next. Best effort -- a closed or navigated page has nothing
+ * left to restore.
+ */
+export async function releaseAnimationFreeze(page: Page): Promise<void> {
+  if (page.isClosed()) return;
+  await page
+    .evaluate((attribute) => {
+      for (const style of Array.from(document.querySelectorAll(`style[${attribute}]`))) {
+        style.remove();
+      }
+    }, FREEZE_STYLE_ATTRIBUTE)
+    .catch(() => {});
 }
 
 export function fontIncomplete(fonts: FontReadiness): boolean {

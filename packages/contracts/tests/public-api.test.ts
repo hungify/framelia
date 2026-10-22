@@ -25,6 +25,15 @@ describe("public API surface", () => {
     expect(workflowApi.authoritativeRunRequirementsSchema).toBeDefined();
     expect(workflowApi.signedAuthoritativeRunRequirementsSchema).toBeDefined();
     expect(publicApi.dashboardRunSchema).toBeDefined();
+    expect(publicApi.parseDashboardRun).toBeDefined();
+    expect(publicApi.DASHBOARD_RUN_SCHEMA_VERSION).toBe(2);
+  });
+
+  it("exports the format-version compatibility helpers", () => {
+    expect(publicApi.checkFormatVersion).toBeDefined();
+    expect(publicApi.formatVersionMismatchMessage).toBeDefined();
+    expect(publicApi.formatVersionSchema).toBeDefined();
+    expect(publicApi.describeSchemaIssues).toBeDefined();
   });
 
   it("keeps the low-level verification request and score contracts", () => {

@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { runRecordPath } from "@framelia/verify/run-bundle";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -85,6 +86,29 @@ describe("selected run dashboard report", () => {
     }
   });
 
+  it("serves snapshot() and files() from one projection until the run changes", async () => {
+    const root = await temporaryRoot("framelia-source-cache-");
+    await createSelectedRun(root, { runId: "run-cached", attempts: [false, true] });
+    const source = selectedDashboardSource(root, "run-cached");
+
+    const snapshot = await source.snapshot();
+    const files = await source.files();
+    expect(await source.snapshot()).toBe(snapshot);
+    expect(await source.files()).toBe(files);
+    expect(files.size).toBeGreaterThan(0);
+
+    // A rewritten run record (e.g. a re-seal) is a change: the next call re-projects it.
+    const recordPath = runRecordPath(root, "run-cached");
+    const record = JSON.parse(await fs.readFile(recordPath, "utf8"));
+    await fs.writeFile(
+      recordPath,
+      `${JSON.stringify({ ...record, finalizedAt: "2026-09-15T00:00:20.000Z" }, null, 2)}\n`,
+    );
+    const refreshed = await source.snapshot();
+    expect(refreshed).not.toBe(snapshot);
+    expect(refreshed.finishedAt).toBe("2026-09-15T00:00:20.000Z");
+  });
+
   it("report command requires an explicit run and returns that identity", async () => {
     const root = await temporaryRoot("framelia-report-command-");
     await createSelectedRun(root, { runId: "run-command" });
@@ -95,9 +119,11 @@ describe("selected run dashboard report", () => {
       stdout: { write: () => true },
       stderr: { write: () => true },
     } as never;
-    const result = await reportCommand({ projectRoot: root, run: "run-command", output }, runtime, {
-      clientRoot: await clientFixture(),
-    });
+    const result = await reportCommand(
+      { projectRoot: root, run: "run-command", output },
+      { process: runtime },
+      { clientRoot: await clientFixture() },
+    );
     expect(result.body).toMatchObject({
       kind: "framelia.report-outcome",
       command: "report",
@@ -121,7 +147,7 @@ describe("selected run dashboard report", () => {
 
     const missing = await reportCommand(
       { projectRoot: root, run: undefined, output: undefined },
-      runtime,
+      { process: runtime },
     );
     expect(missing).toMatchObject({
       exitCode: 2,
@@ -131,5 +157,50 @@ describe("selected run dashboard report", () => {
         diagnostics: [{ code: "REPORT_FAILED", message: expect.stringContaining("requires") }],
       },
     });
+  });
+});
+
+describe("report replacement", () => {
+  it("replaces a previous report only after the new one is complete", async () => {
+    const root = await temporaryRoot("framelia-report-swap-");
+    await createSelectedRun(root, { runId: "run-swap" });
+    const outputDirectory = path.join(root, "report");
+    const clientRoot = await clientFixture();
+    await exportDashboardReport({
+      projectRoot: root,
+      runId: "run-swap",
+      outputDirectory,
+      clientRoot,
+    });
+    const previousIndex = await fs.readFile(path.join(outputDirectory, "index.html"), "utf8");
+
+    await expect(
+      exportDashboardReport({
+        projectRoot: root,
+        runId: "run-swap",
+        outputDirectory,
+        clientRoot: path.join(root, "missing-client"),
+      }),
+    ).rejects.toThrow(/ENOENT/);
+    await expect(fs.readFile(path.join(outputDirectory, "index.html"), "utf8")).resolves.toBe(
+      previousIndex,
+    );
+    expect((await fs.readdir(root)).filter((name) => name.includes("framelia-staging"))).toEqual(
+      [],
+    );
+
+    await fs.writeFile(path.join(clientRoot, "index.html"), "<main>v2</main>");
+    await exportDashboardReport({
+      projectRoot: root,
+      runId: "run-swap",
+      outputDirectory,
+      clientRoot,
+    });
+    await expect(fs.readFile(path.join(outputDirectory, "index.html"), "utf8")).resolves.toBe(
+      "<main>v2</main>",
+    );
+    expect((await fs.readdir(root)).filter((name) => name.includes("framelia-staging"))).toEqual(
+      [],
+    );
   });
 });

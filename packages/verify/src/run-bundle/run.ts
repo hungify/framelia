@@ -185,6 +185,15 @@ function selectFinalAttempt(
   return (passed.at(-1) ?? byRetry.at(-1))?.attemptId;
 }
 
+/** One diagnostic per runner-level global error, optionally prefixed with where it came from. */
+export function globalErrorDiagnostics(messages: readonly string[], prefix?: string): Diagnostic[] {
+  return messages.map((message) => ({
+    code: "execution-global-error",
+    stage: "execution",
+    message: prefix ? `${prefix}: ${message}` : message,
+  }));
+}
+
 export interface FinalizeRunOptions {
   retryAcceptance: RetryAcceptancePolicy;
   now?: () => Date;

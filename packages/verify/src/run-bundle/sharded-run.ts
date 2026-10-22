@@ -17,6 +17,7 @@ import { withRunLock } from "./lock.ts";
 import {
   finalizeRunRecordLocked,
   freezeRunPlan,
+  globalErrorDiagnostics,
   readRunPlan,
   readRunRecord,
   sealRunFinalizationError,
@@ -128,11 +129,7 @@ export function finalizeShardedRun(
           ...diagnostic,
           message: `${shard.label}: ${diagnostic.message}`,
         })),
-        ...shard.completion.globalErrors.map((message) => ({
-          code: "execution-global-error",
-          stage: "execution",
-          message: `${shard.label}: ${message}`,
-        })),
+        ...globalErrorDiagnostics(shard.completion.globalErrors, shard.label),
       ]);
       const resultStatus = shards
         .map((shard) => shard.completion.resultStatus)

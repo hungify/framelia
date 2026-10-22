@@ -1,7 +1,7 @@
 import { SCHEMA_VERSION, verificationRequestSchema } from "@framelia/contracts";
 import { describe, expect, it } from "vitest";
 
-import { unionArea } from "../src/capture/masks.ts";
+import { unionArea } from "../src/internal.ts";
 
 const target = { kind: "web" as const, url: "http://localhost:3000" };
 const base = {

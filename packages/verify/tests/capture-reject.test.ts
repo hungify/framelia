@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { reject } from "../src/capture/reject.ts";
-import { SCHEMA_VERSION } from "../src/types.ts";
+import { SCHEMA_VERSION } from "../src/index.ts";
 
 describe("reject", () => {
   it("builds a RejectResult carrying the given error/message and the current schema version", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { baselineSchema, figmaBaselineSchema } from "../src/baseline.ts";
+import { baselineSchema, figmaBaselineSchema } from "../src/index.ts";
 
 const validFigmaBaseline = {
   kind: "figma" as const,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { webTargetSchema } from "../src/target.ts";
+import { webTargetSchema } from "../src/index.ts";
 
 describe("webTargetSchema", () => {
   it("round-trips a valid web target", () => {

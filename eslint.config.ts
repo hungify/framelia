@@ -173,6 +173,11 @@ export default defineConfigWithVueTs(
   },
 
   {
+    name: "framelia/commonjs-configs",
+    files: ["**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
     name: "framelia/declaration-files",
     files: ["**/*.d.ts"],
     rules: { "@typescript-eslint/no-empty-object-type": "off" },

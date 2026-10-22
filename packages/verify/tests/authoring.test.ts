@@ -4,8 +4,8 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { withAuthoringLock } from "../src/authoring.ts";
-import { AppError } from "../src/types.ts";
+import { withAuthoringLock } from "../src/index.ts";
+import { AppError } from "../src/index.ts";
 
 const roots: string[] = [];
 

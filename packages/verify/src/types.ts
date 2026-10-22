@@ -8,7 +8,6 @@ import {
   type StyleToleranceOverrides,
 } from "@framelia/contracts";
 
-import type { MaskBounds, MaskEvidence } from "./capture/types.ts";
 import type { DiffCluster } from "./compare/pixel.ts";
 import type { StyleSnapshot } from "./figma-node-style.ts";
 
@@ -21,7 +20,28 @@ export type {
   Stability,
   StyleToleranceOverrides,
 };
-export type { MaskBounds, MaskEvidence };
+
+export const MASK_COLOR = "#FF00FF";
+
+export interface MaskBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MaskEvidence {
+  requested: Array<{ selector: string; reason: string; maxMatches: number; matchedCount: number }>;
+  matchedCount: number;
+  bounds: MaskBounds[];
+  unionMaskedArea: number;
+  maskedAreaRatio: number;
+  maskColor: typeof MASK_COLOR;
+  status: "applied" | "skipped" | "failed";
+  code?: string;
+  message?: string;
+  resolvedAt: string;
+}
 
 /**
  * Precondition-violation failure classes: raised before any verification

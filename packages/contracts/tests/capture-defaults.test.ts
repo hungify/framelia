@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { captureDefaultsSchema } from "../src/capture-defaults.ts";
 import { DEFAULT_MAX_MASKED_AREA_RATIO } from "../src/constants.ts";
+import { captureDefaultsSchema } from "../src/index.ts";
 
 describe("captureDefaultsSchema", () => {
   it("round-trips an empty object (every field optional)", () => {

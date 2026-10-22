@@ -1,0 +1,23 @@
+{
+  "name": "@framelia/example",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Copy-me template for a deep-module workspace package (see packages/README.md). Not published.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "framelia-dev": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

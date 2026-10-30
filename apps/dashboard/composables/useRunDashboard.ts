@@ -86,8 +86,15 @@ export function useRunDashboard() {
   function onKeydown(event: KeyboardEvent) {
     if (isTypingTarget(event.target)) return;
     if (!event.altKey) return;
-    if (event.key === "ArrowRight") moveSelection(1);
-    if (event.key === "ArrowLeft") moveSelection(-1);
+    // Alt+Left/Right is also the browser's back/forward shortcut -- preventDefault it.
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      moveSelection(1);
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      moveSelection(-1);
+    }
   }
 
   onMounted(() => window.addEventListener("keydown", onKeydown));

@@ -13,6 +13,7 @@
     "*.tsbuildinfo",
     "apps/dashboard/auto-imports.d.ts",
     "apps/dashboard/components.d.ts",
-    "apps/dashboard/typed-router.d.ts"
+    "apps/dashboard/typed-router.d.ts",
+    "examples/framelia-reference-app/**"
   ]
 }

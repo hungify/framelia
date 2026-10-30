@@ -8,7 +8,7 @@
     "build": "pnpm --filter @framelia/contracts build && pnpm --filter @framelia/verify build && pnpm --filter @framelia/dashboard-server build && pnpm --filter @framelia/playwright build && pnpm --filter framelia build",
     "dev:dashboard": "pnpm --filter @framelia/dashboard dev",
     "framelia": "pnpm --filter framelia cli",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter '!./examples/**' -r typecheck",
     "test": "pnpm --filter @framelia/contracts test && pnpm --filter @framelia/verify test && pnpm --filter @framelia/dashboard-server test && pnpm --filter @framelia/playwright test && pnpm --filter framelia test && pnpm --filter @framelia/dashboard test",
     "test:consumer": "node scripts/consumer-smoke.mjs",
     "lint": "oxlint",

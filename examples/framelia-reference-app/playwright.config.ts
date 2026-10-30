@@ -15,8 +15,6 @@ export default defineConfig({
   outputDir: ".cache/playwright",
   fullyParallel: false,
   reporter: [["@framelia/playwright/reporter"], ["line"]],
-  // toMatchFigma does real Figma REST fetches (metadata + image render) bounded by
-  // this.timeout inside the matcher; the 5s Playwright default is too tight for that.
   expect: {
     timeout: 30_000,
   },

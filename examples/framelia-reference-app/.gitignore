@@ -7,9 +7,9 @@ playwright/.auth/
 
 # Ignore everything generated under .framelia/ (auth state, verification evidence,
 # baselines, dashboard reports) except the contracts themselves -- visual-contract.json
-# is the spec (target URL, Figma baseline, viewport, scope), meant to be committed so
-# CI and teammates can run `pnpm test:visual`/`framelia done-gate` against it without
-# recreating it locally first. See packages/cli/README.md's "never commit tokens or
+# is the spec (target URL, Figma baseline, viewport, scope), meant to be committed.
+# Baselines under .framelia/baselines are ignored, so a fresh checkout must pin them
+# once before `pnpm test:visual` can pass (see README.md). See packages/cli/README.md's "never commit tokens or
 # place them in contracts" -- that warning only makes sense if contracts are committed.
 .framelia/*
 !.framelia/contracts/

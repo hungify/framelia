@@ -1,6 +1,6 @@
 # Framelia reference app
 
-Standalone TanStack Start consumer app showing Framelia around a real Better Auth flow: login/signup (email/password + GitHub/Google OAuth), protected dashboard, profile settings, logout, deterministic auth fixtures, and all three Framelia Playwright matchers.
+Standalone TanStack Start consumer app showing Framelia around a real Better Auth flow: login/signup (email/password + GitHub/Google OAuth), protected dashboard, profile settings, logout, deterministic auth fixtures, contract-driven Figma checks through `defineFigmaTests`, and the web-to-web matchers.
 
 This example is a member of the root pnpm workspace (`framelia`/`@framelia/playwright`/`@framelia/dashboard-server` resolve via `workspace:*`, not `link:`) -- required so its own Playwright test process and `packages/playwright`'s matchers share exactly one `@playwright/test` install; a `link:` reference resolved from outside the workspace pulls in a second, physically distinct copy, which Playwright refuses to load ("Requiring @playwright/test second time"). It otherwise keeps the generated Mugnavo architecture: TanStack Start, shadcn/ui, Better Auth, Drizzle/PostgreSQL, Vite+, Nitro, and Playwright. The root `pnpm-workspace.yaml` scopes this app's `vite` → `vite-plus` alias override to `"framelia-reference-app>vite"` so it doesn't also hijack `apps/dashboard`'s own real `vite` dependency.
 
@@ -18,6 +18,7 @@ cd examples/framelia-reference-app
 cp .env.example .env
 cp .env.e2e.example .env.e2e
 pnpm install
+pnpm framelia:build   # the workspace packages export built dist output
 # Set BETTER_AUTH_SECRET in .env; `pnpm auth:secret` can generate one.
 docker compose up -d
 pnpm db:setup
@@ -43,11 +44,18 @@ Optional. Set `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` and/or `GOOGLE_CLIENT_ID
 
 Playwright config creates `playwright/.auth/user.json` through a real signup/login flow. Auth state is ignored by Git. `.env.e2e` contains `PORT` and `E2E_*` credentials; app secrets and database URL remain in `.env`. `FIGMA_ACCESS_TOKEN` is only needed once, locally, to pin or refresh a Figma baseline (see "Figma-to-web" below) -- never at test-run time. Projects are separate:
 
+> **Fresh checkout:** `e2e/specs/figma.spec.ts` belongs to the `unauthenticated` project, so
+> `pnpm test`, `pnpm test:unauth` and `pnpm test:e2e` include it. Pinned baselines live under
+> the gitignored `.framelia/baselines/`, so until you pin them once (see "Pin the baseline
+> once" below) those two Figma tests fail with `PINNED_BASELINE_MISSING`. That is intentional:
+> a missing baseline fails loudly instead of being skipped. `pnpm test:web` and `pnpm test:auth`
+> do not depend on it. Playwright runs headed (`headless: false`), so a display-less CI runner
+> needs a virtual display.
+
 ```bash
 pnpm test:unauth
 pnpm test:auth
 pnpm test:e2e
-pnpm test:e2e:real-flow
 pnpm test:web
 pnpm test
 ```
@@ -58,11 +66,11 @@ pnpm test
 
 `playwright.config.ts` registers `@framelia/playwright/reporter`. It starts the dashboard integration and writes durable Figma evidence under `.framelia/runs/` whenever `defineFigmaTests` runs. `e2e/fixtures/auth.setup.ts` logs into the demo account through the real login UI, falling back to signup only to bootstrap a fresh database -- no fake seed path exists.
 
-| Matcher        | Spec                                | Needs `FIGMA_ACCESS_TOKEN`?    | Persists durable evidence?                                                             |
-| -------------- | ----------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `toMatchFigma` | `e2e/specs/figma.spec.ts`           | No -- only to pin/refresh once | Yes -- under `.framelia/runs/`, the only one `framelia dashboard`/`open`/`report` read |
-| `toMatchPage`  | `e2e/specs/web-to-web-page.spec.ts` | No                             | No (Playwright attachments only)                                                       |
-| `toMatchUrl`   | `e2e/specs/web-to-web-url.spec.ts`  | No                             | No (Playwright attachments only)                                                       |
+| API / matcher      | Spec                                | Needs `FIGMA_ACCESS_TOKEN`?    | Persists durable evidence?                                                             |
+| ------------------ | ----------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
+| `defineFigmaTests` | `e2e/specs/figma.spec.ts`           | No -- only to pin/refresh once | Yes -- under `.framelia/runs/`, the only one `framelia dashboard`/`open`/`report` read |
+| `toMatchPage`      | `e2e/specs/web-to-web-page.spec.ts` | No                             | No (Playwright attachments only)                                                       |
+| `toMatchUrl`       | `e2e/specs/web-to-web-url.spec.ts`  | No                             | No (Playwright attachments only)                                                       |
 
 ## Figma-to-web: one contract-driven flow
 
@@ -74,7 +82,7 @@ scope, and comparison thresholds. Edit these files -- or re-author with
 `framelia contract create`/`refresh-baseline` -- when the design changes; no package
 script or test duplicates their Figma IDs. `framelia.config.ts`'s `contracts` glob
 (`.framelia/contracts/**/visual-contract.json`) is how every `framelia` command
-(`contract list`, `check`, `done-gate`, this spec) discovers them.
+(`contract list`, `check`, `done-gate`) discovers them; `figma.spec.ts` lists the same two files explicitly.
 
 `e2e/specs/figma.spec.ts` calls `defineFigmaTests` once, passing both contract files.
 It registers one Playwright test per contract, fanned across every configured project;
@@ -86,6 +94,58 @@ Figma network access or credentials are reachable anywhere in that path -- see
 capture/compare CLI step, synthetic artifact fixture, or command-by-command CLI suite
 in this example.
 
+### Consumer workflow
+
+> **Release status:** the packages currently on npm (`0.0.5`) predate `defineFigmaTests`,
+> `framelia check`, `contract list` and `contract refresh-baseline`. These steps work once a
+> release that includes the pending changesets in `.changeset/` is published. Until then,
+> run them through the workspace (see "Workspace development") with `pnpm framelia` in place
+> of `npx framelia`.
+
+This is the path an application follows after installing the published packages. The
+same two identities, `login.desktop` and `login.mobile`, are used in every step -- from
+authoring to the full CI selection -- and viewport, scale, and expected Figma values
+are read from each contract, never repeated in a spec option or CLI flag.
+
+```bash
+# 1. Install (published release; npm, pnpm, or yarn all work)
+npm install --save-dev framelia @framelia/playwright @playwright/test
+
+# 2. Preview, then apply, project integration (never rewrites existing config)
+npx framelia init --dry-run
+npx framelia init
+
+# 3. Author + pin a contract once (needs FIGMA_ACCESS_TOKEN; see "Pin the baseline once")
+npx framelia contract create ...
+
+# 4. Register it: call defineFigmaTests with the contract file (e2e/specs/figma.spec.ts)
+
+# 5. Check which contracts are authored, bound to a spec, or unbound (no visual run)
+npx framelia contract list
+
+# 6. Run exactly the contracts you are working on
+npx framelia check --contract login.desktop --contract login.mobile
+
+# 7. Inspect the run that check reported, using its runId
+npx framelia dashboard --run <run-id>
+
+# 8. Fix the UI (never loosen a threshold), then run step 6 again
+
+# 9. Run the full required matrix (the authoritative CI verdict is the signed done-gate)
+npx framelia check --all
+```
+
+Three different states are easy to confuse; this example keeps them separate:
+
+| State                 | Meaning                                                                   | Where to see it                             |
+| --------------------- | ------------------------------------------------------------------------- | ------------------------------------------- |
+| Authored / unbound    | A contract file exists and pins a baseline, but no spec executes it yet.  | `framelia contract list` (`unbound`)        |
+| Comparison result     | One selected run compared the real page against the pinned baseline.      | `framelia check` JSON output, run dashboard |
+| Authoritative CI gate | The full required matrix passed, attested by a protected signed envelope. | `framelia done-gate` (see the CLI README)   |
+
+An authored contract is a specification, not a passing result, and a subset run
+(`--contract ...`) never stands in for the full `--all` matrix.
+
 ### Pin the baseline once (needs `FIGMA_ACCESS_TOKEN`)
 
 Pinning is the one step that talks to Figma, and it is decoupled from running the
@@ -95,7 +155,7 @@ token with access to `q2MZbYDBibNKYDm7ESfvKF`).
 
 **First time on a fresh checkout**, `.framelia/baselines/` doesn't exist yet, and
 `contract refresh-baseline` can't bootstrap one from scratch -- it only re-fetches
-against whichever Figma node the *last locally pinned* snapshot already points to (see
+against whichever Figma node the _last locally pinned_ snapshot already points to (see
 `contract-refresh-baseline.ts`'s own `readPinnedBaseline` call), which is exactly the
 thing missing on a fresh clone. Use `contract create --force` instead, passing the same
 file key and node ids these two contracts were originally authored against (also
@@ -115,10 +175,9 @@ FIGMA_ACCESS_TOKEN=... pnpm framelia contract create \
   --scope page --page-reason "Baseline node represents complete page."
 ```
 
-`--force` replaces only the `baseline`/`revision` fields of the already-committed
-contract (it keeps `login.desktop`/`login.mobile`'s existing `profileOverrides` and
-`projects`), so the diff after running this should normally be just a bumped
-`revision` and a new `snapshotDigest`.
+`--force` rewrites `name`, `target`, `viewport`, `scope` and the baseline from the flags and
+bumps `revision`, but keeps the existing `profileOverrides` and `projects`. The
+`snapshotDigest` only changes if the Figma content changed.
 
 **After that first pin exists locally**, re-run the same design later with the
 lighter-weight `contract refresh-baseline` instead -- it reuses the file key/node id
@@ -143,56 +202,42 @@ compares it against the pinned snapshot, persisting durable evidence through
 uncommitted UI changes. A baseline that was never pinned locally fails the test
 explicitly rather than silently skipping it.
 
-The existing near-pixel-perfect thresholds remain `minMatch: 0.999` and `minSSIM:
+The thresholds are `minMatch: 0.999` and `minSSIM:
 0.995`, stored in each contract. A visual mismatch fails the test while still producing
 expected/actual/diff evidence. Inspect that evidence and fix the UI; do not loosen
 thresholds just to pass.
 
 ### Inspect the same run
 
-The reporter prints a live dashboard URL during the test run. To inspect its persisted
-evidence after Playwright exits:
+The reporter prints a live dashboard URL during the test run, and `framelia check`
+reports the `runId` of the run it executed. To inspect that run's persisted evidence
+after Playwright exits, name it explicitly -- no command picks a "latest" run:
 
 ```bash
-pnpm framelia dashboard --no-open
+pnpm framelia dashboard --run <run-id> --no-open
+pnpm framelia report --run <run-id> --output ./framelia-report
 ```
 
 Durable evidence for every run lives under `.framelia/runs/<runId>/` (gitignored,
-regenerated per run) -- `framelia dashboard`/`open`/`report` all read from there, keyed
-by contract id, not by test file layout.
+regenerated per run), keyed by contract id, not by test file layout.
 
-An empty dashboard means no run has been published yet -- the contract itself is a
-specification, not a completed comparison. This example demonstrates one consumer
+An empty `.framelia/runs/` means no run has been published yet -- the contract itself
+is a specification, not a completed comparison. This example demonstrates one consumer
 workflow, not exhaustive coverage of every CLI command or flag. Command-level tests
 belong in `packages/cli/tests`.
 
-### Migrating a legacy contract
-
-`framelia contract migrate` explicitly and transactionally converts a legacy
-(pre-authored, single-shared-file) contract into the one-contract-per-file convention
-above -- run `--dry-run` first to preview every blocker; nothing is written until it
-passes. Each legacy contract id needs either `refreshBaseline: true` (fetches a fresh
-snapshot from Figma) or an already-published `snapshotDigest` to adopt, supplied via
-`--map`, e.g.:
-
-```json
-{
-  "login.desktop": { "projects": ["unauthenticated"], "refreshBaseline": true },
-  "login.mobile": { "projects": ["unauthenticated"], "refreshBaseline": true }
-}
-```
-
-```bash
-pnpm framelia contract migrate --dry-run --map path/to/map.json
-FIGMA_ACCESS_TOKEN=... pnpm framelia contract migrate --map path/to/map.json
-```
-
 ### Workspace development
 
-The example resolves Framelia packages through `workspace:*`.
-`@framelia/contracts` supplies the schema used by the visual spec.
-After changing package implementations, run `pnpm framelia:build` to refresh the
-CLI and bundled dashboard. `@framelia/playwright` exports source directly.
+The steps above assume a published release that includes the pending changesets. Inside this repository the example
+instead resolves `framelia`, `@framelia/playwright`, `@framelia/contracts`, and
+`@framelia/dashboard-server` through `workspace:*`, and imports their built `dist`
+output. After changing any package implementation, run `pnpm framelia:build` (it builds
+`@framelia/playwright` along with the CLI and bundled dashboard) before running the
+example's tests.
+
+Running the example this way exercises the workspace sources. It is **not** evidence
+about a packed or published release; that is what the repository's packed-consumer
+gate (`scripts/consumer-smoke.mjs`) is for.
 
 ## Verification gates
 
@@ -206,9 +251,9 @@ pnpm test:auth
 pnpm test:web
 ```
 
-`pnpm check` runs Vite+ format/lint checks. Database gates require PostgreSQL (`docker compose up -d`). Figma gate requires valid credentials and a real node ID.
+`pnpm check` runs Vite+ format/lint checks. Database gates require PostgreSQL (`docker compose up -d`). Pinning a Figma baseline requires `FIGMA_ACCESS_TOKEN` and a real node ID; running `pnpm test:visual` does not.
 
-These gates are run from *this* directory, not the repo root: `pnpm build` (which
+These gates are run from _this_ directory, not the repo root: `pnpm build` (which
 generates `src/routeTree.gen.ts`) has to run before `pnpm typecheck` can succeed, and
 neither Docker/Postgres nor a live app server exist in the root CI `validate` job. The
 root `typecheck` script excludes `examples/**` for exactly this reason -- this example
@@ -226,6 +271,6 @@ BETTER_AUTH_SECRET
 VITE_BASE_URL
 ```
 
-OAuth client id/secret pairs (`GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) are optional; set them only if that provider is enabled in production, with redirect URIs updated to the deployed origin. Figma credentials are not part of the app env contract. Provide them only when running the optional Figma matcher, using local shell variables or CI secrets. Never expose server secrets through `VITE_*` variables. Run `pnpm db:setup` (or `drizzle-kit push`/`migrate` against the production database), deploy, then smoke-test `/`, `/login`, `/app`, and `/app/settings` with a real account.
+OAuth client id/secret pairs (`GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) are optional; set them only if that provider is enabled in production, with redirect URIs updated to the deployed origin. Figma credentials are not part of the app env contract. Provide them only when pinning or refreshing a Figma baseline, using local shell variables or CI secrets. Never expose server secrets through `VITE_*` variables. Run `pnpm db:setup` (or `drizzle-kit push`/`migrate` against the production database), deploy, then smoke-test `/`, `/login`, `/app`, and `/app/settings` with a real account.
 
 Deployed URL: not configured yet. Set after provider deployment and record it here.

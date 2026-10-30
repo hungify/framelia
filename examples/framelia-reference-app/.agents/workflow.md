@@ -11,8 +11,7 @@ Don't invoke a standalone build after every change. Use lint as the baseline and
 
 ## Testing
 
-- `vpr test`: Run all Vitest unit and local integration tests once
-- `vpr test watch`: Run Vitest in watch mode
+- `pnpm test`: Run the whole Playwright suite (builds the app, needs Postgres)
 - `vpr test:e2e`: Build the app and run its local Chromium end-to-end tests against the built server
 - `pnpm exec playwright install chromium`: Install the E2E browser once per machine
 

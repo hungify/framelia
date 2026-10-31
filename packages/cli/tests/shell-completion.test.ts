@@ -34,10 +34,10 @@ function homeWithBashrc(content: string): string {
   return home;
 }
 
-function runFramelia(args: string[], home: string) {
+function runFramelia(args: string[], home: string, shell = "/bin/bash") {
   return spawnSync(process.execPath, [framelia, ...args], {
     encoding: "utf8",
-    env: { ...process.env, HOME: home, SHELL: "/bin/bash" },
+    env: { ...process.env, HOME: home, SHELL: shell },
   });
 }
 
@@ -52,8 +52,39 @@ describe("bash completion proposals", () => {
     );
   });
 
+  it("lists every route for an empty first word", () => {
+    expect(complete("framelia ")).toEqual(
+      expect.arrayContaining(["contract", "check", "completion"]),
+    );
+  });
+
+  it("offers the default command's flags for a first word that starts with a dash", () => {
+    expect(complete("framelia --ru")).toEqual(["--run"]);
+  });
+
   it("completes a flag of the typed command", () => {
     expect(complete("framelia dashboard --ru")).toContain("--run");
+  });
+
+  it("offers the completion subcommands", () => {
+    expect(complete("framelia completion ")).toEqual(["install", "uninstall"]);
+  });
+});
+
+describe("completion bin without a usable dist", () => {
+  it("prints nothing and exits 0, so the user's prompt never shows a stack trace", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-completion-"));
+    temporaryDirectories.push(root);
+    fs.mkdirSync(path.join(root, "bin"));
+    fs.copyFileSync(bashComplete, path.join(root, "bin", "__framelia_bash_complete.js"));
+
+    const result = spawnSync(
+      process.execPath,
+      [path.join(root, "bin", "__framelia_bash_complete.js"), "framelia", "con"],
+      { encoding: "utf8", env: { ...process.env, COMP_LINE: "framelia con" } },
+    );
+
+    expect(result).toMatchObject({ status: 0, stdout: "", stderr: "" });
   });
 });
 
@@ -68,6 +99,26 @@ describe("framelia completion install", () => {
     expect(bashrc).toContain("export KEEP=1");
     expect(bashrc).toContain("complete -o default -o nospace -F __framelia_complete framelia");
     expect(bashrc).toContain("__framelia_bash_complete");
+  });
+
+  it("leaves ~/.bashrc untouched and exits 0 when the shell is not bash", () => {
+    const home = homeWithBashrc("export KEEP=1\n");
+
+    const result = runFramelia(["completion", "install"], home, "/bin/zsh");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("Skipping bash");
+    expect(fs.readFileSync(path.join(home, ".bashrc"), "utf8")).toBe("export KEEP=1\n");
+  });
+
+  it("changes nothing and exits 0 when ~/.bashrc does not exist", () => {
+    const home = homeWithBashrc("");
+    fs.rmSync(path.join(home, ".bashrc"));
+
+    const result = runFramelia(["completion", "install"], home);
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".bashrc"))).toBe(false);
   });
 
   it("installs once even when run twice", () => {

@@ -328,7 +328,7 @@ source ~/.bashrc
 framelia completion uninstall   # removes only that block
 ```
 
-`install` only acts when it is run from bash (it checks `$SHELL`) and when `~/.bashrc` exists; otherwise it prints why it skipped and changes nothing. Re-running it replaces its own block instead of adding another. Bash runs the completion bin `__framelia_bash_complete` on every TAB, so it must be on your `PATH` next to `framelia`: use a global install, or put `node_modules/.bin` on `PATH`. A run through `npx` leaves nothing installed to complete against.
+`install` only acts when it is run from bash (it checks `$SHELL`) and when `~/.bashrc` exists; otherwise it prints why it skipped and changes nothing. Re-running it replaces its own block instead of adding another. Bash runs the completion bin `__framelia_bash_complete` on every TAB, so it must be on your `PATH` next to `framelia`: use a global install, or put `node_modules/.bin` on `PATH`. A run through `npx` leaves nothing installed to complete against. `install` reads `$SHELL`, the login shell, and edits `~/.bashrc`; on macOS, where Terminal starts login shells that read `~/.bash_profile`, make sure that file sources `~/.bashrc`. `uninstall` only removes the block while its closing marker line is intact, so keep that line on its own line if you append to the file by hand.
 
 ## Evidence layout
 

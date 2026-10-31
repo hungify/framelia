@@ -35,6 +35,8 @@ export const DEFAULT_DEVTOOLS_SELECTOR =
   '[class*="tsqd" i], [id*="tsqd" i], [class*="tsrd" i], [id*="tsrd" i], [data-testid="tanstack_devtools"], nextjs-portal';
 export const SELECTOR_TIMEOUT_MS = 15 * MS_PER_SECOND;
 export const NETWORK_IDLE_BEST_EFFORT_MS = 5 * MS_PER_SECOND;
+// Network idle may use at most this share of the capture budget, leaving the rest for fonts and screenshots.
+export const NETWORK_IDLE_BUDGET_FRACTION = 0.5;
 export const NETWORK_IDLE_BUFFER_MS = 300;
 export const HTTP_REQUEST_TIMEOUT_MS = 30 * MS_PER_SECOND;
 

@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test";
 
-import { NETWORK_IDLE_BEST_EFFORT_MS, NETWORK_IDLE_BUFFER_MS } from "../constants.ts";
+import {
+  NETWORK_IDLE_BEST_EFFORT_MS,
+  NETWORK_IDLE_BUDGET_FRACTION,
+  NETWORK_IDLE_BUFFER_MS,
+} from "../constants.ts";
 import type { ComputedTextStyle } from "../types.ts";
 import type { FontReadiness } from "./types.ts";
 
@@ -18,15 +22,22 @@ export async function settle(
   warnings: string[],
   devtoolsSelector: string | undefined,
   animationPolicy: "freeze" | "allow",
-  fontReadyTimeoutMs: number,
+  budgetMs: number,
 ): Promise<FontReadiness> {
+  // Never 0: Playwright reads a 0 timeout as "wait forever".
+  const networkIdleTimeoutMs = Math.max(
+    1,
+    Math.min(NETWORK_IDLE_BEST_EFFORT_MS, Math.floor(budgetMs * NETWORK_IDLE_BUDGET_FRACTION)),
+  );
+  const idleStartedAt = Date.now();
   await page
-    .waitForLoadState("networkidle", { timeout: NETWORK_IDLE_BEST_EFFORT_MS })
+    .waitForLoadState("networkidle", { timeout: networkIdleTimeoutMs })
     .catch(() =>
       warnings.push(
-        `network did not become idle within ${NETWORK_IDLE_BEST_EFFORT_MS}ms; capture may include pending requests.`,
+        `network did not become idle within ${networkIdleTimeoutMs}ms; capture may include pending requests.`,
       ),
     );
+  const fontReadyTimeoutMs = Math.max(1, budgetMs - (Date.now() - idleStartedAt));
   if (animationPolicy === "freeze") {
     try {
       await page.addStyleTag({ content: NO_ANIMATION_CSS });

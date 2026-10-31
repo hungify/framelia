@@ -7,6 +7,7 @@ import {
   buildApplication,
   buildRouteMap,
   help,
+  proposeCompletions,
   run as runApplication,
   version,
 } from "@stricli/core";
@@ -17,6 +18,7 @@ import { baselineRoutes } from "./commands/baseline.ts";
 import { captureCommand } from "./commands/capture.ts";
 import { checkCommand } from "./commands/check.ts";
 import { compareCommand } from "./commands/compare.ts";
+import { completionRoutes } from "./commands/completion.ts";
 import { contractRoutes } from "./commands/contract.ts";
 import { dashboardCommand, openCommand, reportCommand } from "./commands/dashboard.ts";
 import { doneGateCommand } from "./commands/done-gate.ts";
@@ -48,6 +50,7 @@ const rootRoutes = buildRouteMap({
     baseline: baselineRoutes,
     capture: captureCommand,
     compare: compareCommand,
+    completion: completionRoutes,
   },
   defaultCommand: "dashboard",
   aliases: { "fetch-gold": "capture", diff: "compare" },
@@ -83,6 +86,25 @@ const app = buildApplication(
     }),
   },
 );
+
+/** Completion candidates for the words typed after `framelia`, as bash hands them to the completion bin. */
+export async function proposeBashCompletions(inputs: readonly string[]): Promise<string[]> {
+  const [firstWord] = inputs;
+  // The root's default command makes Stricli read the first word as an argument of `dashboard`,
+  // so it would only offer that command's flags and never the routes themselves.
+  if (inputs.length === 1 && firstWord !== undefined && !firstWord.startsWith("-"))
+    return rootRoutes
+      .getAllEntries()
+      .filter((entry) => !entry.hidden)
+      .map((entry) => entry.name["convert-camel-to-kebab"])
+      .filter((name) => name.startsWith(firstWord));
+  const proposals = await proposeCompletions(
+    app,
+    inputs,
+    buildContext({ version: PACKAGE_VERSION }),
+  );
+  return proposals.map(({ completion }) => completion);
+}
 
 function explicitProjectRoot(argv: readonly string[]): string | undefined {
   for (let index = 0; index < argv.length; index += 1) {

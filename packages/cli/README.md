@@ -32,6 +32,7 @@ npx framelia status --project-root "$PWD"
 | `framelia contract suggest-masks`    | Scan a live page and propose mask selectors without modifying a contract.              |
 | `framelia baseline promote`          | Capture a target URL and accept it as a `toMatchPageBaseline` baseline.                |
 | `framelia status`                    | Show CLI version, project root, and Figma token availability.                          |
+| `framelia completion install`        | Add bash tab completion to `~/.bashrc` (`uninstall` removes it).                       |
 | `framelia schema`                    | Print the live JSON Schema for an authored contract or signed requirements envelope.   |
 | `framelia` (no arguments)            | Open the dashboard for one explicit durable run.                                       |
 | `framelia dashboard`                 | Serve one selected durable run; requires `--run`.                                      |
@@ -316,6 +317,18 @@ npx framelia compare --baseline figma-gold.png --actual actual.png --out-dir ./d
 
 `capture` (alias `fetch-gold`) captures one Figma node render for inspection. `compare` diffs two existing PNGs
 directly with framelia's compare engine, without resolving a baseline or checking provenance.
+
+## Shell completion
+
+Tab completion is available for **bash**. The completion library Stricli ships supports no other shell, so zsh and fish get nothing.
+
+```bash
+framelia completion install     # adds a marked block to ~/.bashrc
+source ~/.bashrc
+framelia completion uninstall   # removes only that block
+```
+
+`install` only acts when it is run from bash (it checks `$SHELL`) and when `~/.bashrc` exists; otherwise it prints why it skipped and changes nothing. Re-running it replaces its own block instead of adding another. Bash runs the completion bin `__framelia_bash_complete` on every TAB, so it must be on your `PATH` next to `framelia`: use a global install, or put `node_modules/.bin` on `PATH`. A run through `npx` leaves nothing installed to complete against.
 
 ## Evidence layout
 

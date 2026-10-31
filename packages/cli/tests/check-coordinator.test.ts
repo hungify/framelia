@@ -336,6 +336,7 @@ describe("runCheck command-lifetime finalization", () => {
     expect(forwarded[0]).toBe("SIGINT");
     expect(finalizeCalls).toHaveLength(1);
     expect(outcome.runId).toBe(finalizeCalls[0]);
+    expect(outcome.runId).toMatch(/^[0-9A-Za-z]{21}$/);
     expect(outcome.bundlePath).toBeDefined();
     expect(outcome.executionState).toBe("incomplete");
     const record = readRunRecord(fixture.root, outcome.runId!);

@@ -75,6 +75,33 @@ describe("settle", () => {
     }
   });
 
+  describe("when the network never goes idle", () => {
+    it("gives up on idle at half the capture budget and says so, so settle stays within the budget", async () => {
+      const app = http.createServer((request, response) => {
+        if (request.url === "/hang") return;
+        response.setHeader("content-type", "text/html");
+        response.end("<p>pending request</p><script>fetch('/hang')</script>");
+      });
+      await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+      const address = app.address();
+      if (!address || typeof address === "string") throw new Error("server address unavailable");
+      const context = await browser.newContext();
+      try {
+        const page = await context.newPage();
+        await page.goto(`http://127.0.0.1:${address.port}`);
+        const warnings: string[] = [];
+        const startedAt = Date.now();
+        await settle(page, warnings, undefined, "freeze", 2_000);
+        expect(Date.now() - startedAt).toBeLessThan(4_000);
+        expect(warnings).toContainEqual(expect.stringContaining("within 1000ms"));
+      } finally {
+        await context.close();
+        app.closeAllConnections();
+        await new Promise<void>((resolve) => app.close(() => resolve()));
+      }
+    });
+  });
+
   it("does not warn when devtoolsSelector matches an element", async () => {
     const app = await server('<div data-testid="devtools"></div>');
     const context = await browser.newContext();

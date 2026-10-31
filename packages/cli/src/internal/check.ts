@@ -26,13 +26,13 @@ import {
 import {
   buildCasePlanForCollectedCase,
   computeExecutionGraphDigest,
+  createRunId,
   finalizeRunRecord,
   freezeRunPlan,
   runDir,
   startRunRecord,
   toProjectRelative,
 } from "@framelia/verify/run-bundle";
-import { nanoid } from "nanoid";
 
 import type { CliRuntime } from "../runtime-types.ts";
 import {
@@ -301,7 +301,7 @@ export async function runCheck(
     if (cancellation.requested)
       throw new Error("Check was cancelled before Playwright collection.");
 
-    runId = nanoid();
+    runId = createRunId();
     const manifest = await collectPlaywrightBindings({
       policy,
       selectedProjects: selection.selectedProjects,

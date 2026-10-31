@@ -26,6 +26,7 @@ export type { CaseIdentity } from "./layout.ts";
 export { buildCasePlanForCollectedCase } from "./planner.ts";
 export type { CollectedCasePlanContext } from "./planner.ts";
 export { reconcileCasePlan } from "./reconcile.ts";
+export { createRunId } from "./run-id.ts";
 export type { CasePlanReconciliation } from "./reconcile.ts";
 export { readRunBundle } from "./read.ts";
 export type { RunBundle } from "./read.ts";

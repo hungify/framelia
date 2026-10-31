@@ -14,6 +14,7 @@ describe("public API surface", () => {
     expect(runBundleApi.readSelectedRun).toBeTypeOf("function");
     expect(runBundleApi.evaluateAuthoritativeRun).toBeTypeOf("function");
     expect(runBundleApi.readRunBundle).toBeTypeOf("function");
+    expect(runBundleApi.createRunId).toBeTypeOf("function");
   });
 
   it("keeps supported verification, CLI, internal, and test entry points", () => {

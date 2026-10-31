@@ -11,6 +11,7 @@ import { canonicalJsonDigest, portableErrorMessage } from "@framelia/verify";
 import {
   computeExecutionGraphDigest,
   computeCaseId,
+  createRunId,
   finalizeRunRecord,
   freezeRunPlan,
   publishAttempt,
@@ -27,7 +28,6 @@ import type {
   TestCase,
   TestResult,
 } from "@playwright/test/reporter";
-import { nanoid } from "nanoid";
 
 import {
   resolveProjectPolicy,
@@ -51,7 +51,7 @@ export interface FrameliaReporterOptions {
   /** Forwarded to startDashboardServer; mainly for tests -- production use should rely on the default. */
   clientRoot?: string;
   /** Overrides the generated run-bundle `runId`; mainly for tests -- production use should
-   *  rely on the default (a fresh `nanoid()` per Playwright invocation). */
+   *  rely on the default (a fresh `createRunId()` per Playwright invocation). */
   runId?: string;
   /** Known source/build identity (e.g. a CI-resolved commit SHA) folded into every case
    *  plan's `source` field. framelia/#77's own text calls for case identity to cover
@@ -333,7 +333,7 @@ export default class FrameliaReporter implements Reporter {
     if (!policy.policyDigest) return;
     const contractTests = tests.filter((test) => readContractRegistration(test) !== undefined);
     if (contractTests.length === 0) return;
-    const runId = this.#options.runId ?? nanoid();
+    const runId = this.#options.runId ?? createRunId();
 
     const results = await Promise.all(
       contractTests.map((test) =>

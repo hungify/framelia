@@ -148,6 +148,12 @@ jobs:
             exit 1
           fi
           echo "version=$cli_version" >> "$GITHUB_OUTPUT"
+          # framelia is published last, so its presence means this version was released and
+          # verified by an earlier run; this commit's smoke test may import newer exports.
+          if npm view "framelia@${cli_version}" version --registry="https://registry.npmjs.org" >/dev/null 2>&1; then
+            echo "framelia@${cli_version} is already published; skipping registry verification"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v4
         with:
           name: release-packages
@@ -180,6 +186,7 @@ jobs:
           publish_package packages/playwright
           publish_package packages/cli
       - name: Verify packages from public registry
+        if: steps.release.outputs.published != 'true'
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         shell: bash

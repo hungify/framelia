@@ -2,15 +2,6 @@
  * Node-only verification engine. The root avoids loading a real @playwright/test
  * instance; ./cli owns browser-launching helpers such as recordStorageState.
  */
-export { readContractEntry } from "./contract-file.ts";
-export type { ReadContractEntryOutcome } from "./contract-file.ts";
-export {
-  contractFreshnessPath,
-  isContractFresh,
-  readContractFreshness,
-  writeContractFreshness,
-} from "./contract-freshness.ts";
-export type { ContractFreshnessReceipt } from "./contract-freshness.ts";
 export { FigmaBaselineProvider } from "./baseline/provider.ts";
 export type {
   BaselineProvider,

@@ -17,7 +17,6 @@ describe("RUN_ARTIFACT", () => {
       score: "visual-score.json",
       runMeta: "run-meta.json",
       punchList: "punch-list.json",
-      freshness: "last-verified.json",
     });
   });
 });

@@ -1,4 +1,3 @@
-import type { ContractFreshnessReceipt, ReadContractEntryOutcome } from "@framelia/verify";
 import { describe, expect, it } from "vitest";
 
 import * as createMatchersApi from "../src/create-matchers.ts";
@@ -26,8 +25,6 @@ export type PublicTypeSurface = [
   ToMatchPageOptions,
   ToMatchPageBaselineOptions,
   ToMatchUrlOptions,
-  ContractFreshnessReceipt,
-  ReadContractEntryOutcome,
   PlaywrightTestHandle,
   FrameliaMatchers,
   DefineFigmaTestsOptions,

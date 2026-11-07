@@ -30,12 +30,3 @@ export type {
   FigmaContractTarget,
   FigmaContractTestContext,
 } from "./define-figma-tests.ts";
-
-export {
-  contractFreshnessPath,
-  isContractFresh,
-  readContractEntry,
-  readContractFreshness,
-  writeContractFreshness,
-} from "@framelia/verify";
-export type { ContractFreshnessReceipt, ReadContractEntryOutcome } from "@framelia/verify";

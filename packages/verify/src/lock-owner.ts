@@ -41,7 +41,7 @@ export function readLockOwner(ownerPath: string): LockOwner | null {
  * True only when the owner provably no longer exists: it ran on this host, is not this
  * process, and signal 0 reports ESRCH. A different host, EPERM (alive, another user's),
  * or anything else counts as alive -- a wrong "dead" verdict would let two holders in,
- * whereas a wrong "alive" verdict only falls back to the old timeout behaviour.
+ * whereas a wrong "alive" verdict only leaves the contender waiting until its acquire times out.
  */
 export function isLockOwnerDead(owner: LockOwner): boolean {
   if (owner.hostname !== os.hostname() || owner.pid === process.pid) return false;

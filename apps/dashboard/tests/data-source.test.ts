@@ -154,7 +154,7 @@ describe("connectRunEvents", () => {
     expect(states).toEqual(["connecting", "open", "reconnecting", "reconnecting", "open"]);
   });
 
-  it("stays closed once closed (a finished run no longer stops reconnects, unmount does)", () => {
+  it("stays closed after close(): a later error schedules no reconnect", () => {
     const { connection, timers } = connect();
     const source = FakeEventSource.instances[0]!;
     connection.close();

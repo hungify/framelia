@@ -50,8 +50,10 @@ export const rootRoutes = buildRouteMap({
     fullDescription: [
       "CLI-first visual verification for Figma-to-web and web-to-web workflows.",
       "",
-      "Finite commands print one JSON outcome on stdout and exit 0 (passed), 1 (visual",
-      "mismatch) or 2 (usage/operational error); its `next` field names the follow-up.",
+      "Finite commands exit 0 (success), 1 (visual mismatch) or 2 (usage/operational error).",
+      "Most print one JSON outcome on stdout whose `next` field, when present, names the",
+      "follow-up. `compare` prints its comparison as JSON without `next`, `completion` prints",
+      "plain text, and invalid flags or flag values are reported on stderr.",
       "With no arguments, framelia lists durable runs (`framelia runs list`).",
       "",
       "Examples:",

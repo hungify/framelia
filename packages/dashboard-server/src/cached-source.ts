@@ -24,7 +24,7 @@ export interface CachedDashboardSource extends DashboardSource {
  * Memoizes a source's `snapshot()`/`files()` for the dashboard server.
  *
  * Real sources re-read and re-hash the whole selected run on every call, and the server
- * used to call them per request -- once per artifact image, once per SSE sync. Here each
+ * needs a projection per request -- once per artifact image, once per SSE sync. Here each
  * projection is computed at most once per change:
  *
  * - a source event (`subscribe`) invalidates immediately, so live updates are never

@@ -1,5 +1,9 @@
 ---
+"framelia": patch
+"@framelia/contracts": patch
 "@framelia/verify": patch
+"@framelia/dashboard-server": patch
+"@framelia/playwright": patch
 ---
 
 Clamp SSIM to [0, 1] so pixel-identical captures no longer fail attempt publication on a floating-point score of 1.0000000000000002.

@@ -1,6 +1,9 @@
 ---
-"@framelia/playwright": minor
+"framelia": minor
+"@framelia/contracts": minor
 "@framelia/verify": minor
+"@framelia/dashboard-server": minor
+"@framelia/playwright": minor
 ---
 
 Harden the Playwright reporter and matchers.

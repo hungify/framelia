@@ -45,7 +45,7 @@ describe("areaGap", () => {
       maxDiffPixels: null,
       maxAreaGapPercent: 2,
     };
-    // The old total-area formula reported 4.04% here and rejected a legitimate pass.
+    // The gate measures the gap per axis; a total-area gap would be 4.04% and reject this pass.
     expect(passingScoreThresholdReasons(passing, threshold)).toEqual([]);
     expect(
       passingScoreThresholdReasons(

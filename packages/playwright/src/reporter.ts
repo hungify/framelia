@@ -251,7 +251,7 @@ export default class FrameliaReporter implements Reporter {
     // a run whose dashboard peer dependency is missing/broken must still get durable
     // run-bundle recording (framelia/#77: "Decouple recording from optional dashboard
     // startup" / "Dashboard failure cannot prevent durable recording").
-    // A failure here no longer just logs: onEnd fails the run when annotated tests exist
+    // A failure here is not only logged: onEnd fails the run when annotated tests exist
     // but could not be recorded (see #recordingError).
     this.#runBundleReady = policyPromise
       .then((policy) => this.#initializeRunBundle(tests, policy, config))

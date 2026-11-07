@@ -147,7 +147,7 @@ describe("settle network-idle budget", () => {
     expect(networkIdleTimeouts).toEqual([NETWORK_IDLE_BEST_EFFORT_MS]);
   });
 
-  it("keeps the plain warning when the full best-effort wait elapsed", async () => {
+  it("warns with the best-effort ceiling when network idle times out under a large budget", async () => {
     const { page } = fakePage(async () => {
       throw new Error("Timeout exceeded");
     });

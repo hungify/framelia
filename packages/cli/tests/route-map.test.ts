@@ -26,6 +26,8 @@ describe("route map: root routes are reachable", () => {
     "baseline",
     "capture",
     "compare",
+    "runs",
+    "completion",
   ])("`%s` resolves to a route (not 'unknown command')", async (route) => {
     const fakeProcess = createFakeProcess();
     await run([route, "--help"], { process: fakeProcess, loadProjectEnv: false });
@@ -60,6 +62,8 @@ describe("route map: nested routes", () => {
     ["contract", "create"],
     ["contract", "suggest-masks"],
     ["baseline", "promote"],
+    ["completion", "install"],
+    ["completion", "uninstall"],
   ])("`%s %s` resolves to a route (not 'unknown command')", async (route, subroute) => {
     const fakeProcess = createFakeProcess();
     await run([route, subroute, "--help"], { process: fakeProcess, loadProjectEnv: false });
@@ -93,7 +97,10 @@ describe("route map: default command", () => {
     await run(["--port", "-1"], { process: fakeProcess, loadProjectEnv: false });
     expect(fakeProcess.exitCode).toBe(2);
     expect(fakeProcess.stderrText()).not.toContain("No command registered");
-    expect(fakeProcess.stderrText()).toContain("--run");
+    expect(JSON.parse(fakeProcess.stdoutText())).toMatchObject({
+      kind: "framelia.open-outcome",
+      command: "dashboard",
+    });
   });
 });
 
@@ -116,6 +123,8 @@ describe("route map: --help and --version", () => {
       "baseline",
       "capture",
       "compare",
+      "runs",
+      "completion",
     ]) {
       expect(stdout).toContain(route);
     }
@@ -137,5 +146,55 @@ describe("route map: --help and --version", () => {
     await run(["-v"], { process: fakeProcess, loadProjectEnv: false });
     expect(fakeProcess.exitCode).toBe(2);
     expect(fakeProcess.stdoutText()).not.toMatch(/^\d+\.\d+\.\d+$/);
+  });
+});
+
+describe("route map: short aliases", () => {
+  /** Differently named flags that are one concept, so they may share an alias. */
+  const SAME_CONCEPT: Record<string, string> = {
+    "contract-id": "contract",
+    out: "output",
+    "out-dir": "output",
+    "target-path": "target",
+    "target-url": "target",
+  };
+  const commands = [
+    ["check"],
+    ["dashboard"],
+    ["open"],
+    ["report"],
+    ["done-gate"],
+    ["status"],
+    ["schema"],
+    ["init"],
+    ["auth"],
+    ["contract", "create"],
+    ["contract", "list"],
+    ["contract", "refresh-baseline"],
+    ["contract", "suggest-masks"],
+    ["baseline", "promote"],
+    ["capture"],
+    ["compare"],
+    ["runs", "list"],
+    ["runs", "prune"],
+    ["completion", "install"],
+    ["completion", "uninstall"],
+  ];
+
+  it("gives every short alias one meaning across the whole CLI", async () => {
+    const meanings = new Map<string, Set<string>>();
+    for (const command of commands) {
+      const fakeProcess = createFakeProcess();
+      // eslint-disable-next-line no-await-in-loop -- one shared fake process per help render
+      await run([...command, "--help"], { process: fakeProcess, loadProjectEnv: false });
+      for (const match of fakeProcess.stdoutText().matchAll(/^\s+-(\w)\s+\[?--([\w-]+)/gmu)) {
+        const [, alias, flag] = match;
+        if (alias === "h") continue;
+        const concept = SAME_CONCEPT[flag!] ?? flag!;
+        meanings.set(alias!, (meanings.get(alias!) ?? new Set()).add(concept));
+      }
+    }
+    const conflicts = [...meanings].filter(([, flags]) => flags.size > 1);
+    expect(conflicts).toEqual([]);
   });
 });

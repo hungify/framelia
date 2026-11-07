@@ -1,5 +1,6 @@
-import { hexColorDeltaE } from "./compare/delta-e.ts";
+import { hexColorAlpha, hexColorDeltaE } from "./compare/delta-e.ts";
 import {
+  ALPHA_TOLERANCE,
   BORDER_WIDTH_TOLERANCE_PX,
   BOX_SHADOW_TOLERANCE_PX,
   FONT_SIZE_TOLERANCE_PX,
@@ -264,6 +265,16 @@ function pushIfColorMismatch(
   maxDeltaE: number,
 ): void {
   if (expected === undefined || actual === undefined || expected === actual) return;
+  // ΔE is color-only, so alpha is judged separately: #000000ff vs #00000000 is the same
+  // Lab color but an opaque fill versus no fill at all.
+  const expectedAlpha = hexColorAlpha(expected);
+  const actualAlpha = hexColorAlpha(actual);
+  if (Math.abs(expectedAlpha - actualAlpha) > ALPHA_TOLERANCE) {
+    pushMismatchIssue(issues, field, expected, actual, "style-color");
+    return;
+  }
+  // Both (near-)fully transparent: whatever RGB they carry is invisible.
+  if (expectedAlpha <= ALPHA_TOLERANCE && actualAlpha <= ALPHA_TOLERANCE) return;
   if (hexColorDeltaE(expected, actual) <= maxDeltaE) return;
   pushMismatchIssue(issues, field, expected, actual, "style-color");
 }

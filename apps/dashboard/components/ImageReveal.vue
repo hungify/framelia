@@ -26,7 +26,12 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{ beforeLoad: [Event]; afterLoad: [Event] }>();
+const emit = defineEmits<{
+  beforeLoad: [Event];
+  afterLoad: [Event];
+  beforeError: [Event];
+  afterError: [Event];
+}>();
 
 const reveal = defineModel<number>({ default: 50 });
 const root = useTemplateRef<HTMLElement>("root");
@@ -101,6 +106,7 @@ function onKeydown(event: KeyboardEvent) {
       :style="beforeStyle"
       draggable="false"
       @load="emit('beforeLoad', $event)"
+      @error="emit('beforeError', $event)"
     />
     <img
       class="block max-w-none select-none [-webkit-user-drag:none] absolute inset-0"
@@ -109,6 +115,7 @@ function onKeydown(event: KeyboardEvent) {
       :style="afterStyle"
       draggable="false"
       @load="emit('afterLoad', $event)"
+      @error="emit('afterError', $event)"
     />
     <div
       class="absolute inset-y-0 w-9 -ml-4.5 cursor-ew-resize touch-none before:content-[''] before:absolute before:inset-y-0 before:left-1/2 before:bg-accent before:-translate-x-1/2 hover:before:w-0.5 focus-visible:before:w-0.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"

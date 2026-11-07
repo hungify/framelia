@@ -219,6 +219,11 @@ export async function finalizeRunRecord(
       reporterCompleted: boolean;
       resultStatus?: "passed" | "failed" | "timedout" | "interrupted";
     };
+    /** A direct (uncoordinated) runner's own overall result, e.g. Playwright's
+     *  `FullResult.status`. Anything but "passed" reports every selected case without an
+     *  accepted attempt as `selected-attempt-missing` (as `transport` always does), and an
+     *  interrupted/timed-out runner keeps the run `incomplete` rather than `finalized`. */
+    resultStatus?: "passed" | "failed" | "timedout" | "interrupted";
   },
 ): Promise<RunRecord> {
   try {
@@ -235,6 +240,8 @@ export async function finalizeRunRecord(
         ? readRunRecord(root, runId)
         : undefined;
       const now = options.now?.() ?? new Date();
+      const runnerUnfinished =
+        options.resultStatus !== undefined && options.resultStatus !== "passed";
 
       const caseResults = await Promise.all(
         plan.selectedCases.map(async (selected) => {
@@ -330,7 +337,7 @@ export async function finalizeRunRecord(
             ? evidenceVerifiedAttempts.find((attempt) => attempt.attemptId === selectedAttemptId)
             : undefined;
           const runnerAttempt = evidenceVerifiedAttempts.at(-1);
-          if (options.transport && !selectedAttempt) {
+          if ((options.transport || runnerUnfinished) && !selectedAttempt) {
             diagnostics.push({
               code: "selected-attempt-missing",
               stage: "execution",
@@ -410,8 +417,19 @@ export async function finalizeRunRecord(
           left.stage.localeCompare(right.stage) ||
           left.message.localeCompare(right.message),
       );
+      const runnerDiagnostics: Diagnostic[] =
+        options.resultStatus === "interrupted" || options.resultStatus === "timedout"
+          ? [
+              {
+                code: `execution-${options.resultStatus}`,
+                stage: "execution",
+                message: `The test runner finished with status "${options.resultStatus}"; the run did not complete.`,
+              },
+            ]
+          : [];
       const diagnostics = [
         ...publicationDiagnostics,
+        ...runnerDiagnostics,
         ...caseResults.flatMap((result) => result.diagnostics),
       ];
       const status =
@@ -435,22 +453,34 @@ export async function finalizeRunRecord(
       return record;
     });
   } catch (error) {
-    const previous = readRunRecord(root, runId);
-    const now = options.now?.() ?? new Date();
-    const record = runRecordSchema.parse({
-      ...previous,
-      status: "error",
-      finalizedAt: now.toISOString(),
-      diagnostics: [
-        ...(options.diagnostics ?? []),
-        {
-          code: "run-finalization-failed",
-          stage: "finalization",
-          message: portableErrorMessage(error, root),
-        },
-      ],
-    });
-    publishRunRecord(root, record);
+    // Lock contention is transient, not a finalization failure: sealing the run as
+    // "error" here would make a retryable condition permanent. Let the caller retry.
+    if (error instanceof AppError && error.code === "RUN_BUNDLE_LOCK_TIMEOUT") throw error;
+    try {
+      // Seal under the same lock every other run.json writer holds, so this write can
+      // never interleave with a concurrent publishAttempt/finalizeRunRecord.
+      await withRunLock(root, runId, () => {
+        const previous = readRunRecord(root, runId);
+        const now = options.now?.() ?? new Date();
+        const record = runRecordSchema.parse({
+          ...previous,
+          status: "error",
+          finalizedAt: now.toISOString(),
+          diagnostics: [
+            ...(options.diagnostics ?? []),
+            {
+              code: "run-finalization-failed",
+              stage: "finalization",
+              message: portableErrorMessage(error, root),
+            },
+          ],
+        });
+        publishRunRecord(root, record);
+      });
+    } catch {
+      // Best effort: a missing/corrupt run.json or a lock timeout while sealing must not
+      // replace the original finalization failure, which is what the caller needs.
+    }
     throw error;
   }
 }

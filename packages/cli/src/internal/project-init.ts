@@ -7,11 +7,13 @@ import { writeFileAtomic } from "@framelia/verify";
 import { assertSingleConfigFile, CONFIG_FILE_NAMES, findConfigFiles } from "../config.ts";
 import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import { frameliaNext } from "./outcome.ts";
+import { failureOutcome, frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
 
 const INIT_OUTCOME_FORMAT_VERSION = 1 as const;
-const AUTH_GITIGNORE = "*\n!.gitignore\n";
+/** Ignores everything in its directory except itself: auth state and run bundles stay local. */
+const SELF_ONLY_GITIGNORE = "*\n!.gitignore\n";
+const RUNS_GITIGNORE_PATH = ".framelia/runs/.gitignore";
 const CONTRACT_PATTERN = ".framelia/contracts/**/visual-contract.json";
 
 const PLAYWRIGHT_CONFIG_NAMES = [
@@ -45,6 +47,8 @@ export interface InitChange {
 export interface ProjectInitPlan {
   readonly root: string;
   readonly changes: readonly InitChange[];
+  /** False when an existing Playwright config's project names could not be read. */
+  readonly playwrightProjectsDetected: boolean;
   readonly configPath: string;
   readonly authStatePath: string;
   readonly authGitignorePath: string;
@@ -70,14 +74,35 @@ export interface ProjectInitOptions {
   readonly force: boolean | undefined;
 }
 
-function configSource(playwrightConfigName: string | undefined): string {
-  const playwright = playwrightConfigName
-    ? `  playwright: { config: ${JSON.stringify(playwrightConfigName)}, projects: [""] },\n`
-    : "";
+/**
+ * Best-effort, read-only guess at an existing Playwright config's project names: no `projects`
+ * key means Playwright's single unnamed project (`""`); literal `name: "..."` entries after it
+ * are its named projects. `undefined` means the names could not be read from the source.
+ */
+export function detectPlaywrightProjects(source: string): string[] | undefined {
+  const projectsAt = source.search(/\bprojects\s*:/u);
+  if (projectsAt === -1) return [""];
+  const names = [...source.slice(projectsAt).matchAll(/\bname\s*:\s*(["'`])([^"'`\n]+)\1/gu)].map(
+    (match) => match[2]!,
+  );
+  return names.length > 0 ? [...new Set(names)] : undefined;
+}
+
+function configSource(
+  playwrightConfigName: string,
+  projects: readonly string[] | undefined,
+): string {
+  const projectList = projects
+    ? `[${projects.map((name) => JSON.stringify(name)).join(", ")}]`
+    : '[/* TODO: the exact visual Playwright project names, e.g. "chromium" */]';
+  const note = projects
+    ? ""
+    : "  // Fill in projects before `framelia check`; an empty list is rejected.\n";
   return `import { defineConfig } from "framelia";
 
 export default defineConfig({
-${playwright}  contracts: [${JSON.stringify(CONTRACT_PATTERN)}],
+${note}  playwright: { config: ${JSON.stringify(playwrightConfigName)}, projects: ${projectList} },
+  contracts: [${JSON.stringify(CONTRACT_PATTERN)}],
 });
 `;
 }
@@ -100,13 +125,18 @@ export function planProjectInitialization(projectRoot: string): ProjectInitPlan 
   const existingPlaywright = playwrightConfigs[0];
   const playwrightConfigPath = existingPlaywright ?? path.join(root, "playwright.config.ts");
   const changes: InitChange[] = [];
+  const playwrightProjects = existingPlaywright
+    ? detectPlaywrightProjects(fs.readFileSync(existingPlaywright, "utf8"))
+    : [""];
 
   if (existingConfigPaths.length === 0) {
     changes.push({
       path: path.relative(root, configPath),
       action: "create",
-      reason: "Framelia project policy is absent.",
-      content: configSource(existingPlaywright ? undefined : path.basename(playwrightConfigPath)),
+      reason: playwrightProjects
+        ? "Framelia project policy is absent."
+        : "Framelia project policy is absent; fill in the visual Playwright project names it marks TODO.",
+      content: configSource(path.basename(playwrightConfigPath), playwrightProjects),
     });
   } else {
     changes.push({
@@ -127,7 +157,23 @@ export function planProjectInitialization(projectRoot: string): ProjectInitPlan 
       path: path.relative(root, authGitignorePath),
       action: "create",
       reason: "Keep generated browser storage state out of version control.",
-      content: AUTH_GITIGNORE,
+      content: SELF_ONLY_GITIGNORE,
+    });
+  }
+
+  const runsGitignorePath = path.join(root, RUNS_GITIGNORE_PATH);
+  if (fs.existsSync(runsGitignorePath)) {
+    changes.push({
+      path: path.relative(root, runsGitignorePath),
+      action: "unchanged",
+      reason: "Existing run-bundle ignore policy is preserved byte-for-byte.",
+    });
+  } else {
+    changes.push({
+      path: path.relative(root, runsGitignorePath),
+      action: "create",
+      reason: "Keep durable run bundles (screenshots, diffs) out of version control.",
+      content: SELF_ONLY_GITIGNORE,
     });
   }
 
@@ -155,6 +201,7 @@ export function planProjectInitialization(projectRoot: string): ProjectInitPlan 
   return {
     root,
     changes,
+    playwrightProjectsDetected: playwrightProjects !== undefined,
     configPath,
     authStatePath,
     authGitignorePath,
@@ -236,10 +283,7 @@ export async function projectInitCommand(
         ...(plan.reporterInstructions ? { instructions: plan.reporterInstructions } : {}),
       },
       diagnostics: [],
-      next: frameliaNext(
-        plan.reporterRegistration === "manual" ? ["init", "--dry-run"] : ["contract", "create"],
-        options.projectRoot,
-      ),
+      next: frameliaNext(initNext(plan), options.projectRoot),
     };
     prompts.note(
       changes.map((change) => `${change.action}: ${change.path}`).join("\n"),
@@ -250,26 +294,36 @@ export async function projectInitCommand(
     );
     return { ok: true, exitCode: 0, body };
   } catch (error) {
+    const failure = failureOutcome({
+      kind: "framelia.init-outcome",
+      command: "init",
+      error,
+      fallbackCode: "INIT_FAILED",
+      stage: "init",
+      projectRoot: options.projectRoot,
+    });
+    const { next: _next, ...body } = failure.body;
+    // Re-running init cannot repair what init itself rejected; only other follow-ups apply.
+    const next = _next && _next.argv[0] !== "init" ? _next : undefined;
     return {
-      ok: false,
-      exitCode: 2,
+      ...failure,
       body: {
-        formatVersion: INIT_OUTCOME_FORMAT_VERSION,
-        kind: "framelia.init-outcome",
-        command: "init",
-        executionState: "error",
-        exitCode: 2,
+        ...body,
         dryRun: options.dryRun ?? false,
         projectRoot: ".",
         changes: [],
-        diagnostics: [
-          {
-            code: "INIT_FAILED",
-            stage: "init",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ],
+        ...(next ? { next } : {}),
       },
     };
   }
+}
+
+/**
+ * What follows init: a fresh project authors its first contract; an existing Playwright
+ * config is checked by `contract list` once its reporter recipe is applied; undetected
+ * project names must first be filled in (`status` re-validates the config).
+ */
+function initNext(plan: ProjectInitPlan): string[] {
+  if (!plan.playwrightProjectsDetected) return ["status"];
+  return plan.reporterRegistration === "manual" ? ["contract", "list"] : ["contract", "create"];
 }

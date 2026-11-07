@@ -43,6 +43,9 @@ export interface FrameliaScoreAttachment {
   baselinePromotedBy?: string;
   baselineVersion?: number;
   baselineRunId?: string;
+  /** toMatchPageBaseline's key, set only when its baseline lives where `framelia baseline
+   *  promote --key` writes it -- lets the dashboard offer an exact promote command (#101). */
+  baselineKey?: string;
   /** Caller-supplied contract id (e.g. "login.desktop") -- lets the Reporter derive a
    *  readable durable artifact id/folder instead of Playwright's opaque test.id hash. */
   contractId?: string;

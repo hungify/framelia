@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-
 import {
   captureEvidenceSchema,
   deriveCaptureEvidenceDiagnostics,
@@ -27,7 +25,11 @@ import {
 import type { TestCase, TestResult } from "@playwright/test/reporter";
 
 import { projectCollectedCase } from "./collection.ts";
-import { attachmentPath, readScoreAttachments } from "./report-projection.ts";
+import {
+  findEvidenceAttachment,
+  readAttachmentBytes,
+  readScoreAttachments,
+} from "./report-projection.ts";
 import type { FrameliaScoreAttachment } from "./score-attachment.ts";
 
 export interface CasePlanBuildResult {
@@ -271,8 +273,10 @@ function buildPortableScore(
  * Builds one attempt's record + evidence buffers from a completed `TestResult`, reading
  * the exact same `-expected`/`-actual`/`-diff` image attachments and `*-framelia-score`
  * JSON attachment `defineFigmaTests`'s `runFigmaContractTest` already produces (via
- * `attachDiffTriplet`/`attachJson`) -- see `readScoreAttachments`/`attachmentPath` in
- * report-projection.ts, reused verbatim rather than a second attachment convention.
+ * `attachDiffTriplet`/`attachJson`) -- see `readScoreAttachments`/`findEvidenceAttachment`
+ * in report-projection.ts, reused verbatim rather than a second attachment convention.
+ * Image bytes come from each attachment's `body` (see `buildAttachContext`), so they
+ * survive Playwright deleting the test's `outputDir` before this runs.
  * `retryIndex` (and therefore `attemptId`) comes from `result.retry`, matching
  * Playwright's own per-attempt retry counter.
  */
@@ -310,10 +314,8 @@ export function buildAttemptRecord(
       ["actual", "-actual"],
       ["diff", "-diff"],
     ] as const) {
-      const attachmentFilePath = attachmentPath(result, baseName, suffix);
-      if (attachmentFilePath && fs.existsSync(attachmentFilePath)) {
-        files[key] = fs.readFileSync(attachmentFilePath);
-      }
+      const bytes = readAttachmentBytes(findEvidenceAttachment(result, baseName, suffix));
+      if (bytes) files[key] = bytes;
     }
   }
   if (score) {

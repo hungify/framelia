@@ -9,6 +9,9 @@ export interface StalenessOptions {
   token?: string;
   maxAgeDays?: number;
   fetchImpl?: typeof fetch;
+  /** Skip the Figma lastModified re-check and use only the time-based heuristic -- for a
+   *  caller that already knows Figma is unreachable (e.g. a cached-baseline fallback). */
+  offline?: boolean;
 }
 
 export async function checkBaselineStaleness(
@@ -24,7 +27,7 @@ export async function checkBaselineStaleness(
     return warnings;
   }
 
-  const token = resolveToken(options.token);
+  const token = options.offline ? undefined : resolveToken(options.token);
   if (token) {
     const current = await getNodeMetadata(meta.fileKey, meta.nodeId, token, {
       fetchImpl: options.fetchImpl,
@@ -60,7 +63,7 @@ export async function checkBaselineStaleness(
   const ageDays = Math.floor(ageMs / MS_PER_DAY);
   if (ageDays > maxAgeDays) {
     warnings.push(
-      `baseline not re-verified in ${ageDays}d${token ? "" : ", no token to confirm freshness against Figma"} (max ${maxAgeDays}d); re-run fetch-baseline.`,
+      `baseline not re-verified in ${ageDays}d${token ? "" : options.offline ? ", Figma not re-checked (offline)" : ", no token to confirm freshness against Figma"} (max ${maxAgeDays}d); re-run fetch-baseline.`,
     );
   }
   return warnings;

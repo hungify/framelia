@@ -143,10 +143,15 @@ export function diffClusters(diff: PNG): DiffCluster[] {
   const { width, height, data } = diff;
   const seen = new Uint8Array(width * height);
   const clusters: DiffCluster[] = [];
+  // One growable typed-array stack shared by every flood fill: a boxed JS number array
+  // costs several times more per entry, and one giant cluster on a full-page capture can
+  // push millions of entries. Each pixel is pushed at most once (seen is set first).
+  let stack = new Uint32Array(1024);
+  let top = 0;
 
   for (let start = 0; start < seen.length; start++) {
     if (seen[start] || !isRealDiffPixel(data, start << 2)) continue;
-    const stack = [start];
+    stack[top++] = start;
     seen[start] = 1;
     let pixels = 0;
     let x0 = width;
@@ -158,10 +163,15 @@ export function diffClusters(diff: PNG): DiffCluster[] {
     const visit = (next: number): void => {
       if (seen[next] || !isRealDiffPixel(data, next << 2)) return;
       seen[next] = 1;
-      stack.push(next);
+      if (top === stack.length) {
+        const grown = new Uint32Array(Math.min(stack.length * 2, seen.length));
+        grown.set(stack);
+        stack = grown;
+      }
+      stack[top++] = next;
     };
-    while (stack.length > 0) {
-      const current = stack.pop()!;
+    while (top > 0) {
+      const current = stack[--top] as number;
       const x = current % width;
       const y = Math.floor(current / width);
       pixels += 1;

@@ -1,13 +1,15 @@
 import * as path from "node:path";
 
-import type { Diagnostic } from "@framelia/contracts/workflow";
+import type { Diagnostic, NextOperation } from "@framelia/contracts/workflow";
 import { readPinnedBaseline } from "@framelia/verify";
 
 import type { CommandEnvironment } from "../environment.ts";
+import { UsageError } from "../exit.ts";
 import type { CliResult } from "../output.ts";
+import type { CliRuntime } from "../runtime-types.ts";
 import { openContractPinning } from "./contract-pinning.ts";
-import { optionalFigmaToken } from "./figma-token.ts";
-import { failureDiagnostic, frameliaNext } from "./outcome.ts";
+import { explainFigmaFailure, optionalFigmaToken } from "./figma-token.ts";
+import { failureOutcome, frameliaNext } from "./outcome.ts";
 import { openProject } from "./project.ts";
 
 const REFRESH_OUTCOME_FORMAT_VERSION = 1 as const;
@@ -37,22 +39,22 @@ export interface ContractRefreshBaselineOutcome {
     snapshotDigest: string;
   };
   readonly diagnostics: readonly Diagnostic[];
-  readonly next?: { command: string; argv: string[] };
+  readonly next?: NextOperation;
 }
 
-function failure(error: unknown): CliResult<ContractRefreshBaselineOutcome> {
-  return {
-    ok: false,
-    exitCode: 2,
-    body: {
-      formatVersion: REFRESH_OUTCOME_FORMAT_VERSION,
-      kind: "framelia.contract-refresh-baseline-outcome",
-      command: "contract refresh-baseline",
-      executionState: "error",
-      exitCode: 2,
-      diagnostics: [failureDiagnostic(error, "BASELINE_REFRESH_FAILED", "refresh-baseline")],
-    },
-  };
+function failure(
+  error: unknown,
+  runtime: CliRuntime,
+  projectRoot: string | undefined,
+): CliResult<ContractRefreshBaselineOutcome> {
+  return failureOutcome({
+    kind: "framelia.contract-refresh-baseline-outcome",
+    command: "contract refresh-baseline",
+    error: explainFigmaFailure(error, runtime),
+    fallbackCode: "BASELINE_REFRESH_FAILED",
+    stage: "refresh-baseline",
+    projectRoot,
+  });
 }
 
 /** Refresh is pointer-last: every failure leaves the previously pinned snapshot usable. */
@@ -61,17 +63,21 @@ export async function contractRefreshBaselineCommand(
   env: CommandEnvironment,
   seams: ContractRefreshBaselineSeams = {},
 ): Promise<CliResult<ContractRefreshBaselineOutcome>> {
+  const runtime = env.process;
   try {
     const contractId = options.contract;
     if (!contractId) {
-      throw new Error("refresh-baseline requires --contract <exact-id>.");
+      throw new UsageError("refresh-baseline requires --contract <exact-id>.", {
+        code: "CONTRACT_REQUIRED",
+      });
     }
-    const runtime = env.process;
     const policy = await openProject(options.projectRoot, runtime).loadConfig();
     const pinning = await openContractPinning(policy);
     const discovered = pinning.contracts.find((entry) => entry.contract.id === contractId);
     if (!discovered) {
-      throw new Error(`Unknown exact contract id ${JSON.stringify(contractId)}.`);
+      throw new UsageError(`Unknown exact contract id ${JSON.stringify(contractId)}.`, {
+        code: "UNKNOWN_CONTRACT_ID",
+      });
     }
     const previous = await readPinnedBaseline(policy.root, discovered.contract);
     const { contract: replacement, digest } = await pinning.pin({
@@ -108,6 +114,6 @@ export async function contractRefreshBaselineCommand(
       },
     };
   } catch (error) {
-    return failure(error);
+    return failure(error, runtime, options.projectRoot);
   }
 }

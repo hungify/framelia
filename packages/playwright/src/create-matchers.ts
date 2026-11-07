@@ -2,6 +2,7 @@ import type { ExpectMatcherState, MatcherReturnType, Page, TestInfo } from "@pla
 import { nanoid } from "nanoid";
 
 import { buildAttachContext, sanitizeAttachmentBaseName } from "./attach.ts";
+import { settleMatcherResult } from "./matcher-outcome.ts";
 import { runToMatchFigma, type ToMatchFigmaOptions } from "./matchers/to-match-figma.ts";
 import {
   runToMatchPageBaseline,
@@ -92,52 +93,73 @@ export interface FrameliaMatchers {
  * versions.
  */
 export function createFrameliaMatchers(test: PlaywrightTestHandle): FrameliaMatchers {
+  // Every wrapper: a per-call `options.timeout` wins over the expect timeout, and
+  // `settleMatcherResult` makes `.not` throw on an operational failure (fetch/capture/setup)
+  // instead of inverting it into a silent pass.
   return {
     async toMatchFigma(received, nodeId, options = {}) {
       const testInfo = test.info();
       // oxlint-disable-next-line no-this-in-exported-function -- Playwright's own expect.extend() contract.
-      const timeoutMs = this.timeout;
-      return runToMatchFigma(received, nodeId, options, {
-        timeoutMs,
-        workDir: testInfo.outputPath(sanitizeAttachmentBaseName(nodeId)),
-        ...buildAttachContext(testInfo),
-      });
+      const { isNot, timeout } = this;
+      // Unique per call, like toMatchPage/toMatchUrl: two calls for the same node in one
+      // test must not share (and so overwrite) attachments or a work directory.
+      const baseName = sanitizeAttachmentBaseName(`${nodeId}-${nanoid(8)}`);
+      return settleMatcherResult(
+        isNot,
+        await runToMatchFigma(received, nodeId, options, {
+          timeoutMs: options.timeout ?? timeout,
+          workDir: testInfo.outputPath(baseName),
+          baseName,
+          ...buildAttachContext(testInfo),
+        }),
+      );
     },
 
     async toMatchPage(received, pageB, options = {}) {
       const testInfo = test.info();
       // oxlint-disable-next-line no-this-in-exported-function -- Playwright's own expect.extend() contract.
-      const timeoutMs = this.timeout;
+      const { isNot, timeout } = this;
       const baseName = sanitizeAttachmentBaseName(`page-${nanoid(8)}`);
-      return runToMatchPage(received, pageB, baseName, options, {
-        timeoutMs,
-        workDir: testInfo.outputPath(baseName),
-        ...buildAttachContext(testInfo),
-      });
+      return settleMatcherResult(
+        isNot,
+        await runToMatchPage(received, pageB, baseName, options, {
+          timeoutMs: options.timeout ?? timeout,
+          workDir: testInfo.outputPath(baseName),
+          ...buildAttachContext(testInfo),
+        }),
+      );
     },
 
     async toMatchPageBaseline(received, key, options = {}) {
       const testInfo = test.info();
       // oxlint-disable-next-line no-this-in-exported-function -- Playwright's own expect.extend() contract.
-      const timeoutMs = this.timeout;
+      const { isNot, timeout } = this;
       const baseName = sanitizeAttachmentBaseName(`page-baseline-${key}`);
-      return runToMatchPageBaseline(received, key, options, {
-        timeoutMs,
-        workDir: testInfo.outputPath(baseName),
-        ...buildAttachContext(testInfo),
-      });
+      return settleMatcherResult(
+        isNot,
+        await runToMatchPageBaseline(received, key, options, {
+          timeoutMs: options.timeout ?? timeout,
+          workDir: testInfo.outputPath(baseName),
+          // `.not` asserts a difference -- never rewrite the baseline to satisfy it.
+          updateSnapshots: isNot ? "none" : testInfo.config?.updateSnapshots,
+          ...buildAttachContext(testInfo),
+        }),
+      );
     },
 
     async toMatchUrl(received, url, options = {}) {
       const testInfo = test.info();
       // oxlint-disable-next-line no-this-in-exported-function -- Playwright's own expect.extend() contract.
-      const timeoutMs = this.timeout;
+      const { isNot, timeout } = this;
       const baseName = sanitizeAttachmentBaseName(`url-${nanoid(8)}`);
-      return runToMatchUrl(received, url, baseName, options, {
-        timeoutMs,
-        workDir: testInfo.outputPath(baseName),
-        ...buildAttachContext(testInfo),
-      });
+      return settleMatcherResult(
+        isNot,
+        await runToMatchUrl(received, url, baseName, options, {
+          timeoutMs: options.timeout ?? timeout,
+          workDir: testInfo.outputPath(baseName),
+          ...buildAttachContext(testInfo),
+        }),
+      );
     },
   };
 }

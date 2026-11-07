@@ -517,7 +517,7 @@ for (const mode of ["module", "commonjs", "matcher-only"]) {
         nestedCwd,
         [2],
       );
-      assert.equal(JSON.parse(refresh.stdout).diagnostics[0].code, "BASELINE_ACQUISITION_FAILED");
+      assert.equal(JSON.parse(refresh.stdout).diagnostics[0].code, "FIGMA_TOKEN_MISSING");
       assert.deepEqual(
         readFileSync(refreshContract),
         refreshPointerBefore,

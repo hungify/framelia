@@ -1,4 +1,4 @@
-import type { CollectionManifest, Diagnostic } from "@framelia/contracts/workflow";
+import type { CollectionManifest, Diagnostic, NextOperation } from "@framelia/contracts/workflow";
 import { portableErrorMessage } from "@framelia/verify";
 import {
   inspectAuthoredContracts,
@@ -9,8 +9,12 @@ import {
 
 import type { CommandEnvironment } from "../environment.ts";
 import type { CliResult } from "../output.ts";
-import { reconcileBinding, type BindingReconciliation } from "./binding-reconciliation.ts";
-import { failureDiagnostic, frameliaNext } from "./outcome.ts";
+import {
+  reconcileBinding,
+  registrationRecipe,
+  type BindingReconciliation,
+} from "./binding-reconciliation.ts";
+import { failureDiagnostic, failureOutcome, frameliaNext, nextForFailureCode } from "./outcome.ts";
 import { collectPlaywrightBindings } from "./playwright-transport.ts";
 import { openProject } from "./project.ts";
 
@@ -29,6 +33,8 @@ export interface ContractListEntry {
   readonly status: ContractBindingStatus;
   readonly required?: boolean;
   readonly diagnostics: readonly Diagnostic[];
+  /** For an unbound case: the exact `defineFigmaTests` registration that binds it. */
+  readonly recipe?: string;
 }
 
 export interface ContractListOutcome {
@@ -39,7 +45,7 @@ export interface ContractListOutcome {
   readonly exitCode: 0 | 2;
   readonly contracts: readonly ContractListEntry[];
   readonly diagnostics: readonly Diagnostic[];
-  readonly next?: { command: string; argv: string[] };
+  readonly next?: NextOperation;
 }
 
 function issue(code: string, stage: string, message: string): Diagnostic {
@@ -70,6 +76,7 @@ function bindingEntry(
       return {
         ...base,
         status: "unbound",
+        recipe: registrationRecipe(expected.contractFile),
         diagnostics: [
           issue(
             "CONTRACT_UNBOUND",
@@ -169,8 +176,14 @@ export async function listContractBindings(
       dependencies: await env.adapters.playwright(),
     });
   } catch (error) {
+    // Keep a known transport code (e.g. FRAMELIA_REPORTER_MISSING) so the next step fits it.
     diagnostics.push(
-      issue("COLLECTION_BLOCKED", "collection", portableErrorMessage(error, policy.root)),
+      failureDiagnostic(
+        error,
+        "COLLECTION_BLOCKED",
+        "collection",
+        portableErrorMessage(error, policy.root),
+      ),
     );
   }
 
@@ -213,6 +226,7 @@ export async function contractListCommand(
     const invalid = entries.some((entry) => entry.status === "invalid");
     const blocked = diagnostics.length > 0;
     const exitCode = invalid || blocked ? 2 : 0;
+    const next = listNext(entries, diagnostics, options.projectRoot);
     return {
       ok: exitCode === 0,
       exitCode,
@@ -224,24 +238,46 @@ export async function contractListCommand(
         exitCode,
         contracts: entries,
         diagnostics,
-        next: entries.some((entry) => entry.status === "unbound")
-          ? frameliaNext(["contract", "list"], options.projectRoot)
-          : undefined,
+        ...(next ? { next } : {}),
       },
     };
   } catch (error) {
-    return {
-      ok: false,
-      exitCode: 2,
-      body: {
-        formatVersion: CONTRACT_LIST_OUTCOME_FORMAT_VERSION,
-        kind: "framelia.contract-list-outcome",
-        command: "contract list",
-        executionState: "error",
-        exitCode: 2,
-        contracts: [],
-        diagnostics: [failureDiagnostic(error, "CONTRACT_LIST_FAILED", "list")],
-      },
-    };
+    const failure = failureOutcome({
+      kind: "framelia.contract-list-outcome",
+      command: "contract list",
+      error,
+      fallbackCode: "CONTRACT_LIST_FAILED",
+      stage: "list",
+      projectRoot: options.projectRoot,
+    });
+    return { ...failure, body: { ...failure.body, contracts: [] } };
   }
+}
+
+/**
+ * What to do after listing: repair the first blocking problem, otherwise (once every unbound
+ * entry's `recipe` is registered) list again, otherwise run every executable contract.
+ */
+function listNext(
+  entries: readonly ContractListEntry[],
+  diagnostics: readonly Diagnostic[],
+  projectRoot: string | undefined,
+): NextOperation | undefined {
+  const firstProblem = [...diagnostics, ...entries.flatMap((entry) => entry.diagnostics)].find(
+    (entry) => entry.code !== "CONTRACT_UNBOUND",
+  );
+  if (firstProblem) {
+    return (
+      nextForFailureCode(firstProblem.code, projectRoot) ??
+      (firstProblem.code === "CONTRACT_MATRIX_INVALID"
+        ? frameliaNext(["status"], projectRoot)
+        : undefined)
+    );
+  }
+  if (entries.some((entry) => entry.status === "unbound")) {
+    return frameliaNext(["contract", "list"], projectRoot);
+  }
+  return entries.some((entry) => entry.status === "executable")
+    ? frameliaNext(["check", "--all"], projectRoot)
+    : frameliaNext(["contract", "create"], projectRoot);
 }

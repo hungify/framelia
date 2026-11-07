@@ -5,3 +5,6 @@ export interface CliRuntime extends StricliProcess {
   readonly env: NodeJS.ProcessEnv;
   readonly stdin: NodeJS.ReadableStream;
 }
+
+/** Where termination signals (SIGINT/SIGTERM) come from; Node's `process` in production. */
+export type SignalSource = Pick<NodeJS.Process, "on" | "once" | "off" | "removeListener">;

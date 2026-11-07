@@ -1,5 +1,8 @@
-import { toJsonSchema, verificationRequestSchema } from "@framelia/contracts";
-import { signedAuthoritativeRunRequirementsSchema } from "@framelia/contracts/workflow";
+import { toJsonSchema } from "@framelia/contracts";
+import {
+  authoredContractSchema,
+  signedAuthoritativeRunRequirementsSchema,
+} from "@framelia/contracts/workflow";
 
 import type { SchemaTarget } from "../cli-constants.ts";
 import type { CliResult } from "../output.ts";
@@ -12,6 +15,6 @@ export function schemaCommand(options: SchemaOptions): CliResult<Record<string, 
   const schema =
     options.target === "requirements"
       ? signedAuthoritativeRunRequirementsSchema
-      : verificationRequestSchema;
+      : authoredContractSchema;
   return { ok: true, body: toJsonSchema(schema) };
 }

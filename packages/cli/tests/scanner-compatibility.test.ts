@@ -98,7 +98,7 @@ describe("scanner compatibility: nested-route defaults", () => {
     const fakeProcess = createFakeProcess();
     await run(["--port", "-1"], { process: fakeProcess, loadProjectEnv: false });
     expect(fakeProcess.stderrText()).not.toContain("No command registered");
-    expect(fakeProcess.stderrText()).toContain("--run");
+    expect(JSON.parse(fakeProcess.stdoutText())).toMatchObject({ command: "dashboard" });
     expect(fakeProcess.exitCode).toBe(2);
   });
 

@@ -10,6 +10,7 @@ interface CheckFlags {
   all?: boolean;
   projectRoot?: string;
   project?: string[];
+  runIdFile?: string;
 }
 
 export const checkCommand = buildCommand({
@@ -46,10 +47,30 @@ export const checkCommand = buildCommand({
         brief: "exact configured visual project name (repeatable; empty selects unnamed)",
         placeholder: "name",
       },
+      runIdFile: {
+        kind: "parsed",
+        parse: identityParser,
+        optional: true,
+        brief: "write the durable run ID to this file as soon as the run starts",
+        placeholder: "path",
+      },
     },
     aliases: { c: "contract", p: "project", r: "projectRoot" },
   },
   docs: {
     brief: "Run contract-selected visual checks through the project's local Playwright.",
+    fullDescription: [
+      "Run contract-selected visual checks through the project's local Playwright.",
+      "",
+      "Prints one JSON outcome: exit 0 passed, 1 visual mismatch, 2 not completed.",
+      "Ctrl+C stops Playwright gracefully; a second Ctrl+C terminates it (SIGTERM, then",
+      "SIGKILL after a grace period). The run ID goes to --run-id-file and, in GitHub",
+      "Actions, to the step output `run-id`.",
+      "",
+      "Examples:",
+      "  framelia check --all",
+      "  framelia check --contract login.desktop --project chromium",
+      "  framelia check --all --run-id-file .framelia/last-run-id",
+    ].join("\n"),
   },
 });

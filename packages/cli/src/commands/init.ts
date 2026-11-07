@@ -29,5 +29,16 @@ export const initCommand = buildCommand({
     },
     aliases: { r: "projectRoot", f: "force" },
   },
-  docs: { brief: "Initialize Framelia in a project." },
+  docs: {
+    brief: "Initialize Framelia in a project.",
+    fullDescription: [
+      "Create what is missing (framelia.config, Playwright config with the Framelia",
+      "reporter, .gitignore rules for .framelia/auth/ and .framelia/runs/). Existing",
+      "files are never rewritten; an existing Playwright config gets a reporter recipe.",
+      "",
+      "Examples:",
+      "  framelia init --dry-run",
+      "  framelia init",
+    ].join("\n"),
+  },
 });

@@ -4,7 +4,8 @@ export {
   WILDCARD_DASHBOARD_HOSTNAME,
 } from "./constants.ts";
 export { defaultClientRoot, startDashboardServer } from "./server.ts";
-export type { DashboardServer, DashboardSource } from "./server.ts";
+export type { DashboardSource } from "./dashboard-source.ts";
+export type { DashboardServer } from "./server.ts";
 export { waitForDashboardShutdown } from "./shutdown.ts";
 export { overallStatus, projectSelectedRun, summarize } from "./model.ts";
 export type { SelectedRunDashboardProjection } from "./model.ts";

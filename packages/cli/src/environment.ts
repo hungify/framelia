@@ -8,7 +8,7 @@ import type {
 import type { DashboardHost } from "./internal/dashboard-runtime.ts";
 import type { PlaywrightTransportDependencies } from "./internal/playwright-transport.ts";
 import type { PromptAdapter } from "./internal/prompts.ts";
-import type { CliRuntime } from "./runtime-types.ts";
+import type { CliRuntime, SignalSource } from "./runtime-types.ts";
 
 /** Figma REST access. */
 export interface FigmaAdapter {
@@ -45,8 +45,17 @@ export interface CommandEnvironment {
   readonly version: string;
   readonly adapters: CliAdapters;
   readonly now: () => Date;
-  readonly signals: Pick<NodeJS.Process, "on" | "removeListener">;
+  readonly signals: SignalSource;
+  /** The host platform; decides whether child processes can be signalled gracefully. */
+  readonly platform: NodeJS.Platform;
+  /** Ends this process immediately (a forced interrupt with nothing left to stop). */
+  readonly exit: (code: number) => void;
 }
+
+/** The parts of the environment a caller of `run()` may replace. */
+export type EnvironmentOverrides = Partial<
+  Pick<CommandEnvironment, "now" | "signals" | "platform" | "exit">
+>;
 
 export const defaultAdapters: CliAdapters = {
   async figma() {
@@ -62,7 +71,7 @@ export const defaultAdapters: CliAdapters = {
     };
   },
   async playwright() {
-    return {};
+    return (await import("./internal/playwright-transport.ts")).productionPlaywrightDependencies;
   },
   async dashboard() {
     return (await import("./internal/dashboard-runtime.ts")).productionDashboardHost;
@@ -76,12 +85,15 @@ export function buildEnvironment(options: {
   process?: CliRuntime;
   version: string;
   adapters?: Partial<CliAdapters>;
+  overrides?: EnvironmentOverrides;
 }): CommandEnvironment {
   return {
     process: options.process ?? process,
     version: options.version,
     adapters: { ...defaultAdapters, ...options.adapters },
-    now: () => new Date(),
-    signals: process,
+    now: options.overrides?.now ?? (() => new Date()),
+    signals: options.overrides?.signals ?? process,
+    platform: options.overrides?.platform ?? process.platform,
+    exit: options.overrides?.exit ?? ((code) => process.exit(code)),
   };
 }

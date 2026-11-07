@@ -1,9 +1,15 @@
 import * as http from "node:http";
 
-import { chromium } from "@playwright/test";
+import { chromium, type Page } from "@playwright/test";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { countDevtoolsMatches, fontIncomplete, settle } from "../src/capture/settle.ts";
+import {
+  countDevtoolsMatches,
+  fontIncomplete,
+  releaseAnimationFreeze,
+  settle,
+} from "../src/capture/settle.ts";
+import { NETWORK_IDLE_BEST_EFFORT_MS } from "../src/constants.ts";
 import type { FontReadiness } from "../src/internal.ts";
 
 const browser = await chromium.launch();
@@ -51,7 +57,7 @@ describe("settle", () => {
       const page = await context.newPage();
       await page.goto(app.url);
       const warnings: string[] = [];
-      const fonts = await settle(page, warnings, undefined, "freeze", 2_000);
+      const fonts = await settle(page, warnings, undefined, "freeze", 20_000);
       expect(fonts.supported).toBe(true);
       expect(warnings).toEqual([]);
     } finally {
@@ -67,7 +73,7 @@ describe("settle", () => {
       const page = await context.newPage();
       await page.goto(app.url);
       const warnings: string[] = [];
-      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 2_000);
+      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 20_000);
       expect(warnings.some((w) => w.includes("matched no elements"))).toBe(true);
     } finally {
       await context.close();
@@ -109,8 +115,69 @@ describe("settle", () => {
       const page = await context.newPage();
       await page.goto(app.url);
       const warnings: string[] = [];
-      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 2_000);
+      await settle(page, warnings, '[data-testid="devtools"]', "freeze", 20_000);
       expect(warnings.some((w) => w.includes("matched no elements"))).toBe(false);
+    } finally {
+      await context.close();
+      await app.close();
+    }
+  });
+});
+
+function fakePage(networkIdle: (timeout: number | undefined) => Promise<void>): {
+  page: Page;
+  networkIdleTimeouts: Array<number | undefined>;
+} {
+  const networkIdleTimeouts: Array<number | undefined> = [];
+  const page = {
+    waitForLoadState: async (_state: string, options?: { timeout?: number }) => {
+      networkIdleTimeouts.push(options?.timeout);
+      await networkIdle(options?.timeout);
+    },
+    waitForTimeout: async () => {},
+    evaluate: async () => ({ supported: true, status: "loaded", failed: [] }),
+  } as unknown as Page;
+  return { page, networkIdleTimeouts };
+}
+
+describe("settle network-idle budget", () => {
+  it("keeps the best-effort ceiling for a large budget", async () => {
+    const { page, networkIdleTimeouts } = fakePage(async () => {});
+    await settle(page, [], undefined, "allow", 600_000);
+    expect(networkIdleTimeouts).toEqual([NETWORK_IDLE_BEST_EFFORT_MS]);
+  });
+
+  it("keeps the plain warning when the full best-effort wait elapsed", async () => {
+    const { page } = fakePage(async () => {
+      throw new Error("Timeout exceeded");
+    });
+    const warnings: string[] = [];
+    await settle(page, warnings, undefined, "allow", 600_000);
+    expect(warnings).toEqual([
+      `network did not become idle within ${NETWORK_IDLE_BEST_EFFORT_MS}ms; capture may include pending requests.`,
+    ]);
+  });
+
+  it("never passes Playwright's unbounded timeout 0 when no budget is left", async () => {
+    const { page, networkIdleTimeouts } = fakePage(async () => {});
+    await settle(page, [], undefined, "allow", 0);
+    expect(networkIdleTimeouts).toEqual([1]);
+  });
+});
+
+describe("animation freeze", () => {
+  it("is injected once and removed by releaseAnimationFreeze", async () => {
+    const app = await server("<p>freeze</p>");
+    const context = await browser.newContext();
+    try {
+      const page = await context.newPage();
+      await page.goto(app.url);
+      const count = () => page.locator("style[data-framelia-freeze]").count();
+      await settle(page, [], undefined, "freeze", 20_000);
+      await settle(page, [], undefined, "freeze", 20_000);
+      expect(await count()).toBe(1);
+      await releaseAnimationFreeze(page);
+      expect(await count()).toBe(0);
     } finally {
       await context.close();
       await app.close();

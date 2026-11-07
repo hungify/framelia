@@ -64,6 +64,12 @@ export function hexColorDeltaE(hexA: string, hexB: string): number {
   return ciede2000(rgbToLab(r1, g1, b1), rgbToLab(r2, g2, b2));
 }
 
+/** Alpha (0..1) of a `#rrggbbaa` hex color; a 6-digit `#rrggbb` color is opaque. */
+export function hexColorAlpha(hex: string): number {
+  const value = hex.startsWith("#") ? hex.slice(1) : hex;
+  return value.length >= 8 ? Number.parseInt(value.slice(6, 8), 16) / 255 : 1;
+}
+
 function parseHexRgb(hex: string): [number, number, number] {
   const value = hex.startsWith("#") ? hex.slice(1) : hex;
   return [

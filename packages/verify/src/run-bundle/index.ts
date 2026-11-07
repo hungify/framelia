@@ -23,6 +23,8 @@ export {
   toProjectRelative,
 } from "./layout.ts";
 export type { CaseIdentity } from "./layout.ts";
+export { listRuns } from "./list.ts";
+export type { InvalidRunEntry, RunListing, RunSummary } from "./list.ts";
 export { buildCasePlanForCollectedCase } from "./planner.ts";
 export type { CollectedCasePlanContext } from "./planner.ts";
 export { reconcileCasePlan } from "./reconcile.ts";
@@ -31,6 +33,7 @@ export { readRunBundle } from "./read.ts";
 export type { RunBundle } from "./read.ts";
 export { createRunId } from "./run-id.ts";
 export { evaluateAuthoritativeRun, readSelectedRun } from "./selected-run.ts";
+export { cacheSelectedRunProjection } from "./selected-run-cache.ts";
 export type {
   AuthoritativeCaseVerdict,
   AuthoritativeRunIssue,

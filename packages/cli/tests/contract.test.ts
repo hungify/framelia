@@ -119,7 +119,7 @@ function immediateChild(): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["-e", ""], { stdio: ["pipe", "pipe", "pipe"] });
 }
 
-function executableCollection(root: string, repeatEach = 1): TestAdapters {
+function executableCollection(root: string, repeatEach = 1, bound = true): TestAdapters {
   return {
     figma: { fetchBaseline: fakeFetch() },
     playwright: {
@@ -157,7 +157,7 @@ function executableCollection(root: string, repeatEach = 1): TestAdapters {
                 testDir: "tests",
               },
             ],
-            visualCases: Array.from({ length: repeatEach }, (_, repeatIndex) => ({
+            visualCases: Array.from({ length: bound ? repeatEach : 0 }, (_, repeatIndex) => ({
               formatVersion: 1,
               kind: "framelia.collected-case",
               binding: {
@@ -477,6 +477,71 @@ describe("contract authoring workflow", () => {
         executionState: "error",
         diagnostics: [{ code: "MULTIPLE_PROJECT_CONFIGS" }],
       },
+    });
+  });
+});
+
+describe("contract command follow-ups", () => {
+  it("gives each unbound contract its registration recipe and all-bound lists a check", async () => {
+    const root = temporaryProject(true);
+    await contractCreateCommand(
+      createOptions(root),
+      testEnvironment(runtime(root), executableCollection(root)),
+    );
+
+    const unbound = await contractListCommand(
+      { projectRoot: root },
+      testEnvironment(runtime(root), executableCollection(root, 1, false)),
+    );
+    expect(unbound.body).toMatchObject({
+      contracts: [{ status: "unbound", recipe: expect.stringContaining("defineFigmaTests") }],
+      next: { command: "framelia", argv: ["contract", "list", "--project-root", root] },
+    });
+
+    const bound = await contractListCommand(
+      { projectRoot: root },
+      testEnvironment(runtime(root), executableCollection(root)),
+    );
+    expect(bound.body).toMatchObject({
+      exitCode: 0,
+      next: { command: "framelia", argv: ["check", "--all", "--project-root", root] },
+    });
+  });
+
+  it("reports a Figma failure without a token as FIGMA_TOKEN_MISSING and points at status", async () => {
+    const root = temporaryProject();
+    const result = await contractCreateCommand(
+      createOptions(root),
+      testEnvironment(runtime(root), {
+        figma: {
+          fetchBaseline: async () => ({
+            ok: false,
+            fetched: false,
+            errorClass: "auth",
+            message: "No Figma token found (set FIGMA_ACCESS_TOKEN).",
+          }),
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      exitCode: 2,
+      body: {
+        authored: false,
+        diagnostics: [{ code: "FIGMA_TOKEN_MISSING" }],
+        next: { command: "framelia", argv: ["status", "--project-root", root] },
+      },
+    });
+  });
+
+  it("points refresh-baseline without --contract at contract list", async () => {
+    const root = temporaryProject();
+    const result = await contractRefreshBaselineCommand(
+      { projectRoot: root, contract: undefined },
+      testEnvironment(runtime(root)),
+    );
+    expect(result.body).toMatchObject({
+      diagnostics: [{ code: "CONTRACT_REQUIRED" }],
+      next: { command: "framelia", argv: ["contract", "list", "--project-root", root] },
     });
   });
 });

@@ -22,7 +22,16 @@ export const schemaCommand = buildCommand({
         brief: "schema to print",
       },
     },
-    aliases: { t: "target" },
   },
-  docs: { brief: "Print the live JSON Schema for a visual contract or verification artifact." },
+  docs: {
+    brief: "Print the live JSON Schema for an authored contract or signed requirements.",
+    fullDescription: [
+      "Print the live JSON Schema for an authored visual contract (default) or the",
+      "signed authoritative requirements envelope.",
+      "",
+      "Examples:",
+      "  framelia schema",
+      "  framelia schema --target requirements",
+    ].join("\n"),
+  },
 });

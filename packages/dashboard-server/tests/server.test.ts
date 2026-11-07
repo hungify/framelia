@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as http from "node:http";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -121,6 +122,49 @@ describe("startDashboardServer", () => {
       expect(allowed.status).toBe(200);
       const rejected = await fetch(`${server.url}/artifacts/not-allowlisted.png`);
       expect(rejected.status).toBe(404);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects a DNS-rebound Host on a loopback bind and sets nosniff", async () => {
+    const clientRoot = await clientFixture();
+    const source: DashboardSource = { snapshot: () => emptyRun, files: () => new Map() };
+    const server = await startDashboardServer({ source, clientRoot, port: 0 });
+    const requestWithHost = (host: string) =>
+      new Promise<{ status: number; nosniff: string | undefined }>((resolve, reject) => {
+        const request = http.get(
+          { host: "localhost", port: server.port, path: "/api/run", headers: { host } },
+          (response) => {
+            response.resume();
+            resolve({
+              status: response.statusCode ?? 0,
+              nosniff: response.headers["x-content-type-options"] as string | undefined,
+            });
+          },
+        );
+        request.on("error", reject);
+      });
+    try {
+      expect(await requestWithHost(`localhost:${server.port}`)).toEqual({
+        status: 200,
+        nosniff: "nosniff",
+      });
+      expect((await requestWithHost(`attacker.example:${server.port}`)).status).toBe(403);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("serves the shell with an absolute base for a dotted contract deep link", async () => {
+    const clientRoot = await clientFixture();
+    const source: DashboardSource = { snapshot: () => emptyRun, files: () => new Map() };
+    const server = await startDashboardServer({ source, clientRoot, port: 0 });
+    try {
+      const response = await fetch(`${server.url}/contracts/checkout.desktop`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('<base href="/" />');
+      expect((await fetch(`${server.url}/assets/missing.js`)).status).toBe(404);
     } finally {
       await server.close();
     }

@@ -8,7 +8,8 @@ web-to-web visual verification, plus a CLI for browsing and gating the evidence 
 Framelia does not own navigation, authentication, or browser-context creation — a developer's own
 `@playwright/test` suite does, and calls a Framelia matcher at the point it wants to capture and
 diff. `@framelia/playwright`'s Reporter drives a live dashboard and publishes immutable
-run/case/attempt records plus digest-addressed evidence under `.framelia/runs/<run-id>/`.
+run/case/attempt records plus digest-addressed evidence under `.framelia/runs/<slug(run-id)>/`
+(`framelia runs list` shows each run's ID and `bundlePath`).
 
 ```mermaid
 flowchart LR
@@ -34,6 +35,7 @@ attempt publication/finalization. No database, hosted service, account, or cloud
 | `npx playwright test` (matchers, no reporter)  | Yes (your Playwright process) | No     | No                        | Test pass/fail + attachments       |
 | `npx playwright test` (with Framelia Reporter) | Yes (your Playwright process) | Yes    | Live selected-run view    | Immutable run bundle + live events |
 | `framelia check --all` / `--contract <id>`     | Yes (local Playwright)        | No     | No                        | Exact JSON outcome + run bundle    |
+| `framelia runs list` (or bare `framelia`)      | No                            | No     | No                        | Durable runs, newest first         |
 | `framelia open --run <id>`                     | No                            | Yes    | Selected-run dashboard    | Existing run bundle                |
 | `framelia report --run <id>`                   | No                            | No     | Portable static dashboard | Relocatable selected-run report    |
 | `framelia done-gate --run <id>`                | No                            | No     | No                        | Trusted authoritative run verdict  |
@@ -49,7 +51,8 @@ packages/
 ├── dashboard-server/        # Hono/SSE server + result-projection, shared by cli and playwright
 ├── playwright/              # toMatchFigma / toMatchPage / toMatchUrl matchers + Reporter
 ├── cli/                     # framelia binary: init, check, contract create/list/refresh,
-    │                        # status, schema, open, report, dashboard, compare, done-gate
+    │                        # status, schema, runs, open, report, dashboard, compare, done-gate
+
     └── dist/dashboard/      # generated dashboard bundled in npm package
 ```
 

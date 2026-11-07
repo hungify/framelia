@@ -117,6 +117,10 @@ export interface DashboardContractResult {
   status: DashboardVerdict;
   phase: DashboardPhase;
   baselineKind: "figma" | "page";
+  /** Set only for a toMatchPageBaseline result whose baseline lives where `framelia baseline
+   *  promote --key <baselineKey>` writes it -- the exact key to re-promote it with (#101).
+   *  Absent from older runs and from results whose matcher used a custom `baselineDir`. */
+  baselineKey?: string;
   baseline?: DashboardImageEvidence & {
     revision?: string;
     provenance: string;

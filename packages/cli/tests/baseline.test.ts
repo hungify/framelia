@@ -1,7 +1,7 @@
 import type { captureAndPromotePageBaseline } from "@framelia/verify/cli";
 import { describe, expect, it, vi } from "vitest";
 
-import { EXIT_USAGE_ERROR, UsageError } from "../src/exit.ts";
+import { EXIT_USAGE_ERROR } from "../src/exit.ts";
 import {
   baselinePromoteCommand,
   type BaselinePromoteOptions,
@@ -49,13 +49,14 @@ const okCapture = vi.fn<typeof captureAndPromotePageBaseline>().mockResolvedValu
   },
 });
 
-async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-  } catch (error) {
-    return error;
-  }
-  throw new Error("expected promise to reject");
+/** The one diagnostic of a structured exit-2 outcome; validation never throws to stderr. */
+async function rejectionOf(
+  promise: Promise<{ exitCode?: number; body: unknown }>,
+): Promise<{ code: string; message: string }> {
+  const result = await promise;
+  expect(result.exitCode).toBe(EXIT_USAGE_ERROR);
+  const body = result.body as { diagnostics: { code: string; message: string }[] };
+  return body.diagnostics[0]!;
 }
 
 describe("baselinePromoteCommand: validation", () => {
@@ -70,8 +71,8 @@ describe("baselinePromoteCommand: validation", () => {
         }),
       ),
     );
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as Error).message).toBe(
+    expect(error.code).toBe("INVALID_INPUT");
+    expect(error.message).toBe(
       "--key must use lowercase letters, numbers, dots, or hyphens, e.g. home.desktop.",
     );
   });
@@ -87,8 +88,8 @@ describe("baselinePromoteCommand: validation", () => {
         }),
       ),
     );
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as Error).message).toBe("--target-url must use http:// or https://.");
+    expect(error.code).toBe("INVALID_INPUT");
+    expect(error.message).toBe("--target-url must use http:// or https://.");
   });
 
   it("rejects a lone --viewport-width with the exact historical pairing message", async () => {
@@ -102,10 +103,8 @@ describe("baselinePromoteCommand: validation", () => {
         }),
       ),
     );
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as Error).message).toBe(
-      "--viewport-width and --viewport-height must be supplied together.",
-    );
+    expect(error.code).toBe("INVALID_INPUT");
+    expect(error.message).toBe("--viewport-width and --viewport-height must be supplied together.");
   });
 
   it("rejects a lone --viewport-height the same way", async () => {
@@ -118,7 +117,7 @@ describe("baselinePromoteCommand: validation", () => {
           },
         }),
       ),
-    ).rejects.toBeInstanceOf(UsageError);
+    ).resolves.toMatchObject({ exitCode: EXIT_USAGE_ERROR });
   });
 
   it("rejects a non-positive viewport dimension", async () => {
@@ -127,7 +126,7 @@ describe("baselinePromoteCommand: validation", () => {
         baseOptions({ viewportWidth: -1, viewportHeight: 720 }),
         testEnvironment(fakeRuntime(), { browser: { captureAndPromote: okCapture } }),
       ),
-    ).rejects.toBeInstanceOf(UsageError);
+    ).resolves.toMatchObject({ exitCode: EXIT_USAGE_ERROR });
   });
 
   it("collects multiple simultaneous violations into one message", async () => {
@@ -136,8 +135,8 @@ describe("baselinePromoteCommand: validation", () => {
         baseOptions({ key: "Bad Key", targetUrl: "not-a-url" }),
         testEnvironment(fakeRuntime(), { browser: { captureAndPromote: okCapture } }),
       ),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining("; "),
+    ).resolves.toMatchObject({
+      body: { diagnostics: [{ message: expect.stringContaining("; ") }] },
     });
   });
 
@@ -327,6 +326,18 @@ describe("baselinePromoteCommand: result shape", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.body).toEqual({
+      formatVersion: 1,
+      kind: "framelia.baseline-promote-outcome",
+      command: "baseline promote",
+      executionState: "error",
+      exitCode: 2,
+      diagnostics: [
+        {
+          code: "capture-failed",
+          stage: "baseline-promote",
+          message: "Could not load the target URL.",
+        },
+      ],
       key: "home.desktop",
       error: "capture-failed",
       message: "Could not load the target URL.",

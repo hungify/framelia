@@ -1,5 +1,6 @@
 import {
   CONTRACT_ID_PATTERN,
+  resolveDisplayThreshold,
   type StyleCheckPoint,
   type StyleToleranceOverrides,
   type VisualMask,
@@ -16,6 +17,7 @@ import {
 } from "../attach.ts";
 import { captureActual } from "../capture.ts";
 import { resolveFigmaCompareOptions } from "../figma-profile.ts";
+import { describeMismatch, operationalFailure } from "../matcher-outcome.ts";
 import { buildScoreAttachment, type FrameliaScoreAttachment } from "../score-attachment.ts";
 import {
   buildAttributionIssues,
@@ -63,11 +65,17 @@ export interface ToMatchFigmaOptions {
    *  anti-aliasing noise. Always reads the live value rather than a caller-supplied
    *  number, so the Figma fetch and the web capture can't drift out of sync. */
   scale?: true;
+  /** Per-call deadline in ms for fetch+capture+compare; defaults to the expect timeout. */
+  timeout?: number;
 }
 
 export interface ToMatchFigmaContext {
   timeoutMs: number;
   workDir: string;
+  /** Attachment base name; defaults to one derived from `nodeId`. The registered matcher
+   *  passes a per-call unique one, so two calls for the same node in one test keep
+   *  separate expected/actual/diff/score attachments. */
+  baseName?: string;
   /** Attaches a file at `path` under `name`; wraps TestInfo.attach in the real matcher. */
   attach: (name: string, path: string) => Promise<void>;
   attachJson: AttachJsonFn;
@@ -92,25 +100,21 @@ export async function runToMatchFigma(
   const { timeoutMs, workDir } = context;
   const fileKey = options.fileKey ?? process.env[FILE_KEY_ENV_VAR];
   if (!fileKey) {
-    return {
-      pass: false,
-      message: () =>
-        `toMatchFigma: no Figma file key. Pass { fileKey } or set ${FILE_KEY_ENV_VAR}.`,
-    };
+    return operationalFailure(
+      `toMatchFigma: no Figma file key. Pass { fileKey } or set ${FILE_KEY_ENV_VAR}.`,
+    );
   }
 
   // Fail fast here instead of in the Reporter, where a bad contractId would only log to the
   // console and silently drop the evidence without failing the test.
   if (options.contractId !== undefined && !CONTRACT_ID_PATTERN.test(options.contractId)) {
-    return {
-      pass: false,
-      message: () =>
-        `toMatchFigma: contractId "${options.contractId}" must match ${CONTRACT_ID_PATTERN} ` +
+    return operationalFailure(
+      `toMatchFigma: contractId "${options.contractId}" must match ${CONTRACT_ID_PATTERN} ` +
         `(lowercase letters/digits, separated by "." or "-" -- e.g. "login.desktop").`,
-    };
+    );
   }
 
-  const baseName = sanitizeAttachmentBaseName(nodeId);
+  const baseName = context.baseName ?? sanitizeAttachmentBaseName(nodeId);
   const { profile, clusterCheck } = resolveFigmaCompareOptions(
     options.profile,
     Boolean(options.selector),
@@ -149,18 +153,14 @@ export async function runToMatchFigma(
     );
 
     if (!baselineOutcome.ok) {
-      return {
-        pass: false,
-        message: () =>
-          `toMatchFigma: Figma baseline fetch failed (${baselineOutcome.error}): ${baselineOutcome.message}`,
-      };
+      return operationalFailure(
+        `toMatchFigma: Figma baseline fetch failed (${baselineOutcome.error}): ${baselineOutcome.message}`,
+      );
     }
     if (!captureOutcome.ok) {
-      return {
-        pass: false,
-        message: () =>
-          `toMatchFigma: capture failed (${captureOutcome.error}): ${captureOutcome.message}`,
-      };
+      return operationalFailure(
+        `toMatchFigma: capture failed (${captureOutcome.error}): ${captureOutcome.message}`,
+      );
     }
 
     const actualPath = captureOutcome.capturePaths[0]!;
@@ -212,9 +212,13 @@ export async function runToMatchFigma(
         : [];
 
     const extraIssues = [...styleIssues, ...attributionIssues];
-    const outcomeWithStyle = extraIssues.length
-      ? { ...outcome, topIssues: [...outcome.topIssues, ...extraIssues] }
-      : outcome;
+    // Baseline warnings (e.g. a cached fallback that skipped the style gate) ride along on
+    // the score so the reporter and dashboard surface them instead of dropping them here.
+    const outcomeWithStyle = {
+      ...outcome,
+      topIssues: [...outcome.topIssues, ...extraIssues],
+      warnings: [...baselineOutcome.baseline.warnings, ...outcome.warnings],
+    };
 
     await attachDiffTriplet(context.attach, baseName, {
       expected: baselineOutcome.baseline.evidence.path,
@@ -252,12 +256,18 @@ export async function runToMatchFigma(
       message: () =>
         outcome.pass
           ? `toMatchFigma: ${nodeId} matched (matchRatio ${outcome.matchRatio?.toFixed(4)}).`
-          : `toMatchFigma: ${nodeId} did not match Figma baseline (matchRatio ${outcome.matchRatio?.toFixed(4) ?? "n/a"}, ssim ${outcome.ssim?.toFixed(4) ?? "n/a"}). See attached expected/actual/diff.`,
+          : `toMatchFigma: ${nodeId} did not match Figma baseline (${describeMismatch(
+              outcomeWithStyle,
+              resolveDisplayThreshold({
+                profile,
+                profileOverrides: options.profileOverrides,
+                clusterCheck,
+              }),
+            )}). See attached expected/actual/diff.`,
     };
   } catch (error) {
-    return {
-      pass: false,
-      message: () => `toMatchFigma: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    return operationalFailure(
+      `toMatchFigma: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

@@ -54,7 +54,9 @@ export interface FrameliaReporterOptions {
   /** Forwarded to startDashboardServer; mainly for tests -- production use should rely on the default. */
   clientRoot?: string;
   /** The run-bundle `runId`; falls back to the `FRAMELIA_RUN_ID` environment variable, then
-   *  to a fresh `createRunId()` per Playwright invocation. Set it (or `FRAMELIA_RUN_ID`) to one
+   *  to a fresh `createRunId()` per Playwright invocation. Both are trimmed, a blank value counts
+   *  as unset, and one starting with `-` makes the reporter throw on start (the CLI's
+   *  `--run <run-id>` would read it as a flag). Set it (or `FRAMELIA_RUN_ID`) to one
    *  value per CI run when sharding: every `--shard` then contributes to one shared run, which
    *  is finalized once all shards completed. It must be unique per run -- a published run is
    *  immutable, so reusing an ID (e.g. a CI re-run) is refused. */

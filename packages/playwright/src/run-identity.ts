@@ -14,8 +14,10 @@ export interface RunIdentity {
 
 /**
  * Decides the run ID of a direct Playwright invocation: the reporter's `runId` option, else
- * `FRAMELIA_RUN_ID`, else a fresh ID. Sharded invocations either share that explicit ID (and
- * contribute to one run) or, without one, each record a suffixed per-shard bundle.
+ * `FRAMELIA_RUN_ID`, else a fresh ID; both are trimmed and a blank one counts as unset.
+ * Throws when the explicit ID starts with `-`, which the CLI's `--run <run-id>` would parse as a
+ * flag. Sharded invocations either share that explicit ID (and contribute to one run) or, without
+ * one, each record a suffixed per-shard bundle.
  */
 export function resolveRunIdentity(input: {
   optionRunId?: string | undefined;
@@ -23,7 +25,12 @@ export function resolveRunIdentity(input: {
   shard?: RunShard | null | undefined;
   newId: () => string;
 }): RunIdentity {
-  const explicit = input.optionRunId ?? (input.envRunId?.trim() || undefined);
+  const optionRunId = input.optionRunId?.trim() || undefined;
+  const explicit = optionRunId ?? (input.envRunId?.trim() || undefined);
+  if (explicit?.startsWith("-")) {
+    const source = optionRunId === undefined ? RUN_ID_ENV : "the runId option";
+    throw new Error(`framelia reporter: ${source} "${explicit}" must not start with "-".`);
+  }
   const shard = input.shard ?? undefined;
   const sharedShard = shard && explicit !== undefined ? shard : undefined;
   const baseRunId = explicit ?? input.newId();

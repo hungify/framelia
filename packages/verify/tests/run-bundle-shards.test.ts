@@ -285,6 +285,28 @@ describe("sharded direct runs", () => {
     });
   });
 
+  it("rejects shards that disagree on the retry acceptance policy", async () => {
+    const root = temporaryRoot();
+    const [login, checkout] = await shardedCasePlans(root, ["login.desktop", "checkout.desktop"]);
+    await publishPlanFragment(root, fragment(SHARD_1, [login!]));
+    await publishPlanFragment(
+      root,
+      fragment(SHARD_2, [{ ...checkout!, retryAcceptance: "allow-passed-after-retry" }], {
+        retryAcceptance: "allow-passed-after-retry",
+      }),
+    );
+    await complete(root, SHARD_1);
+    await complete(root, SHARD_2);
+
+    await expect(finalizeShardedRun(root, RUN_ID)).rejects.toMatchObject({
+      code: "RUN_BUNDLE_SHARD_CONFLICT",
+      message: expect.stringMatching(
+        /retry acceptance policy.*shard 1\/2.*"require-first-attempt".*shard 2\/2.*"allow-passed-after-retry"/su,
+      ),
+    });
+    expect(fs.existsSync(planDir(root, RUN_ID))).toBe(false);
+  });
+
   it("rejects a plan fragment changed after its shard completed", async () => {
     const root = temporaryRoot();
     const [login, checkout] = await shardedCasePlans(root, ["login.desktop", "checkout.desktop"]);

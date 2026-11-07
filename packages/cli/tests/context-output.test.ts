@@ -59,6 +59,22 @@ describe("run: project env", () => {
     expect(parsed.figmaTokenAvailable).toBe(true);
   });
 
+  it.each([["install"], ["uninstall"]])(
+    "does not load the project .env for `completion %s`, which edits the user's shell profile",
+    async (subcommand) => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-cli-completion-env-"));
+      temporaryDirectories.push(projectRoot);
+      fs.writeFileSync(path.join(projectRoot, ".env"), "FRAMELIA_ENV_PROBE=from-project-dotenv\n");
+      // A non-bash SHELL makes the completion library return before it touches the real ~/.bashrc.
+      const fakeProc = { ...createFakeProcess({ SHELL: "/bin/zsh" }), cwd: () => projectRoot };
+
+      await run(["completion", subcommand], { process: fakeProc });
+
+      expect(fakeProc.env.FRAMELIA_ENV_PROBE).toBeUndefined();
+      expect(fakeProc.stderrText()).toContain("Skipping bash");
+    },
+  );
+
   it.each([
     {
       command: ["contract", "list"],

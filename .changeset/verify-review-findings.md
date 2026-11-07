@@ -1,5 +1,9 @@
 ---
+"framelia": patch
+"@framelia/contracts": patch
 "@framelia/verify": patch
+"@framelia/dashboard-server": patch
+"@framelia/playwright": patch
 ---
 
 Fix review findings across Figma acquisition, locking, run finalization, and comparison.

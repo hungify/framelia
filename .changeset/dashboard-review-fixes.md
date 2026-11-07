@@ -1,6 +1,9 @@
 ---
+"framelia": patch
 "@framelia/contracts": patch
+"@framelia/verify": patch
 "@framelia/dashboard-server": patch
+"@framelia/playwright": patch
 ---
 
 Harden the dashboard server and client, and make version skew readable.

@@ -1,6 +1,9 @@
 ---
 "framelia": minor
+"@framelia/contracts": minor
 "@framelia/verify": minor
+"@framelia/dashboard-server": minor
+"@framelia/playwright": minor
 ---
 
 Make every CLI failure a structured, actionable outcome, add run discovery, and tidy help.

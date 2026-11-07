@@ -1,7 +1,9 @@
 ---
+"framelia": minor
 "@framelia/contracts": minor
+"@framelia/verify": minor
+"@framelia/dashboard-server": minor
 "@framelia/playwright": minor
-"@framelia/dashboard-server": patch
 ---
 
 Make the dashboard's `framelia baseline promote` command exact for page baselines.

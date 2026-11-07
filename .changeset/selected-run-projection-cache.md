@@ -1,7 +1,9 @@
 ---
+"framelia": minor
+"@framelia/contracts": minor
 "@framelia/verify": minor
-"@framelia/playwright": patch
-"framelia": patch
+"@framelia/dashboard-server": minor
+"@framelia/playwright": minor
 ---
 
 Compute the dashboard's selected-run projection once per run change.

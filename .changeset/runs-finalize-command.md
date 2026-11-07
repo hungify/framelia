@@ -1,5 +1,9 @@
 ---
 "framelia": minor
+"@framelia/contracts": minor
+"@framelia/verify": minor
+"@framelia/dashboard-server": minor
+"@framelia/playwright": minor
 ---
 
 Add `framelia runs finalize --run <id>` for sharded runs whose shards ran on separate machines.

@@ -1,5 +1,9 @@
 ---
+"framelia": minor
 "@framelia/contracts": minor
+"@framelia/verify": minor
+"@framelia/dashboard-server": minor
+"@framelia/playwright": minor
 ---
 
 Add the records a sharded direct run is composed from.

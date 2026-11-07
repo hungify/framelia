@@ -1,5 +1,9 @@
 ---
+"framelia": minor
+"@framelia/contracts": minor
 "@framelia/verify": minor
+"@framelia/dashboard-server": minor
+"@framelia/playwright": minor
 ---
 
 Compose sharded direct runs into one run bundle and finalize them once.

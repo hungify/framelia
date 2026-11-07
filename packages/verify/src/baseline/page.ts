@@ -5,7 +5,13 @@ import * as z from "zod";
 
 import { WEB_BASELINE_ARTIFACT } from "../artifacts.ts";
 import { JSON_INDENT_SPACES } from "../constants.ts";
-import { writeFileAtomic } from "../fs-atomic.ts";
+import { fsyncDirectory, writeFileAtomic } from "../fs-atomic.ts";
+import {
+  currentLockOwner,
+  readLockOwner,
+  reclaimStaleLock,
+  serializeLockOwner,
+} from "../lock-owner.ts";
 
 const WEB_BASELINE_HISTORY_DIR = "web-baseline-history";
 
@@ -103,21 +109,50 @@ export function promotePageBaseline(
 ): PromotePageBaselineResult {
   fs.mkdirSync(options.outDir, { recursive: true });
   const lockPath = path.join(options.outDir, ".web-baseline-promotion.lock");
-  let lock: number;
-  try {
-    lock = fs.openSync(lockPath, "wx");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    throw new Error(
-      `Baseline promotion is locked at ${lockPath}. Retry after the active promotion finishes; remove a stale lock only after confirming no promotion is running.`,
-      { cause: error },
-    );
-  }
+  const lock = acquirePromotionLock(lockPath);
   try {
     return promoteLocked(options);
   } finally {
     fs.closeSync(lock);
     fs.unlinkSync(lockPath);
+  }
+}
+
+/**
+ * Exclusive-create lock file holding its owner record. A lock left behind by a crashed
+ * promotion on this host (owner pid gone) is reclaimed once; any other held lock --
+ * live owner, another host, or an owner record we cannot read -- is refused as before.
+ */
+function acquirePromotionLock(lockPath: string): number {
+  for (let reclaimed = false; ; reclaimed = true) {
+    let lock: number;
+    try {
+      lock = fs.openSync(lockPath, "wx");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (
+        !reclaimed &&
+        reclaimStaleLock(
+          lockPath,
+          () => readLockOwner(lockPath),
+          () => fs.rmSync(lockPath, { force: true }),
+        )
+      ) {
+        continue;
+      }
+      throw new Error(
+        `Baseline promotion is locked at ${lockPath}. Retry after the active promotion finishes; remove a stale lock only after confirming no promotion is running.`,
+        { cause: error },
+      );
+    }
+    try {
+      fs.writeSync(lock, serializeLockOwner(currentLockOwner()));
+    } catch (error) {
+      fs.closeSync(lock);
+      fs.unlinkSync(lockPath);
+      throw error;
+    }
+    return lock;
   }
 }
 
@@ -152,8 +187,12 @@ function promoteLocked(options: PromotePageBaselineOptions): PromotePageBaseline
   const temporaryImage = `${baselinePath}.${process.pid}.tmp`;
   try {
     fs.copyFileSync(options.sourcePath, temporaryImage, fs.constants.COPYFILE_EXCL);
+    // The bytes must be on stable storage before any name (and then meta.json) points at
+    // them -- otherwise a power loss could leave meta.json naming a zero-length image.
+    fsyncFile(temporaryImage);
     // Linking commits complete bytes without replacing a version left by an interrupted promotion.
     fs.linkSync(temporaryImage, baselinePath);
+    fsyncDirectory(historyDir);
     writeFileAtomic(metaPath, `${JSON.stringify(meta, null, JSON_INDENT_SPACES)}\n`);
   } finally {
     fs.rmSync(temporaryImage, { force: true });
@@ -167,6 +206,16 @@ function promoteLocked(options: PromotePageBaselineOptions): PromotePageBaseline
       ? { archivedPath: pageBaselineImagePath(options.outDir, previousMeta.current.version) }
       : {}),
   };
+}
+
+function fsyncFile(filePath: string): void {
+  // "r+", not "r": Windows refuses to flush a read-only handle.
+  const descriptor = fs.openSync(filePath, "r+");
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 export type ResolvePageBaselineOutcome =

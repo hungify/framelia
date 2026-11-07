@@ -617,3 +617,51 @@ describe("signed done-gate authority boundary", () => {
     });
   });
 });
+
+describe("done-gate outcome diagnostics and follow-ups", () => {
+  it("reports diagnostics beside the deprecated issues alias and omits next for operator-only failures", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root);
+    const signed = signedRequirements(root, fixture.requirements);
+    const missingKey = await doneGateCommand(
+      { run: "run-selected", requirements: signed.requirements, projectRoot: root },
+      testEnvironment(runtime(root)),
+    );
+    expect(missingKey.body).toMatchObject({
+      diagnostics: [{ code: "TRUST_ROOT_MISSING", stage: "done-gate" }],
+      issues: [{ code: "TRUST_ROOT_MISSING" }],
+    });
+    expect(missingKey.body).not.toHaveProperty("next");
+  });
+
+  it("points missing options at runs list, keeping --project-root", async () => {
+    const root = temporaryRoot();
+    const result = await doneGateCommand(
+      { run: undefined, requirements: undefined, projectRoot: root },
+      testEnvironment(runtime(root)),
+    );
+    expect(result.body).toMatchObject({
+      diagnostics: [{ code: "DONE_GATE_OPTIONS_INVALID" }],
+      next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
+    });
+  });
+
+  it("includes the sanitized cause when the selected run bundle cannot be evaluated", async () => {
+    const root = temporaryRoot();
+    const fixture = await createSelectedRun(root);
+    const signed = signedRequirements(root, fixture.requirements);
+    fs.rmSync(path.join(root, ".framelia", "runs"), { recursive: true, force: true });
+    const result = await doneGateCommand(
+      { run: "run-selected", requirements: signed.requirements, projectRoot: root },
+      testEnvironment(runtime(root, keyEnv(signed.publicKey))),
+    );
+    expect(result.exitCode).toBe(2);
+    const body = result.body as { diagnostics: { code: string; message: string }[] };
+    expect(body.diagnostics[0]?.code).toBe("RUN_BUNDLE_MISSING");
+    expect(body.diagnostics[0]?.message).toContain("run-selected");
+    expect(body.diagnostics[0]?.message).not.toContain(root);
+    expect(result.body).toMatchObject({
+      next: { command: "framelia", argv: ["runs", "list", "--project-root", root] },
+    });
+  });
+});

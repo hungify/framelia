@@ -198,7 +198,7 @@ describe("Project config intake", () => {
     );
   });
 
-  it("reclassifies a config loading failure as UsageError, preserving the message", async () => {
+  it("keeps the policy's own error code for an invalid config, preserving the message", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-adapter-fail-"));
     temporaryDirectories.push(projectRoot);
     fs.writeFileSync(
@@ -209,9 +209,19 @@ describe("Project config intake", () => {
     expect(() => openProject(projectRoot, createFakeProcess())).not.toThrow();
     const project = openProject(projectRoot, createFakeProcess());
 
-    await expect(project.loadConfig()).rejects.toBeInstanceOf(UsageError);
-    await expect(project.loadConfig()).rejects.toThrow(
-      "Unknown Framelia config option: totallyMadeUpOption.",
-    );
+    await expect(project.loadConfig()).rejects.toMatchObject({
+      code: "INVALID_PROJECT_CONFIG",
+      message: "Unknown Framelia config option: totallyMadeUpOption.",
+    });
+  });
+
+  it("reclassifies an uncoded config loading failure as a coded UsageError", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "framelia-config-syntax-fail-"));
+    temporaryDirectories.push(projectRoot);
+    fs.writeFileSync(path.join(projectRoot, "framelia.config.mjs"), "export default {;\n");
+
+    const failure = openProject(projectRoot, createFakeProcess()).loadConfig();
+    await expect(failure).rejects.toBeInstanceOf(UsageError);
+    await expect(failure).rejects.toMatchObject({ code: "INVALID_PROJECT_CONFIG" });
   });
 });

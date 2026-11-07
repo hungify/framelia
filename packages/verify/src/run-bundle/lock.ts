@@ -1,10 +1,17 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import {
+  currentLockOwner,
+  readLockOwner,
+  reclaimStaleLock,
+  serializeLockOwner,
+} from "../lock-owner.ts";
 import { AppError } from "../types.ts";
 import { runDir } from "./layout.ts";
 
 const LOCK_DIR_NAME = "lock";
+const LOCK_OWNER_FILE_NAME = "owner.json";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_BACKOFF_MS = 50;
 
@@ -48,12 +55,13 @@ function sleepAsync(ms: number): Promise<void> {
  * `timeoutMs` elapses without acquiring the lock, rather than hanging forever on a truly
  * stuck holder.
  *
- * Stale-lock recovery (a coordinator that crashed while holding the lock) is deliberately
- * NOT implemented: distinguishing "still legitimately held" from "abandoned" without
- * reintroducing a race (e.g. a heartbeat file another caller could itself race to delete
- * or misread) needs real process-liveness detection this module doesn't have. A lock left
- * behind by a crashed coordinator is an operational concern -- remove the lock directory
- * (`.framelia/runs/<runId>/lock`) manually.
+ * Stale-lock recovery: the holder records `{ pid, hostname, startedAt }` in
+ * `lock/owner.json` right after acquiring. A contender reclaims the lock only when that
+ * owner ran on this same host and its pid no longer exists (see lock-owner.ts's
+ * reclaimStaleLock, which serializes reclaimers so a freshly re-acquired lock is never
+ * deleted). Anything less certain -- another host, a live or unreadable owner -- keeps
+ * the deliberate wait-then-`RUN_BUNDLE_LOCK_TIMEOUT` behaviour; such a lock still has to
+ * be removed (`.framelia/runs/<runId>/lock`) manually once no coordinator is running.
  */
 export async function withRunLock<T>(
   root: string,
@@ -65,6 +73,7 @@ export async function withRunLock<T>(
   const lockDir = lockDirPath(root, runId);
   fs.mkdirSync(path.dirname(lockDir), { recursive: true });
 
+  const ownerPath = path.join(lockDir, LOCK_OWNER_FILE_NAME);
   const deadline = Date.now() + timeoutMs;
   let backoffMs = 2;
   for (;;) {
@@ -73,6 +82,15 @@ export async function withRunLock<T>(
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (
+        reclaimStaleLock(
+          lockDir,
+          () => readLockOwner(ownerPath),
+          () => fs.rmSync(lockDir, { recursive: true, force: true }),
+        )
+      ) {
+        continue;
+      }
       if (Date.now() >= deadline) {
         throw new AppError(
           "RUN_BUNDLE_LOCK_TIMEOUT",
@@ -89,6 +107,9 @@ export async function withRunLock<T>(
   }
 
   try {
+    // Inside the try so a failed owner write still releases the lock. A crash between the
+    // mkdir above and this write leaves an owner-less lock, which is never auto-reclaimed.
+    fs.writeFileSync(ownerPath, serializeLockOwner(currentLockOwner()));
     return await fn();
   } finally {
     fs.rmSync(lockDir, { recursive: true, force: true });

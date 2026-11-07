@@ -15,6 +15,7 @@ import {
 } from "@framelia/contracts/workflow";
 
 import { canonicalJsonDigest } from "../canonical-json.ts";
+import { areaGap } from "../compare/area-gap.ts";
 import { SEVERITY_RANK, STYLE_GATE_BLOCKING_KINDS, STYLE_GATE_MIN_SEVERITY } from "../constants.ts";
 import { sha256Hex } from "../hash.ts";
 import { AppError } from "../types.ts";
@@ -169,40 +170,50 @@ function validateAuthoritativeAttempt(
       reasons.push("complete applied mask evidence does not match the frozen masks");
     }
   }
-  if (score.pass) {
-    if (
-      score.matchRatio === null ||
-      score.ssim === null ||
-      score.avgDeltaE === null ||
-      score.diffPixels === null
-    ) {
-      reasons.push("passing score is missing measured comparison metrics");
-    } else {
-      if (score.matchRatio < expectedThreshold.minMatch) {
-        reasons.push("passing score matchRatio is below the resolved threshold");
-      }
-      if (score.ssim < expectedThreshold.minSSIM) {
-        reasons.push("passing score SSIM is below the resolved threshold");
-      }
-      if (score.avgDeltaE > expectedThreshold.maxAvgDeltaE) {
-        reasons.push("passing score average DeltaE exceeds the resolved threshold");
-      }
-      if (
-        expectedThreshold.maxDiffPixels !== null &&
-        score.diffPixels > expectedThreshold.maxDiffPixels
-      ) {
-        reasons.push("passing score diffPixels exceeds the resolved threshold");
-      }
+  if (score.pass) reasons.push(...passingScoreThresholdReasons(score, expectedThreshold));
+  return reasons;
+}
+
+/**
+ * Re-checks a score that claims `pass` against the frozen resolved threshold. The size
+ * gap is recomputed from the recorded sizes with compare()'s own areaGap() formula (the
+ * per-axis maximum), so a score compare() legitimately passed is never rejected here by
+ * a different notion of "size gap".
+ */
+export function passingScoreThresholdReasons(
+  score: Pick<
+    AttemptScore,
+    "matchRatio" | "ssim" | "avgDeltaE" | "diffPixels" | "baselineSize" | "actualSize"
+  >,
+  threshold: Pick<
+    AttemptScore["resolvedThreshold"],
+    "minMatch" | "minSSIM" | "maxAvgDeltaE" | "maxDiffPixels" | "maxAreaGapPercent"
+  >,
+): string[] {
+  const reasons: string[] = [];
+  if (
+    score.matchRatio === null ||
+    score.ssim === null ||
+    score.avgDeltaE === null ||
+    score.diffPixels === null
+  ) {
+    reasons.push("passing score is missing measured comparison metrics");
+  } else {
+    if (score.matchRatio < threshold.minMatch) {
+      reasons.push("passing score matchRatio is below the resolved threshold");
     }
-    const expectedArea = score.baselineSize.width * score.baselineSize.height;
-    const actualArea = score.actualSize.width * score.actualSize.height;
-    const areaGapPercent =
-      expectedArea === 0
-        ? Number.POSITIVE_INFINITY
-        : (Math.abs(actualArea - expectedArea) / expectedArea) * 100;
-    if (areaGapPercent > expectedThreshold.maxAreaGapPercent) {
-      reasons.push("passing score size gap exceeds the resolved threshold");
+    if (score.ssim < threshold.minSSIM) {
+      reasons.push("passing score SSIM is below the resolved threshold");
     }
+    if (score.avgDeltaE > threshold.maxAvgDeltaE) {
+      reasons.push("passing score average DeltaE exceeds the resolved threshold");
+    }
+    if (threshold.maxDiffPixels !== null && score.diffPixels > threshold.maxDiffPixels) {
+      reasons.push("passing score diffPixels exceeds the resolved threshold");
+    }
+  }
+  if (areaGap(score.baselineSize, score.actualSize).areaGapPercent > threshold.maxAreaGapPercent) {
+    reasons.push("passing score size gap exceeds the resolved threshold");
   }
   return reasons;
 }

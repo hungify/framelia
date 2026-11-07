@@ -33,19 +33,23 @@ describe("published CLI", () => {
       { encoding: "utf8", env: { ...process.env, FIGMA_ACCESS_TOKEN: "" } },
     );
 
-    expect(result.status).toBe(0);
+    // The package directory is not a Framelia project: status says so (exit 2) and how to fix it.
+    expect(result.status).toBe(2);
     expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
       name: "framelia",
       version: packageVersion,
       mode: "cli",
       projectRoot: packageRoot,
       baselineKinds: ["figma"],
       figmaTokenAvailable: false,
+      diagnostics: [{ code: "PROJECT_NOT_INITIALIZED" }],
+      next: { command: "framelia", argv: ["init", "--project-root", packageRoot] },
     });
   });
 
   it.each([
-    ["contract", [], ["schemaVersion", "target", "contracts"]],
+    ["contract", [], ["formatVersion", "kind", "id", "target", "baseline"]],
     [
       "requirements",
       ["--target", "requirements"],

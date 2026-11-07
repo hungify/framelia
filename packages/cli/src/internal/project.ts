@@ -1,5 +1,6 @@
 import * as path from "node:path";
 
+import { AppError } from "@framelia/verify";
 import { discoverProjectConfig, resolveProjectPolicy } from "@framelia/verify/project-policy";
 import type { ResolvedProjectPolicy } from "@framelia/verify/project-policy";
 
@@ -27,7 +28,12 @@ export function openProject(rawRoot: string | undefined, runtime: CliRuntime): P
         ...(rawRoot ? { projectRoot: rawRoot } : {}),
         env: runtime.env,
       }).catch((error: unknown) => {
-        throw new UsageError(error instanceof Error ? error.message : String(error));
+        // Keep the policy's own code (e.g. INVALID_PROJECT_CONFIG) for structured outcomes.
+        if (error instanceof AppError) throw error;
+        throw new UsageError(error instanceof Error ? error.message : String(error), {
+          code: "INVALID_PROJECT_CONFIG",
+          cause: error,
+        });
       });
       return configPromise;
     },

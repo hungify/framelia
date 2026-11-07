@@ -18,10 +18,27 @@ Routes come from files under `pages/`:
 
 ```text
 pages/
-├── index.vue                 # /
-└── contracts/
-    └── [...id].vue           # /contracts/:id(.*)
+├── (dashboard).vue           # shared parent: renders the dashboard once
+└── (dashboard)/
+    ├── index.vue             # /
+    └── contracts/
+        └── [...id].vue       # /contracts/:id(.*)
 ```
+
+Both routes share the `(dashboard)` parent, so changing selection only changes the route
+param — the run is not refetched and the live connection is not reopened. Selection comes
+from the URL alone; the rail's search (`?q=`) and status filter (`?status=`) are kept in the
+URL query and never change or rewrite the selected contract.
+
+Served by `@framelia/dashboard-server`, routes are real paths (`/contracts/<id>`): the server
+injects `<base href="/">` and a `framelia-dashboard-host` marker into `index.html`. A static
+`framelia report` has no such marker, so it uses hash routes (`index.html#/contracts/<id>`)
+and resolves `data/` against the page's own directory — the report can be served from any
+sub-path.
+
+Keyboard: Alt + ← / → steps through contracts in the order the tree shows them; ↑ / ↓ do
+the same while focus is in the tree; ←/→/Home/End move between the inspector's comparison
+tabs; 1–5 pick a tab directly.
 
 Vue Router generates `typed-router.d.ts`. Do not edit generated file manually.
 
@@ -119,7 +136,9 @@ Or run complete workspace validation:
 pnpm validate
 ```
 
-Production build writes into `packages/cli/dist/dashboard`. CLI npm package ships generated directory.
+Production build writes into `packages/dashboard-server/dist/dashboard` (see `build.outDir`
+in `vite.config.ts`); the `@framelia/dashboard-server` npm package ships that directory, and
+both the CLI and the Playwright Reporter serve it from there.
 
 ## Data flow
 
@@ -130,4 +149,16 @@ GET /artifacts/*   -> baseline, actual, and diff images
 GET /events        -> live SSE progress events
 ```
 
-Portable static reports load `./data/selected-run.json` and `./data/*` instead. The dashboard contains no database, cloud client, or verification-engine dependency.
+Portable static reports load `data/selected-run.json` and `data/*` (relative to the report's
+`index.html`) instead. The dashboard contains no database, cloud client, or
+verification-engine dependency.
+
+Artifact URLs carry the evidence digest as `?v=<hash>`, and the server answers `/artifacts/*`
+with `Cache-Control: no-cache` plus an `ETag`, so a retry or re-run that rewrites a
+same-named screenshot is never shown stale. Live events are coalesced into one refresh; an
+event (or reconnect `sync`) for a different run reloads it. While `/events` is down the
+header shows "Reconnecting…", and a failed refresh keeps the last good run on screen behind
+a banner.
+
+The backend only answers loopback `Host` names on its own port when bound to loopback (a
+DNS-rebinding guard); the Vite proxy above uses `changeOrigin` for that reason.

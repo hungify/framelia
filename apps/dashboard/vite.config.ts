@@ -74,10 +74,12 @@ export default defineConfig({
   },
   server: apiOrigin
     ? {
+        // changeOrigin: the backend's DNS-rebinding guard only answers requests whose Host
+        // names its own loopback port, not Vite's.
         proxy: {
-          "/api": apiOrigin,
-          "/artifacts": apiOrigin,
-          "/events": apiOrigin,
+          "/api": { target: apiOrigin, changeOrigin: true },
+          "/artifacts": { target: apiOrigin, changeOrigin: true },
+          "/events": { target: apiOrigin, changeOrigin: true },
         },
       }
     : undefined,

@@ -52,6 +52,25 @@ describe("compareStyles", () => {
     ]);
   });
 
+  it("flags an alpha-only difference that ΔE cannot see", () => {
+    expect(
+      compareStyles({ backgroundColor: "#000000ff" }, { backgroundColor: "#00000000" }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "style-color",
+        message: expect.stringContaining("backgroundColor"),
+      }),
+    ]);
+    expect(compareStyles({ color: "#00000080" }, { color: "#000000ff" })).toHaveLength(1);
+  });
+
+  it("tolerates alpha rounding within ALPHA_TOLERANCE and ignores RGB of fully transparent colors", () => {
+    expect(compareStyles({ color: "#00000080" }, { color: "#0000007f" })).toEqual([]);
+    expect(
+      compareStyles({ backgroundColor: "#ffffff00" }, { backgroundColor: "#00000000" }),
+    ).toEqual([]);
+  });
+
   it("flags a fontSize mismatch as a non-blocking style-typography issue", () => {
     const issues = compareStyles({ fontSize: 16 }, { fontSize: 14 });
 

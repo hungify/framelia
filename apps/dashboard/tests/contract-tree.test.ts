@@ -5,7 +5,10 @@ import {
   buildContractTree,
   filterContracts,
   findContractTreeItem,
+  flattenContractTree,
+  parseStatusFilter,
   resolveSelectedContract,
+  stepContract,
 } from "../lib/contract-tree";
 
 function contract(
@@ -47,10 +50,56 @@ describe("resolveSelectedContract", () => {
     contract({ id: "b", name: "B", status: "failed" }),
   ];
 
-  it("prefers matching id then falls back to first", () => {
-    expect(resolveSelectedContract(items, "b")?.id).toBe("b");
-    expect(resolveSelectedContract(items, "missing")?.id).toBe("a");
-    expect(resolveSelectedContract([], "a")).toBeUndefined();
+  it("looks an explicit id up in the whole run, independent of the filter", () => {
+    // "b" is filtered out of the displayed list but stays selected -- no fallback.
+    expect(resolveSelectedContract(items, [items[0]!], "b")?.id).toBe("b");
+    expect(resolveSelectedContract(items, items, "missing")).toBeUndefined();
+  });
+
+  it("defaults to the first displayed contract only without an id", () => {
+    expect(resolveSelectedContract(items, [items[1]!], undefined)?.id).toBe("b");
+    expect(resolveSelectedContract(items, [], undefined)).toBeUndefined();
+  });
+});
+
+describe("parseStatusFilter", () => {
+  it("accepts known statuses and defaults anything else to all", () => {
+    expect(parseStatusFilter("failed")).toBe("failed");
+    expect(parseStatusFilter("masked-pass")).toBe("masked-pass");
+    expect(parseStatusFilter("exploded")).toBe("all");
+    expect(parseStatusFilter(["failed"])).toBe("all");
+    expect(parseStatusFilter(undefined)).toBe("all");
+  });
+});
+
+describe("tree-order navigation", () => {
+  // Input order interleaves features; the tree groups them, and navigation must follow
+  // the tree, not the flat input order.
+  const items = [
+    contract({ id: "checkout.desktop", name: "C D", status: "passed", feature: "checkout" }),
+    contract({ id: "header.mobile", name: "H M", status: "passed", feature: "header" }),
+    contract({ id: "checkout.mobile", name: "C M", status: "failed", feature: "checkout" }),
+  ];
+  const displayed = flattenContractTree(buildContractTree(items));
+
+  it("flattens leaves in displayed (grouped) order", () => {
+    expect(displayed.map((item) => item.id)).toEqual([
+      "checkout.desktop",
+      "checkout.mobile",
+      "header.mobile",
+    ]);
+  });
+
+  it("steps forward/backward with wrap-around", () => {
+    expect(stepContract(displayed, "checkout.desktop", 1)?.id).toBe("checkout.mobile");
+    expect(stepContract(displayed, "header.mobile", 1)?.id).toBe("checkout.desktop");
+    expect(stepContract(displayed, "checkout.desktop", -1)?.id).toBe("header.mobile");
+  });
+
+  it("enters the list from either end when the selection is filtered out", () => {
+    expect(stepContract(displayed, "hidden", 1)?.id).toBe("checkout.desktop");
+    expect(stepContract(displayed, undefined, -1)?.id).toBe("header.mobile");
+    expect(stepContract([], "x", 1)).toBeUndefined();
   });
 });
 

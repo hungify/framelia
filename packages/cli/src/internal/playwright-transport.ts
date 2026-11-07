@@ -1,8 +1,9 @@
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Readable } from "node:stream";
 
 import {
   RUN_CONTEXT_ENV,
@@ -25,18 +26,18 @@ import {
 } from "@framelia/verify/run-bundle";
 import { nanoid } from "nanoid";
 
+import { UsageError } from "../exit.ts";
 import type { CliRuntime } from "../runtime-types.ts";
 
 const AMBIGUOUS_TEST_LIST = /[\r\n›]/u;
 const AMBIGUOUS_NAMED_PROJECT = /\[|\]/u;
 
 /** A transport failure whose `code` callers surface as-is instead of a generic failure. */
-export class PlaywrightTransportError extends Error {
-  readonly code: string;
+export class PlaywrightTransportError extends UsageError {
+  declare readonly code: string;
 
   constructor(code: string, message: string) {
-    super(message);
-    this.code = code;
+    super(message, { code });
     this.name = "PlaywrightTransportError";
   }
 }
@@ -47,14 +48,35 @@ export interface PlaywrightCancellation {
   child?: ChildProcess;
 }
 
+/** A spawned Playwright child whose output the transport forwards to stderr. */
+export type PlaywrightChild = ChildProcess & {
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+};
+
+/** The process boundary of the Playwright transport; the CLI's `playwright` adapter. */
 export interface PlaywrightTransportDependencies {
-  spawnPlaywright?: (
+  readonly spawnPlaywright: (
     executable: string,
     argv: readonly string[],
     options: { cwd: string; env: NodeJS.ProcessEnv },
-  ) => ChildProcessWithoutNullStreams;
-  playwrightCli?: string;
+  ) => PlaywrightChild;
+  /** The Node executable that runs Playwright's CLI script. */
+  readonly nodeExecutable: string;
+  /** Overrides resolving the consumer project's local `@playwright/test/cli`. */
+  readonly playwrightCli?: string;
 }
+
+export const productionPlaywrightDependencies: PlaywrightTransportDependencies = {
+  spawnPlaywright: (executable, argv, options) =>
+    spawn(executable, argv, {
+      cwd: options.cwd,
+      env: options.env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  nodeExecutable: process.execPath,
+};
 
 interface PlaywrightChildOutcome {
   code: number | null;
@@ -117,17 +139,20 @@ function assertTransportIdentity(
   }
 }
 
-function resolveLocalPlaywright(projectRoot: string): string {
+/** The consumer project's own `@playwright/test/cli`; the CLI never uses a bundled copy. */
+export function resolveLocalPlaywright(projectRoot: string): string {
   const packageJson = path.join(projectRoot, "package.json");
   if (!fs.existsSync(packageJson)) {
-    throw new Error(`Cannot resolve local Playwright without ${packageJson}.`);
+    throw new UsageError(`Cannot resolve local Playwright without ${packageJson}.`, {
+      code: "PLAYWRIGHT_NOT_INSTALLED",
+    });
   }
   try {
     return createRequire(packageJson).resolve("@playwright/test/cli");
   } catch (error) {
-    throw new Error(
+    throw new UsageError(
       `Cannot resolve the consumer project's local @playwright/test/cli from ${projectRoot}. Install @playwright/test in that project.`,
-      { cause: error },
+      { cause: error, code: "PLAYWRIGHT_NOT_INSTALLED" },
     );
   }
 }
@@ -135,8 +160,9 @@ function resolveLocalPlaywright(projectRoot: string): string {
 /** The Playwright policy a transport needs; collection and execution refuse to run without it. */
 function requirePlaywright(policy: ResolvedProjectPolicy) {
   if (!policy.playwright || !policy.policyDigest) {
-    throw new Error(
+    throw new UsageError(
       "framelia.config must declare playwright.config and one-or-more visual projects before collection can run.",
+      { code: "PROJECT_POLICY_INCOMPLETE" },
     );
   }
   return { configPath: policy.playwright.configPath, policyDigest: policy.policyDigest };
@@ -154,14 +180,10 @@ async function runPlaywrightChild(options: {
   const playwrightCli = dependencies.playwrightCli ?? resolveLocalPlaywright(policy.root);
   const argv = [playwrightCli, ...options.argv];
   const env = { ...runtime.env, [RUN_CONTEXT_ENV]: options.contextPath };
-  const child = dependencies.spawnPlaywright
-    ? dependencies.spawnPlaywright(process.execPath, argv, { cwd: policy.root, env })
-    : spawn(process.execPath, argv, {
-        cwd: policy.root,
-        env,
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+  const child = dependencies.spawnPlaywright(dependencies.nodeExecutable, argv, {
+    cwd: policy.root,
+    env,
+  });
   cancellation.child = child;
   const stderr = runtime.stderr as unknown as NodeJS.WritableStream;
   child.stdout.pipe(stderr, { end: false });
@@ -245,7 +267,7 @@ export interface CollectPlaywrightBindingsOptions {
   selectedProjects: readonly string[];
   runtime: CliRuntime;
   runId?: string;
-  dependencies?: PlaywrightTransportDependencies;
+  dependencies: PlaywrightTransportDependencies;
   cancellation?: PlaywrightCancellation;
 }
 
@@ -281,7 +303,7 @@ export async function collectPlaywrightBindings(
       ],
       contextPath,
       runtime: options.runtime,
-      dependencies: options.dependencies ?? {},
+      dependencies: options.dependencies,
       cancellation,
     });
     if (child.cancelled) throw new Error("Playwright collection was cancelled.");
@@ -328,7 +350,7 @@ export interface ExecutePlaywrightRunOptions {
   /** The frozen plan's graph digest; the reporter's execute manifest must reproduce it. */
   executionGraphDigest: string;
   runtime: CliRuntime;
-  dependencies?: PlaywrightTransportDependencies;
+  dependencies: PlaywrightTransportDependencies;
   cancellation: PlaywrightCancellation;
 }
 
@@ -391,7 +413,7 @@ export async function executePlaywrightRun(
         ],
         contextPath,
         runtime: options.runtime,
-        dependencies: options.dependencies ?? {},
+        dependencies: options.dependencies,
         cancellation,
       });
       status = validateTransport(

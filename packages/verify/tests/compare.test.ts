@@ -351,3 +351,45 @@ describe("compare pipeline", () => {
     expect(profileOverridesSchema.safeParse({ minMatch: 0.999 }).success).toBe(true);
   });
 });
+
+describe("compare alpha handling", () => {
+  it("flattens transparency once, so every metric agrees a transparent baseline matches its background", () => {
+    const transparent = write(makeSolidPng(40, 40, [0, 0, 0, 0]), "transparent");
+    const white = write(makeSolidPng(40, 40, [255, 255, 255, 255]), "white");
+    const r = compare(transparent, white, outDir(), { profile: "component/strict" });
+    expect(r).toMatchObject({ pass: true, matchRatio: 1, avgDeltaE: 0 });
+    expect(r.ssim).toBeCloseTo(1, 10);
+  });
+
+  it("flattens onto canvasFill when given, so transparency is judged against that canvas", () => {
+    const transparent = write(makeSolidPng(40, 40, [0, 0, 0, 0]), "transparent");
+    const white = write(makeSolidPng(40, 40, [255, 255, 255, 255]), "white");
+    const r = compare(transparent, white, outDir(), {
+      profile: "component/strict",
+      canvasFill: "#000000",
+    });
+    expect(r.pass).toBe(false);
+    expect(r.matchRatio).toBe(0);
+    expect(r.ssim).toBeLessThan(0.01);
+    expect(r.avgDeltaE).toBeGreaterThan(50);
+  });
+});
+
+describe("compare on images narrower than the SSIM window", () => {
+  it.each([
+    [300, 1],
+    [5, 40],
+  ])("scores a %dx%d comparison without throwing and says the window shrank", (w, h) => {
+    const png = write(makeSolidPng(w, h, [10, 20, 30, 255]), "thin");
+    const r = compare(png, png, outDir(), { profile: "component/strict" });
+    expect(r.pass).toBe(true);
+    expect(r.warnings.some((warning) => warning.includes("reduced"))).toBe(true);
+  });
+
+  it("does not report a perfect SSIM for 8x8 black vs white", () => {
+    const black = write(makeSolidPng(8, 8, [0, 0, 0, 255]), "black");
+    const white = write(makeSolidPng(8, 8, [255, 255, 255, 255]), "white");
+    const r = compare(black, white, outDir(), { profile: "component/strict" });
+    expect(r.ssim).toBeLessThan(0.01);
+  });
+});

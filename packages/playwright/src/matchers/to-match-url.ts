@@ -2,6 +2,7 @@ import type { MatcherReturnType, Page } from "@playwright/test";
 
 import type { ComparePagesContext, ComparePagesOptions } from "../compare-pages.ts";
 import { runComparePages } from "../compare-pages.ts";
+import { operationalFailure } from "../matcher-outcome.ts";
 
 export type ToMatchUrlOptions = ComparePagesOptions;
 
@@ -24,11 +25,9 @@ export async function runToMatchUrl(
     try {
       await pageB.goto(url, { timeout: context.timeoutMs });
     } catch (error) {
-      return {
-        pass: false,
-        message: () =>
-          `toMatchUrl: navigation to ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      return operationalFailure(
+        `toMatchUrl: navigation to ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     return await runComparePages("toMatchUrl", received, pageB, baseName, options, context);
   } finally {

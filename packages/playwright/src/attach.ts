@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+
 import type { TestInfo } from "@playwright/test";
 
 export type AttachFn = (name: string, path: string) => Promise<void>;
@@ -47,11 +49,19 @@ export function sanitizeAttachmentBaseName(label: string): string {
  * to-match-page-baseline.ts. Takes `TestInfo` as a plain argument (only a `type`-only
  * Playwright import, erased at compile time) rather than reaching for `test.info()`
  * itself, so it stays usable from any already-resolved `testInfo`, real or faked.
+ *
+ * Images attach as `body` bytes, never `path`: a `path` attachment is only a pointer into
+ * `testInfo.outputDir`, which the worker deletes right after `testEnd` unless
+ * `preserveOutput` keeps it -- so the Reporter (another process, reading later) would
+ * lose passing-test evidence under `preserveOutput: "failures-only"`. A body travels with
+ * the result itself; the HTML reporter still renders it in its image-diff viewer.
  */
 export function buildAttachContext(testInfo: TestInfo): AttachContext {
   return {
     attach: (name, path) =>
-      testInfo.attach(name, { path, contentType: "image/png" }).then(() => undefined),
+      testInfo
+        .attach(name, { body: fs.readFileSync(path), contentType: "image/png" })
+        .then(() => undefined),
     attachJson: (name, data) =>
       testInfo
         .attach(name, { body: JSON.stringify(data), contentType: "application/json" })

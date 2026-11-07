@@ -68,7 +68,7 @@ describe("run: project env", () => {
     {
       command: ["init"],
       kind: "framelia.init-outcome",
-      diagnostic: "INIT_FAILED",
+      diagnostic: "MULTIPLE_PROJECT_CONFIGS",
     },
   ])(
     "lets the $kind route emit one structured multiple-config outcome",
@@ -103,10 +103,17 @@ describe("emitResult", () => {
     expect(fakeProc.exitCode).toBe(EXIT_OK);
   });
 
-  it("sets exit code 1 (EXIT_VISUAL_FAIL) when the result is not ok", () => {
+  it("treats a non-ok result without an explicit exit code as operational (2), not visual", () => {
     const fakeProc = createFakeProcess();
     const context = buildContext({ process: fakeProc, version: "1.0.0" });
     emitResult(context, { ok: false, body: { pass: false } });
+    expect(fakeProc.exitCode).toBe(EXIT_USAGE_ERROR);
+  });
+
+  it("uses exit code 1 only when a visual failure says so explicitly", () => {
+    const fakeProc = createFakeProcess();
+    const context = buildContext({ process: fakeProc, version: "1.0.0" });
+    emitResult(context, { ok: false, exitCode: EXIT_VISUAL_FAIL, body: { pass: false } });
     expect(fakeProc.exitCode).toBe(EXIT_VISUAL_FAIL);
   });
 

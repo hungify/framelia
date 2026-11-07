@@ -14,7 +14,7 @@ describe("run() with injected adapters", () => {
       .mockResolvedValue({ ok: false, fetched: false, errorClass: "auth", message: "403" });
     const fakeProcess = createFakeProcess({ FIGMA_ACCESS_TOKEN: "token" });
 
-    await run(["capture", "-k", "file-key", "-n", "1:2", "-o", "out/base.png", "-s", "2"], {
+    await run(["capture", "-k", "file-key", "-n", "1:2", "-o", "out/base.png", "--scale", "2"], {
       process: fakeProcess,
       loadProjectEnv: false,
       adapters: {

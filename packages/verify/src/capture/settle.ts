@@ -17,6 +17,14 @@ const NO_ANIMATION_CSS = `
 }
 `;
 
+/** Marks the freeze <style> settle() injects, so it is injected once and removable after. */
+const FREEZE_STYLE_ATTRIBUTE = "data-framelia-freeze";
+
+/**
+ * @param budgetMs the capture's remaining time budget when settle() starts; the network-idle
+ *   wait gets NETWORK_IDLE_BUDGET_FRACTION of it (at most NETWORK_IDLE_BEST_EFFORT_MS), and the
+ *   font wait gets whatever is left after network idle.
+ */
 export async function settle(
   page: Page,
   warnings: string[],
@@ -40,7 +48,18 @@ export async function settle(
   const fontReadyTimeoutMs = Math.max(1, budgetMs - (Date.now() - idleStartedAt));
   if (animationPolicy === "freeze") {
     try {
-      await page.addStyleTag({ content: NO_ANIMATION_CSS });
+      // Tagged and idempotent: repeated captures on one caller-owned page never stack
+      // duplicate tags, and releaseAnimationFreeze() can remove it afterwards.
+      await page.evaluate(
+        ({ css, attribute }) => {
+          if (document.querySelector(`style[${attribute}]`)) return;
+          const style = document.createElement("style");
+          style.setAttribute(attribute, "");
+          style.textContent = css;
+          (document.head ?? document.documentElement).append(style);
+        },
+        { css: NO_ANIMATION_CSS, attribute: FREEZE_STYLE_ATTRIBUTE },
+      );
     } catch {
       warnings.push("could not inject no-animation CSS.");
     }
@@ -82,6 +101,23 @@ export async function settle(
   }
   await page.waitForTimeout(NETWORK_IDLE_BUFFER_MS);
   return fonts;
+}
+
+/**
+ * Removes the freeze <style> settle() injected, restoring the caller's page: capture
+ * functions that screenshot a caller-owned Page must not leave animations disabled for
+ * whatever the caller does next. Best effort -- a closed or navigated page has nothing
+ * left to restore.
+ */
+export async function releaseAnimationFreeze(page: Page): Promise<void> {
+  if (page.isClosed()) return;
+  await page
+    .evaluate((attribute) => {
+      for (const style of Array.from(document.querySelectorAll(`style[${attribute}]`))) {
+        style.remove();
+      }
+    }, FREEZE_STYLE_ATTRIBUTE)
+    .catch(() => {});
 }
 
 export function fontIncomplete(fonts: FontReadiness): boolean {

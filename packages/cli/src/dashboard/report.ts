@@ -7,23 +7,27 @@ import {
   type DashboardSource,
 } from "@framelia/dashboard-server";
 import { JSON_INDENT_SPACES, sanitizePortableValue } from "@framelia/verify";
-import { readSelectedRun } from "@framelia/verify/run-bundle";
+import { cacheSelectedRunProjection, readSelectedRun } from "@framelia/verify/run-bundle";
 
 export const DASHBOARD_RUN_FILE = "selected-run.json";
 const REPORT_MARKER_FILE = ".framelia-report.json";
 const REPORT_MARKER = "framelia-selected-run-dashboard-report";
 
-/** Live source for exactly one explicit durable run. Refreshes from disk for running runs. */
+/**
+ * Live source for exactly one explicit durable run. Refreshes from disk when the run
+ * changes; snapshot() and files() share one projection per change.
+ */
 export function selectedDashboardSource(
   projectRoot: string,
   runId: string,
   suiteName?: string,
 ): DashboardSource {
+  const projection = cacheSelectedRunProjection(projectRoot, runId, (selectedRun) =>
+    projectSelectedRun(projectRoot, selectedRun, suiteName),
+  );
   return {
-    snapshot: () =>
-      projectSelectedRun(projectRoot, readSelectedRun(projectRoot, runId), suiteName).run,
-    files: () =>
-      projectSelectedRun(projectRoot, readSelectedRun(projectRoot, runId), suiteName).files,
+    snapshot: () => projection().run,
+    files: () => projection().files,
   };
 }
 
@@ -83,18 +87,44 @@ export async function exportDashboardReport(options: {
     );
   }
 
-  await fs.rm(outputDirectory, { recursive: true, force: true });
-  await fs.mkdir(path.join(outputDirectory, "data"), { recursive: true });
+  // Build next to the destination (same filesystem, so the swap is a rename) and only replace
+  // a previous report once the new one is complete: a failed export never loses the old one.
+  await fs.mkdir(path.dirname(outputDirectory), { recursive: true });
+  const staging = await fs.mkdtemp(`${outputDirectory}.framelia-staging-`);
+  try {
+    await writeReport(staging, clientRoot, projection, options);
+    await swapIntoPlace(staging, outputDirectory, await exists(outputDirectory));
+  } catch (error) {
+    await fs.rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+  return path.join(outputDirectory, "index.html");
+}
+
+async function exists(target: string): Promise<boolean> {
+  return fs.access(target).then(
+    () => true,
+    () => false,
+  );
+}
+
+async function writeReport(
+  directory: string,
+  clientRoot: string,
+  projection: ReturnType<typeof projectSelectedRun>,
+  options: { projectRoot: string; runId: string },
+): Promise<void> {
+  await fs.mkdir(path.join(directory, "data"), { recursive: true });
   await fs.writeFile(
-    path.join(outputDirectory, REPORT_MARKER_FILE),
+    path.join(directory, REPORT_MARKER_FILE),
     `${JSON.stringify({ marker: REPORT_MARKER, runId: options.runId })}\n`,
   );
-  await fs.cp(clientRoot, outputDirectory, { recursive: true });
+  await fs.cp(clientRoot, directory, { recursive: true });
   await fs.writeFile(
-    path.join(outputDirectory, "data", DASHBOARD_RUN_FILE),
+    path.join(directory, "data", DASHBOARD_RUN_FILE),
     `${JSON.stringify(projection.run, null, JSON_INDENT_SPACES)}\n`,
   );
-  const dataRoot = path.resolve(outputDirectory, "data");
+  const dataRoot = path.resolve(directory, "data");
   for (const [portablePath, sourcePath] of projection.files) {
     const destination = path.resolve(dataRoot, portablePath);
     if (!destination.startsWith(`${dataRoot}${path.sep}`)) {
@@ -103,5 +133,25 @@ export async function exportDashboardReport(options: {
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await copyPortableEvidence(sourcePath, destination, options.projectRoot);
   }
-  return path.join(outputDirectory, "index.html");
+}
+
+/** Moves a complete report into place, restoring the previous one if the final rename fails. */
+async function swapIntoPlace(
+  staging: string,
+  outputDirectory: string,
+  replacing: boolean,
+): Promise<void> {
+  if (!replacing) {
+    await fs.rename(staging, outputDirectory);
+    return;
+  }
+  const retired = `${staging}-previous`;
+  await fs.rename(outputDirectory, retired);
+  try {
+    await fs.rename(staging, outputDirectory);
+  } catch (error) {
+    await fs.rename(retired, outputDirectory);
+    throw error;
+  }
+  await fs.rm(retired, { recursive: true, force: true });
 }
